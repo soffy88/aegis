@@ -6,8 +6,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from aegis.server.api.routers import alerts, events, health
+from aegis.server.api.routers import alerts, domains, events, health
+from aegis.server.api.routers import apps as apps_router
+from aegis.server.api.routers import docker as docker_router
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -53,9 +56,19 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         description="AI-powered self-hosted PaaS",
         lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "http://localhost:3001"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health.router)
     app.include_router(events.router)
     app.include_router(alerts.router)
+    app.include_router(docker_router.router)
+    app.include_router(apps_router.router)
+    app.include_router(domains.router)
 
     return app
 
