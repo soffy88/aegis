@@ -35,6 +35,11 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         log.info("aegis_starting host=%s port=%d", cfg.host, cfg.port)
+        try:
+            cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.error("cannot create data_dir=%s: %s — aborting", cfg.data_dir, exc)
+            raise SystemExit(1) from exc
         await init_pool(
             dsn=cfg.postgres_dsn,
             min_size=cfg.postgres_pool_min,

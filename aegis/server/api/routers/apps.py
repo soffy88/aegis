@@ -3,18 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from aegis.server.api.deps import get_db_conn, require_org, require_project
 from aegis.server.persistence import get_pool
 from aegis.server.persistence.event_trail import append_event
+from aegis.server.runtime.config import AegisSettings
 
 log = logging.getLogger(__name__)
 
@@ -24,12 +24,19 @@ router = APIRouter(prefix="/api/v1/apps", tags=["apps"])
 class InstallRequest(BaseModel):
     app_name: str
     app_version: str | None = None
-    install_dir: str | None = None
+    install_dir: str = Field(..., min_length=1)
     image_to_pull: str | None = None
     health_check_container: str | None = None
     domain: str | None = None
     domain_target_url: str | None = None
     register_domain: bool = False
+
+    @field_validator("install_dir")
+    @classmethod
+    def install_dir_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("install_dir is required")
+        return v
 
 
 class InstallAppRequest(BaseModel):
@@ -51,8 +58,12 @@ async def _run_install(
     project_id: uuid.UUID,
     trace_id: str,
     body: InstallAppRequest,
+    data_dir: Path | None = None,
 ) -> None:
     """Background task: run omodul.install_app and update DB status."""
+    resolved_dir: Path = data_dir if data_dir is not None else AegisSettings().data_dir
+    output_dir: Path = resolved_dir / "installs" / str(install_id)
+
     final_status: str = "failed"
     error_detail: str | None = None
     domain: str | None = None
@@ -66,13 +77,12 @@ async def _run_install(
         cfg = InstallAppConfig(register_domain=body.register_domain)
         inp = InstallAppInput(
             app_name=body.app_name,
-            project_dir=body.project_dir or f"/var/lib/aegis/installs/{install_id}",
+            project_dir=body.project_dir or str(output_dir),
             image_to_pull=body.image_to_pull,
             health_check_container=body.health_check_container,
             domain=body.domain,
             domain_target_url=body.domain_target_url,
         )
-        output_dir = Path(f"/var/lib/aegis/installs/{install_id}")
         result: Any = await asyncio.to_thread(install_app, cfg, inp, output_dir)
         final_status = str(result.get("status", "failed"))
         findings: dict[str, Any] = result.get("findings", {})
@@ -81,11 +91,17 @@ async def _run_install(
         if findings.get("domain_registered"):
             domain = body.domain
     except ImportError as exc:
-        log.exception("install_app import failed (cross-repo deps not installed): %s", exc)
+        log.exception(
+            "install_app import failed (cross-repo deps not installed) install_id=%s: %s",
+            install_id, exc,
+        )
         final_status = "failed"
         error_detail = f"ImportError: {exc}"
     except Exception as exc:  # noqa: BLE001
-        log.exception("install_app background dispatch failed: %s", exc)
+        log.exception(
+            "install_app background dispatch failed install_id=%s install_dir=%s %s: %s",
+            install_id, output_dir, type(exc).__name__, exc,
+        )
         final_status = "failed"
         error_detail = f"{type(exc).__name__}: {exc}"
 
@@ -167,7 +183,8 @@ async def install_app_endpoint(
     org_id: uuid.UUID = Depends(require_org),
     project_id: uuid.UUID = Depends(require_project),
 ) -> dict[str, Any]:
-    install_dir = req.install_dir or tempfile.mkdtemp(prefix=f"aegis_{req.app_name}_")
+    install_dir = req.install_dir
+    cfg_data_dir = AegisSettings().data_dir
 
     install_id = await conn.fetchval(
         """
@@ -196,7 +213,7 @@ async def install_app_endpoint(
     )
     task_trace_id = f"trc_{uuid.uuid4().hex[:8]}"
     background_tasks.add_task(
-        _run_install, install_id, org_id, project_id, task_trace_id, body
+        _run_install, install_id, org_id, project_id, task_trace_id, body, cfg_data_dir
     )
 
     return {"install_id": str(install_id), "status": "installing"}

@@ -36,7 +36,10 @@ class AegisSettings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # === Storage ===
-    data_dir: Path = Path("/var/lib/aegis")
+    data_dir: Path = Field(
+        default_factory=lambda: Path.home() / ".aegis",
+        description="Root data directory; override with AEGIS_DATA_DIR",
+    )
     log_dir: Path = Path("/var/log/aegis")
 
     # === Plan / quotas ===
