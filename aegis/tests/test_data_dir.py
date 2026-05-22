@@ -104,6 +104,73 @@ class TestDataDir:
 
 
 # ---------------------------------------------------------------------------
+# log_dir sentinel pattern (§1B)
+# ---------------------------------------------------------------------------
+
+
+class TestLogDir:
+    def test_log_dir_default_follows_data_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No env set: log_dir == data_dir / 'logs'."""
+        monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
+        monkeypatch.delenv("AEGIS_LOG_DIR", raising=False)
+        s = AegisSettings()
+        assert s.log_dir == s.data_dir / "logs"
+
+    def test_log_dir_env_overrides(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AEGIS_LOG_DIR overrides the sentinel default."""
+        custom = tmp_path / "custom-logs"
+        monkeypatch.setenv("AEGIS_LOG_DIR", str(custom))
+        s = AegisSettings()
+        assert s.log_dir == custom
+
+    def test_log_dir_follows_data_dir_when_data_dir_overridden(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AEGIS_DATA_DIR overridden, AEGIS_LOG_DIR unset → log_dir tracks new data_dir."""
+        monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path / "xx"))
+        monkeypatch.delenv("AEGIS_LOG_DIR", raising=False)
+        s = AegisSettings()
+        assert s.log_dir == tmp_path / "xx" / "logs"
+
+    def test_log_dir_created_on_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """App startup lifespan creates log_dir when it does not exist."""
+        data_dir = tmp_path / "aegis_data"
+        monkeypatch.setenv("AEGIS_DATA_DIR", str(data_dir))
+        monkeypatch.delenv("AEGIS_LOG_DIR", raising=False)
+        cfg = AegisSettings()
+        assert not cfg.log_dir.exists()
+
+        mock_conn: mock.AsyncMock = mock.AsyncMock()
+        mock_conn.fetch.return_value = []
+
+        mock_pool_obj: mock.MagicMock = mock.MagicMock()
+        mock_pool_obj.acquire.return_value.__aenter__ = mock.AsyncMock(
+            return_value=mock_conn
+        )
+        mock_pool_obj.acquire.return_value.__aexit__ = mock.AsyncMock(return_value=False)
+
+        with (
+            mock.patch("aegis.server.app.init_pool", new_callable=mock.AsyncMock),
+            mock.patch("aegis.server.app.close_pool", new_callable=mock.AsyncMock),
+            mock.patch("aegis.server.app.get_pool", return_value=mock_pool_obj),
+            mock.patch(
+                "aegis.server.app.apply_migrations",
+                new_callable=mock.AsyncMock,
+                return_value=0,
+            ),
+        ):
+            app = create_app(settings=cfg)
+            with TestClient(app):
+                assert cfg.log_dir.exists()
+
+
+# ---------------------------------------------------------------------------
 # Bug #6: install_dir required — endpoint returns 422 when invalid
 # ---------------------------------------------------------------------------
 

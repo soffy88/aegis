@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,7 +41,16 @@ class AegisSettings(BaseSettings):
         default_factory=lambda: Path.home() / ".aegis",
         description="Root data directory; override with AEGIS_DATA_DIR",
     )
-    log_dir: Path = Path("/var/log/aegis")
+    log_dir: Optional[Path] = Field(
+        default=None,
+        description="Log directory; defaults to data_dir/logs. Override with AEGIS_LOG_DIR",
+    )
+
+    @model_validator(mode="after")
+    def resolve_log_dir(self) -> AegisSettings:
+        if self.log_dir is None:
+            self.log_dir = self.data_dir / "logs"
+        return self
 
     # === Plan / quotas ===
     default_org_plan: str = Field(
