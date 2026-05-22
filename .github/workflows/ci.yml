@@ -8,7 +8,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    name: Backend Tests
+    runs-on: ubuntu-latest
 
     services:
       postgres:
@@ -52,10 +53,11 @@ jobs:
       - name: pytest
         env:
           AEGIS_POSTGRES_DSN: postgresql://aegis:aegis@localhost:5432/aegis
-        run: pytest aegis/tests/ --cov=aegis --cov-report=term-missing --cov-fail-under=89 -q
+        run: pytest aegis/tests/ --cov=aegis --cov-report=term-missing --cov-fail-under=89 -q --tb=short
 
   smoke:
-    runs-on: ubuntu-22.04
+    name: Smoke Tests
+    runs-on: ubuntu-latest
     needs: test
 
     steps:
@@ -71,4 +73,4 @@ jobs:
         run: pip install -e ".[smoke]"
 
       - name: Smoke tests (real Postgres container)
-        run: RUN_SMOKE=1 pytest aegis/tests/smoke/ -v
+        run: RUN_SMOKE=1 pytest aegis/tests/smoke/ -v --tb=short
