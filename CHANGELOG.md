@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.4] — 2026-05-23
+
+### Added
+- `AEGIS_CORS_ORIGINS` env var for CORS configuration (comma-separated, default `http://localhost:3010`). Production deployments should set this to the actual console domain.
+
+### Fixed
+- Remove hardcoded `localhost:3000/3001` from CORSMiddleware; aegis-console dev port is 3010.
+
 ## [0.2.3] — 2026-05-22
 
 ### Fixed

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -72,9 +73,10 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         description="AI-powered self-hosted PaaS",
         lifespan=lifespan,
     )
+    _cors_origins = os.environ.get("AEGIS_CORS_ORIGINS", "http://localhost:3010").split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:3001"],
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

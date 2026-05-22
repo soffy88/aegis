@@ -65,8 +65,14 @@ curl http://localhost:8080/ready    # 应返回 {"status":"ready","db":"ok"}
 | 数据目录 | `~/.aegis` | `AEGIS_DATA_DIR` |
 | 日志目录 | `$AEGIS_DATA_DIR/logs` | `AEGIS_LOG_DIR` |
 | Caddy 配置目录 | `$AEGIS_DATA_DIR/caddy` | `AEGIS_CADDY_CONFIG_DIR` |
+| CORS 允许来源 | `http://localhost:3010` | `AEGIS_CORS_ORIGINS` |
 
 所有目录在 `aegis serve` 启动时自动创建。不需要 root 权限。
+
+`AEGIS_CORS_ORIGINS` 支持逗号分隔多个来源,生产部署时改为实际 console 域名,例如:
+```bash
+export AEGIS_CORS_ORIGINS="https://console.example.com"
+```
 
 ## 7. 常见问题
 
