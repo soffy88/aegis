@@ -38,3 +38,30 @@ class TestApplyMigrations:
         conn = _make_conn([MIGRATIONS[0][0]])
         count = await apply_migrations(conn)
         assert count == len(MIGRATIONS) - 1
+
+
+class TestSeedDefaults:
+    """Tests for 004_seed_self_hosted_defaults migration."""
+
+    def test_004_in_migrations_list(self) -> None:
+        from aegis.server.persistence.migrations import MIGRATIONS
+        versions = [v for v, _ in MIGRATIONS]
+        assert "004_seed_self_hosted_defaults" in versions
+
+    def test_004_sql_contains_default_org(self) -> None:
+        from aegis.server.persistence.migrations import MIGRATIONS
+        for version, sql in MIGRATIONS:
+            if version == "004_seed_self_hosted_defaults":
+                assert "00000000-0000-0000-0000-000000000001" in sql
+                assert "enterprise" in sql
+                return
+        raise AssertionError("004 migration not found")
+
+    def test_004_sql_contains_default_project(self) -> None:
+        from aegis.server.persistence.migrations import MIGRATIONS
+        for version, sql in MIGRATIONS:
+            if version == "004_seed_self_hosted_defaults":
+                assert "00000000-0000-0000-0000-000000000002" in sql
+                assert "prod" in sql
+                return
+        raise AssertionError("004 migration not found")

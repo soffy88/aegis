@@ -118,6 +118,26 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "004_seed_self_hosted_defaults",
+        """
+        -- Self-hosted default org/project (used when no X-Org-Id / X-Project-Id header)
+        -- IDs match aegis/server/api/deps.py: require_org / require_project defaults
+
+        INSERT INTO orgs (id, name, plan)
+        VALUES ('00000000-0000-0000-0000-000000000001', 'default', 'enterprise')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO projects (id, org_id, name, environment)
+        VALUES (
+            '00000000-0000-0000-0000-000000000002',
+            '00000000-0000-0000-0000-000000000001',
+            'default',
+            'prod'
+        )
+        ON CONFLICT (id) DO NOTHING;
+        """,
+    ),
 ]
 
 

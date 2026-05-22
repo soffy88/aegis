@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn, require_org, require_project
 from aegis.server.persistence import get_pool
+from aegis.server.persistence.event_trail import append_event
 
 log = logging.getLogger(__name__)
 
@@ -31,33 +32,62 @@ class InstallRequest(BaseModel):
     register_domain: bool = False
 
 
+class InstallAppRequest(BaseModel):
+    """Internal request model for _run_install (project_dir is pre-computed)."""
+
+    app_name: str
+    project_dir: str | None = None
+    app_version: str | None = None
+    image_to_pull: str | None = None
+    health_check_container: str | None = None
+    domain: str | None = None
+    domain_target_url: str | None = None
+    register_domain: bool = False
+
+
 async def _run_install(
     install_id: uuid.UUID,
     org_id: uuid.UUID,
     project_id: uuid.UUID,
-    req: InstallRequest,
-    install_dir: str,
+    trace_id: str,
+    body: InstallAppRequest,
 ) -> None:
     """Background task: run omodul.install_app and update DB status."""
-    from omodul.install_app import InstallAppConfig, InstallAppInput, install_app  # noqa: PLC0415
+    final_status: str = "failed"
+    error_detail: str | None = None
+    domain: str | None = None
 
-    config = InstallAppConfig(
-        register_domain=req.register_domain,
-    )
-    input_data = InstallAppInput(
-        app_name=req.app_name,
-        project_dir=install_dir,
-        image_to_pull=req.image_to_pull,
-        health_check_container=req.health_check_container,
-        domain=req.domain,
-        domain_target_url=req.domain_target_url,
-    )
-    output_dir = Path(install_dir) / "aegis_output"
-
-    result = await asyncio.to_thread(install_app, config, input_data, output_dir)
-
-    new_status = result["status"]
-    domain = req.domain if result.get("findings", {}).get("domain_registered") else None
+    try:
+        from omodul.install_app import (  # noqa: PLC0415
+            InstallAppConfig,
+            InstallAppInput,
+            install_app,
+        )
+        cfg = InstallAppConfig(register_domain=body.register_domain)
+        inp = InstallAppInput(
+            app_name=body.app_name,
+            project_dir=body.project_dir or f"/var/lib/aegis/installs/{install_id}",
+            image_to_pull=body.image_to_pull,
+            health_check_container=body.health_check_container,
+            domain=body.domain,
+            domain_target_url=body.domain_target_url,
+        )
+        output_dir = Path(f"/var/lib/aegis/installs/{install_id}")
+        result: Any = await asyncio.to_thread(install_app, cfg, inp, output_dir)
+        final_status = str(result.get("status", "failed"))
+        findings: dict[str, Any] = result.get("findings", {})
+        if findings.get("error"):
+            error_detail = str(findings["error"])
+        if findings.get("domain_registered"):
+            domain = body.domain
+    except ImportError as exc:
+        log.exception("install_app import failed (cross-repo deps not installed): %s", exc)
+        final_status = "failed"
+        error_detail = f"ImportError: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        log.exception("install_app background dispatch failed: %s", exc)
+        final_status = "failed"
+        error_detail = f"{type(exc).__name__}: {exc}"
 
     try:
         async with get_pool().acquire() as conn:
@@ -67,10 +97,29 @@ async def _run_install(
                    SET status = $1, domain = $2
                  WHERE id = $3
                 """,
-                new_status,
+                final_status,
                 domain,
                 install_id,
             )
+            try:
+                await append_event(
+                    conn=conn,
+                    org_id=org_id,
+                    project_id=project_id,
+                    event_type="omodul_run",
+                    severity="info" if final_status == "completed" else "warning",
+                    resource=f"app/{body.app_name}",
+                    omodul_kind="install_app",
+                    payload={
+                        "install_id": str(install_id),
+                        "final_status": final_status,
+                        "error_detail": error_detail,
+                    },
+                    trace_id=trace_id,
+                    initiated_by="agent",
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("failed to append event_trail for install %s", install_id)
     except Exception:  # noqa: BLE001
         log.exception("failed to update installed_apps status for %s", install_id)
 
@@ -135,8 +184,19 @@ async def install_app_endpoint(
         install_dir,
     )
 
+    body = InstallAppRequest(
+        app_name=req.app_name,
+        project_dir=install_dir,
+        app_version=req.app_version,
+        image_to_pull=req.image_to_pull,
+        health_check_container=req.health_check_container,
+        domain=req.domain,
+        domain_target_url=req.domain_target_url,
+        register_domain=req.register_domain,
+    )
+    task_trace_id = f"trc_{uuid.uuid4().hex[:8]}"
     background_tasks.add_task(
-        _run_install, install_id, org_id, project_id, req, install_dir
+        _run_install, install_id, org_id, project_id, task_trace_id, body
     )
 
     return {"install_id": str(install_id), "status": "installing"}
