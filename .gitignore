@@ -10,3 +10,9 @@ build/
 *.egg-info/
 .env
 .env.local
+*.log
+*.db
+*.sqlite
+.aegis/
+# 内部 spec / 架构文档不入开源仓
+docs/

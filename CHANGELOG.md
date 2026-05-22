@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.2] — 2026-05-22
+
+### Fixed
+- PoC bug #5: install output_dir 改用 settings.data_dir,不再硬编码 /var/lib/aegis (BATCH 13, commit 69c87ef)
+- PoC bug #6: install_dir 必填,后端 422 + 前端 zod required,移除 tempfile.mkdtemp fallback (BATCH 13+14)
+- log_dir 默认值改为 data_dir/logs (sentinel + validator),不再硬编码 /var/log/aegis (BATCH 14, commit cdb8308)
+
+### Added
+- Console install 表单 install_dir 必填校验 + placeholder ~/apps/{slug} (BATCH 14, commit a03cfb3)
+- Install 全流程 e2e 测试 (7 个, BATCH 14, commit 7318d97)
+- AEGIS_DATA_DIR / AEGIS_LOG_DIR 环境变量支持
+
+### Known issues (BATCH 15 backlog)
+- caddy_config_dir 默认 /etc/caddy/aegis 普通用户无写权限 (跟 log_dir 同款,留 BATCH 15)
+- Install e2e 测试用 mock 不走真容器,真容器 smoke test 留后续
+
 ## [0.2.0] — 2026-05-22
 
 ### Fixed (v0.7 PoC 撞出的 4 bug)

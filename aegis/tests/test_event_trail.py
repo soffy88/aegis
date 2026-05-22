@@ -92,10 +92,10 @@ async def test_recent_events_filtered_by_service(
     await recent_events(
         conn=mock_db_conn,
         org_id=test_org_id, project_id=test_project_id,
-        service="helixa",
+        service="my-service",
     )
     call = mock_db_conn.fetch.call_args
-    assert "helixa" in call[0]
+    assert "my-service" in call[0]
 
 
 @pytest.mark.asyncio

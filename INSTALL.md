@@ -62,7 +62,7 @@ curl http://localhost:8080/ready    # 应返回 {"status":"ready","db":"ok"}
 
 ### Q: install_app 后台 fail, 但前端只显示 status=failed 看不到原因?
 
-A: 看 `/tmp/aegis.log` (后台任务也写到这里). 或重启 aegis 主服务时加 `--log-level debug`.
+A: 看 `${AEGIS_DATA_DIR:-~/.aegis}/logs/aegis.log` (后台任务也写到这里). 或重启 aegis 主服务时加 `--log-level debug`.
 
 ### Q: `ModuleNotFoundError: No module named 'omodul' / 'obase'`?
 
