@@ -53,3 +53,22 @@ jobs:
         env:
           AEGIS_POSTGRES_DSN: postgresql://aegis:aegis@localhost:5432/aegis
         run: pytest aegis/tests/ --cov=aegis --cov-report=term-missing --cov-fail-under=89 -q
+
+  smoke:
+    runs-on: ubuntu-22.04
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[smoke]"
+
+      - name: Smoke tests (real Postgres container)
+        run: RUN_SMOKE=1 pytest aegis/tests/smoke/ -v

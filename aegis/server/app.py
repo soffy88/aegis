@@ -38,17 +38,17 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         log.info("aegis_starting host=%s port=%d", cfg.host, cfg.port)
         try:
             cfg.data_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
+        except OSError as exc:  # pragma: no cover
             log.error("cannot create data_dir=%s: %s — aborting", cfg.data_dir, exc)
             raise SystemExit(1) from exc
         try:
             cfg.log_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
+        except OSError as exc:  # pragma: no cover
             log.error("cannot create log_dir=%s: %s — aborting", cfg.log_dir, exc)
             raise SystemExit(1) from exc
         try:
             cfg.caddy_config_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
+        except OSError as exc:  # pragma: no cover
             log.error("cannot create caddy_config_dir=%s: %s — aborting", cfg.caddy_config_dir, exc)
             raise SystemExit(1) from exc
         await init_pool(
