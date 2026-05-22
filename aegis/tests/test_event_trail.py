@@ -1,4 +1,5 @@
 """Tests for event_trail writer/reader (DB layer)."""
+
 from __future__ import annotations
 
 import uuid
@@ -24,7 +25,8 @@ async def test_append_event_basic(
 
     result = await append_event(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id,
+        org_id=test_org_id,
+        project_id=test_project_id,
         event_type="alert_fired",
         payload={"a": 1},
     )
@@ -44,7 +46,8 @@ async def test_append_event_with_all_fields(
 
     await append_event(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id,
+        org_id=test_org_id,
+        project_id=test_project_id,
         event_type="omodul_run",
         severity="warning",
         payload={"k": "v"},
@@ -71,13 +74,21 @@ async def test_recent_events_no_service(
     test_project_id: uuid.UUID,
 ) -> None:
     mock_db_conn.fetch.return_value = [
-        {"id": uuid.uuid4(), "event_type": "alert_fired", "ts": "x",
-         "severity": "warning", "payload": {}, "omodul_kind": None,
-         "autoheal_plugin": None, "trace_id": None},
+        {
+            "id": uuid.uuid4(),
+            "event_type": "alert_fired",
+            "ts": "x",
+            "severity": "warning",
+            "payload": {},
+            "omodul_kind": None,
+            "autoheal_plugin": None,
+            "trace_id": None,
+        },
     ]
     result = await recent_events(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id,
+        org_id=test_org_id,
+        project_id=test_project_id,
     )
     assert len(result) == 1
 
@@ -91,7 +102,8 @@ async def test_recent_events_filtered_by_service(
     mock_db_conn.fetch.return_value = []
     await recent_events(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id,
+        org_id=test_org_id,
+        project_id=test_project_id,
         service="my-service",
     )
     call = mock_db_conn.fetch.call_args
@@ -102,8 +114,7 @@ async def test_recent_events_filtered_by_service(
 async def test_causal_chain(mock_db_conn: mock.AsyncMock) -> None:
     eid = uuid.uuid4()
     mock_db_conn.fetch.return_value = [
-        {"id": eid, "parent_id": None, "event_type": "x",
-         "payload": {}, "ts": "t", "depth": 0},
+        {"id": eid, "parent_id": None, "event_type": "x", "payload": {}, "ts": "t", "depth": 0},
     ]
     result = await causal_chain(conn=mock_db_conn, event_id=eid)
     assert len(result) == 1

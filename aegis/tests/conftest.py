@@ -1,4 +1,5 @@
 """Shared test fixtures — uses in-memory mocking for DB-free tests."""
+
 from __future__ import annotations
 
 import uuid

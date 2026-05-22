@@ -1,4 +1,5 @@
 """event_trail HTTP API."""
+
 from __future__ import annotations
 
 import uuid
@@ -50,7 +51,8 @@ async def create_event(
     """Append a user-submitted event to event_trail."""
     event_id = await append_event(
         conn=conn,
-        org_id=org_id, project_id=project_id,
+        org_id=org_id,
+        project_id=project_id,
         event_type=body.event_type,
         severity=body.severity,
         payload=body.payload,
@@ -73,8 +75,12 @@ async def list_events(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     return await recent_events(
-        conn=conn, org_id=org_id, project_id=project_id,
-        service=service, hours=hours, limit=limit,
+        conn=conn,
+        org_id=org_id,
+        project_id=project_id,
+        service=service,
+        hours=hours,
+        limit=limit,
     )
 
 

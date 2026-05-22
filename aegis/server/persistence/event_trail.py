@@ -1,4 +1,5 @@
 """event_trail writer + reader."""
+
 from __future__ import annotations
 
 import json
@@ -8,13 +9,26 @@ from typing import Any, Literal
 import asyncpg
 
 EventType = Literal[
-    "alert_fired", "alert_resolved", "alert_acked",
-    "deploy", "config_change", "release_gate_decision",
-    "omodul_run", "oskill_step", "llm_call",
-    "autoheal_triggered", "autoheal_executed", "autoheal_failed",
-    "state_change", "metric_anomaly", "log_anomaly",
-    "incident_created", "incident_resolved",
-    "user_action", "system_event", "docker_event",
+    "alert_fired",
+    "alert_resolved",
+    "alert_acked",
+    "deploy",
+    "config_change",
+    "release_gate_decision",
+    "omodul_run",
+    "oskill_step",
+    "llm_call",
+    "autoheal_triggered",
+    "autoheal_executed",
+    "autoheal_failed",
+    "state_change",
+    "metric_anomaly",
+    "log_anomaly",
+    "incident_created",
+    "incident_resolved",
+    "user_action",
+    "system_event",
+    "docker_event",
 ]
 
 
@@ -56,14 +70,24 @@ async def append_event(
             $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18
         ) RETURNING id
         """,
-        org_id, project_id, user_id,
-        service, resource, environment,
-        event_type, severity, json.dumps(payload or {}),
-        trace_id, parent_id, root_cause_id,
-        omodul_fingerprint, omodul_kind,
+        org_id,
+        project_id,
+        user_id,
+        service,
+        resource,
+        environment,
+        event_type,
+        severity,
+        json.dumps(payload or {}),
+        trace_id,
+        parent_id,
+        root_cause_id,
+        omodul_fingerprint,
+        omodul_kind,
         autoheal_plugin,
         json.dumps(autoheal_result) if autoheal_result else None,
-        initiated_by, approved_by,
+        initiated_by,
+        approved_by,
     )
     return uuid.UUID(str(row["id"]))
 
@@ -88,7 +112,11 @@ async def recent_events(
             ORDER BY ts DESC
             LIMIT $5
             """,
-            org_id, project_id, service, str(hours), limit,
+            org_id,
+            project_id,
+            service,
+            str(hours),
+            limit,
         )
     else:
         rows = await conn.fetch(
@@ -100,7 +128,10 @@ async def recent_events(
             ORDER BY ts DESC
             LIMIT $4
             """,
-            org_id, project_id, str(hours), limit,
+            org_id,
+            project_id,
+            str(hours),
+            limit,
         )
     return [dict(r) for r in rows]
 
@@ -126,6 +157,7 @@ async def causal_chain(
         )
         SELECT * FROM chain ORDER BY depth ASC
         """,
-        event_id, max_depth,
+        event_id,
+        max_depth,
     )
     return [dict(r) for r in rows]

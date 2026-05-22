@@ -1,4 +1,5 @@
 """Orchestration layer — Brain + AutoHeal."""
+
 from __future__ import annotations
 
 from aegis.server.orchestration.autoheal import AutoHealDispatcher

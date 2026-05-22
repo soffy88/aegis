@@ -4,14 +4,15 @@ Pattern: TestClient (matching existing suite) + mock DB + mock omodul.
 DB is not transactional; mocks simulate INSERT/UPDATE/event_trail writes.
 _run_install background task executes synchronously within TestClient context.
 """
+
 from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -128,9 +129,7 @@ class TestInstallFlow:
             final = _poll_status(client, install_id)
             assert final in ("completed", "failed")
 
-    def test_install_persists_to_db(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_install_persists_to_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """POST install → INSERT into installed_apps is executed (fetchval called)."""
         monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
         ec = _endpoint_conn()

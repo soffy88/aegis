@@ -2,6 +2,7 @@
 
 Spec: BATCH 13
 """
+
 from __future__ import annotations
 
 import uuid
@@ -55,9 +56,7 @@ def apps_client(apps_conn: mock.AsyncMock) -> Generator[TestClient, None, None]:
 
 
 class TestDataDir:
-    def test_install_uses_data_dir_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_install_uses_data_dir_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """data_dir defaults to ~/.aegis when AEGIS_DATA_DIR is not set."""
         monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
         s = AegisSettings()
@@ -85,19 +84,19 @@ class TestDataDir:
         mock_conn.fetch.return_value = []
 
         mock_pool_obj: mock.MagicMock = mock.MagicMock()
-        mock_pool_obj.acquire.return_value.__aenter__ = mock.AsyncMock(
-            return_value=mock_conn
-        )
+        mock_pool_obj.acquire.return_value.__aenter__ = mock.AsyncMock(return_value=mock_conn)
         mock_pool_obj.acquire.return_value.__aexit__ = mock.AsyncMock(return_value=False)
 
-        with mock.patch("aegis.server.app.init_pool", new_callable=mock.AsyncMock), \
-             mock.patch("aegis.server.app.close_pool", new_callable=mock.AsyncMock), \
-             mock.patch("aegis.server.app.get_pool", return_value=mock_pool_obj), \
-             mock.patch(
-                 "aegis.server.app.apply_migrations",
-                 new_callable=mock.AsyncMock,
-                 return_value=0,
-             ):
+        with (
+            mock.patch("aegis.server.app.init_pool", new_callable=mock.AsyncMock),
+            mock.patch("aegis.server.app.close_pool", new_callable=mock.AsyncMock),
+            mock.patch("aegis.server.app.get_pool", return_value=mock_pool_obj),
+            mock.patch(
+                "aegis.server.app.apply_migrations",
+                new_callable=mock.AsyncMock,
+                return_value=0,
+            ),
+        ):
             app = create_app(settings=cfg)
             with TestClient(app):
                 assert data_dir.exists()
@@ -109,18 +108,14 @@ class TestDataDir:
 
 
 class TestLogDir:
-    def test_log_dir_default_follows_data_dir(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_log_dir_default_follows_data_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No env set: log_dir == data_dir / 'logs'."""
         monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
         monkeypatch.delenv("AEGIS_LOG_DIR", raising=False)
         s = AegisSettings()
         assert s.log_dir == s.data_dir / "logs"
 
-    def test_log_dir_env_overrides(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_log_dir_env_overrides(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """AEGIS_LOG_DIR overrides the sentinel default."""
         custom = tmp_path / "custom-logs"
         monkeypatch.setenv("AEGIS_LOG_DIR", str(custom))
@@ -150,9 +145,7 @@ class TestLogDir:
         mock_conn.fetch.return_value = []
 
         mock_pool_obj: mock.MagicMock = mock.MagicMock()
-        mock_pool_obj.acquire.return_value.__aenter__ = mock.AsyncMock(
-            return_value=mock_conn
-        )
+        mock_pool_obj.acquire.return_value.__aenter__ = mock.AsyncMock(return_value=mock_conn)
         mock_pool_obj.acquire.return_value.__aexit__ = mock.AsyncMock(return_value=False)
 
         with (
@@ -176,9 +169,7 @@ class TestLogDir:
 
 
 class TestInstallDirRequired:
-    def test_install_dir_missing_returns_422(
-        self, apps_client: TestClient
-    ) -> None:
+    def test_install_dir_missing_returns_422(self, apps_client: TestClient) -> None:
         """POST /install without install_dir → 422, detail references install_dir."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
@@ -188,9 +179,7 @@ class TestInstallDirRequired:
         assert r.status_code == 422
         assert "install_dir" in str(r.json())
 
-    def test_install_dir_empty_string_returns_422(
-        self, apps_client: TestClient
-    ) -> None:
+    def test_install_dir_empty_string_returns_422(self, apps_client: TestClient) -> None:
         """POST /install with install_dir="" → 422."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
@@ -200,9 +189,7 @@ class TestInstallDirRequired:
         assert r.status_code == 422
         assert "install_dir" in str(r.json())
 
-    def test_install_dir_whitespace_only_returns_422(
-        self, apps_client: TestClient
-    ) -> None:
+    def test_install_dir_whitespace_only_returns_422(self, apps_client: TestClient) -> None:
         """POST /install with install_dir='   ' → 422 (whitespace stripped, then rejected)."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(

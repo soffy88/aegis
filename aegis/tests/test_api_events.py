@@ -1,4 +1,5 @@
 """Tests for events HTTP API."""
+
 from __future__ import annotations
 
 import uuid

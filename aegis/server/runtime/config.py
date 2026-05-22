@@ -1,8 +1,8 @@
 """Server config — loaded from env + defaults."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,7 +41,7 @@ class AegisSettings(BaseSettings):
         default_factory=lambda: Path.home() / ".aegis",
         description="Root data directory; override with AEGIS_DATA_DIR",
     )
-    log_dir: Optional[Path] = Field(
+    log_dir: Path | None = Field(
         default=None,
         description="Log directory; defaults to data_dir/logs. Override with AEGIS_LOG_DIR",
     )

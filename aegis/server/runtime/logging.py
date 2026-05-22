@@ -6,6 +6,7 @@ logging configuration as the request handlers. We must ensure:
   2. Uvicorn's loggers don't suppress our application loggers.
   3. The aegis.* hierarchy propagates to root.
 """
+
 from __future__ import annotations
 
 import logging

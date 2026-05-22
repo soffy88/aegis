@@ -55,3 +55,22 @@ conveniences, not feature lock-in.
 - **Security maturity**: pre-v0.8. No RBAC, no audit log, no secrets management.
   Single-user / single-tenant only at this stage.
 - **Tested coverage**: backend 89%, console 3 tests (manual install flow only).
+
+## Contributing
+
+```bash
+# set up dev environment
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pre-commit install
+
+# run tests
+pytest aegis/tests/ --cov=aegis --cov-fail-under=89
+
+# lint + format
+ruff check --fix aegis/
+ruff format aegis/
+mypy aegis/
+```
+
+All commits run pre-commit hooks automatically — codename guard, hardcoded-path guard, ruff lint+format.

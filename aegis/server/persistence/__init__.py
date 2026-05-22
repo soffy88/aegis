@@ -1,4 +1,5 @@
 """Persistence layer."""
+
 from __future__ import annotations
 
 from aegis.server.persistence.db import (

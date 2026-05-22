@@ -1,4 +1,5 @@
 """Postgres async connection pool management."""
+
 from __future__ import annotations
 
 import logging

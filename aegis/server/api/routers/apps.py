@@ -1,4 +1,5 @@
 """Installed apps management API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -74,6 +75,7 @@ async def _run_install(
             InstallAppInput,
             install_app,
         )
+
         cfg = InstallAppConfig(register_domain=body.register_domain)
         inp = InstallAppInput(
             app_name=body.app_name,
@@ -93,14 +95,18 @@ async def _run_install(
     except ImportError as exc:
         log.exception(
             "install_app import failed (cross-repo deps not installed) install_id=%s: %s",
-            install_id, exc,
+            install_id,
+            exc,
         )
         final_status = "failed"
         error_detail = f"ImportError: {exc}"
     except Exception as exc:  # noqa: BLE001
         log.exception(
             "install_app background dispatch failed install_id=%s install_dir=%s %s: %s",
-            install_id, output_dir, type(exc).__name__, exc,
+            install_id,
+            output_dir,
+            type(exc).__name__,
+            exc,
         )
         final_status = "failed"
         error_detail = f"{type(exc).__name__}: {exc}"

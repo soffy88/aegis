@@ -1,4 +1,5 @@
 """Tests for Brain pipeline skeleton."""
+
 from __future__ import annotations
 
 import uuid
@@ -19,7 +20,9 @@ async def test_pipeline_no_escalation_for_info(
 
     result = await run_brain_pipeline(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id, user_id=None,
+        org_id=test_org_id,
+        project_id=test_project_id,
+        user_id=None,
         alert_payload={"alert_name": "test", "severity": "info"},
         trace_id="trc_a",
     )
@@ -37,7 +40,9 @@ async def test_pipeline_full_run_for_critical(
 
     result = await run_brain_pipeline(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id, user_id=None,
+        org_id=test_org_id,
+        project_id=test_project_id,
+        user_id=None,
         alert_payload={"alert_name": "x", "severity": "critical"},
         trace_id="trc_b",
     )
@@ -56,7 +61,9 @@ async def test_pipeline_warning_escalates(
 
     result = await run_brain_pipeline(
         conn=mock_db_conn,
-        org_id=test_org_id, project_id=test_project_id, user_id=None,
+        org_id=test_org_id,
+        project_id=test_project_id,
+        user_id=None,
         alert_payload={"alert_name": "x", "severity": "warning"},
         trace_id="trc_c",
     )

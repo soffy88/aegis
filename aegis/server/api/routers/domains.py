@@ -1,4 +1,5 @@
 """Domain registration API — forwards to aegis-edge."""
+
 from __future__ import annotations
 
 import logging

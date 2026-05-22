@@ -1,4 +1,5 @@
 """Tests for docker, apps, and domains routers."""
+
 from __future__ import annotations
 
 import uuid
@@ -192,9 +193,7 @@ class TestDockerRouter:
                 "stderr_truncated": False,
             },
         ):
-            r = docker_client.get(
-                "/api/v1/docker/containers/nginx/logs?tail=10&since_seconds=300"
-            )
+            r = docker_client.get("/api/v1/docker/containers/nginx/logs?tail=10&since_seconds=300")
         assert r.status_code == 200
 
     def test_logs_oprim_error_502(self, docker_client: TestClient) -> None:
@@ -224,9 +223,7 @@ class TestAppsRouter:
         r = apps_client.get(f"/api/v1/apps/{_APP_ID}")
         assert r.status_code == 404
 
-    def test_get_app_found(
-        self, apps_client: TestClient, apps_conn: mock.AsyncMock
-    ) -> None:
+    def test_get_app_found(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
         apps_conn.fetchrow.return_value = {
             "id": _APP_ID,
             "app_name": "homeassistant",
@@ -254,9 +251,7 @@ class TestAppsRouter:
         assert body["status"] == "installing"
         assert "install_id" in body
 
-    def test_install_custom_dir(
-        self, apps_client: TestClient, apps_conn: mock.AsyncMock
-    ) -> None:
+    def test_install_custom_dir(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
         apps_conn.fetchval.return_value = _APP_ID
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
@@ -269,9 +264,7 @@ class TestAppsRouter:
         r = apps_client.delete(f"/api/v1/apps/{_APP_ID}")
         assert r.status_code == 204
 
-    def test_uninstall_not_found(
-        self, apps_client: TestClient, apps_conn: mock.AsyncMock
-    ) -> None:
+    def test_uninstall_not_found(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
         apps_conn.execute.return_value = "DELETE 0"
         r = apps_client.delete(f"/api/v1/apps/{_APP_ID}")
         assert r.status_code == 404
@@ -288,17 +281,13 @@ class TestDomainsRouter:
         assert r.status_code == 200
         assert r.json() == []
 
-    def test_register_domain_edge_success(
-        self, domains_client: TestClient
-    ) -> None:
+    def test_register_domain_edge_success(self, domains_client: TestClient) -> None:
         edge_resp = mock.MagicMock()
         edge_resp.is_success = True
         edge_resp.status_code = 201
 
         with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = (
-                edge_resp
-            )
+            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
             r = domains_client.post(
                 "/api/v1/domains",
                 json={
@@ -312,13 +301,9 @@ class TestDomainsRouter:
         assert body["domain"] == "ha.example.com"
         assert body["edge_registered"] is True
 
-    def test_register_domain_edge_unavailable(
-        self, domains_client: TestClient
-    ) -> None:
+    def test_register_domain_edge_unavailable(self, domains_client: TestClient) -> None:
         with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.side_effect = (
-                httpx_request_error()
-            )
+            MockClient.return_value.__aenter__.return_value.post.side_effect = httpx_request_error()
             r = domains_client.post(
                 "/api/v1/domains",
                 json={
@@ -333,18 +318,14 @@ class TestDomainsRouter:
         assert body["edge_registered"] is False
         assert body["edge_error"] is not None
 
-    def test_register_domain_edge_error_response(
-        self, domains_client: TestClient
-    ) -> None:
+    def test_register_domain_edge_error_response(self, domains_client: TestClient) -> None:
         edge_resp = mock.MagicMock()
         edge_resp.is_success = False
         edge_resp.status_code = 400
         edge_resp.text = "bad domain"
 
         with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = (
-                edge_resp
-            )
+            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
             r = domains_client.post(
                 "/api/v1/domains",
                 json={"domain": "bad", "target_url": "http://x"},
@@ -369,9 +350,7 @@ class TestDomainsRouter:
         edge_resp.is_success = True
         edge_resp.status_code = 201
         with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = (
-                edge_resp
-            )
+            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
             r = domains_client.post(
                 "/api/v1/domains",
                 json={

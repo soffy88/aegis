@@ -1,4 +1,5 @@
 """Smoke tests verifying cross-repo dependencies are installed."""
+
 from __future__ import annotations
 
 
@@ -25,6 +26,7 @@ def test_omodul_importable() -> None:
 def test_omodul_install_app_callable() -> None:
     """The critical omodul.install_app entry must be importable."""
     from omodul.install_app import install_app
+
     assert callable(install_app)
 
 

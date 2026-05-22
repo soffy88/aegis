@@ -1,4 +1,5 @@
 """Discover AutoHealPlugin entry_points + validate config."""
+
 from __future__ import annotations
 
 import logging

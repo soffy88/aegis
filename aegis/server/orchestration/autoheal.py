@@ -4,6 +4,7 @@ Wires plugin lookup + dry-run logging. Actual lifecycle execution
 (pre_check/execute/post_verify/rollback) is added in a future batch
 (needs concrete plugins + AutoHealContext implementation).
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,8 +29,7 @@ class AutoHealDispatcher:
     def __init__(self, plugins: dict[str, type[Any]], dry_run: bool = True) -> None:
         self._plugins = plugins
         self._dry_run = dry_run
-        log.info("autoheal_dispatcher_ready plugins=%d dry_run=%s",
-                 len(plugins), dry_run)
+        log.info("autoheal_dispatcher_ready plugins=%d dry_run=%s", len(plugins), dry_run)
 
     def find_matching_plugins(self, alert_name: str) -> list[type[Any]]:
         """Find plugins whose matches_alert pattern matches alert_name.
@@ -68,7 +68,8 @@ class AutoHealDispatcher:
         for cls in matched:
             event_id = await append_event(
                 conn=conn,
-                org_id=org_id, project_id=project_id,
+                org_id=org_id,
+                project_id=project_id,
                 event_type="autoheal_triggered",
                 severity="warning",
                 autoheal_plugin=cls.name,
@@ -77,16 +78,20 @@ class AutoHealDispatcher:
                     "dry_run": self._dry_run,
                     "alert_payload": alert_payload,
                 },
-                trace_id=trace_id, parent_id=parent_event_id,
+                trace_id=trace_id,
+                parent_id=parent_event_id,
                 initiated_by="agent",
             )
 
             if self._dry_run:
                 log.info("autoheal_dry_run plugin=%s alert=%s", cls.name, alert_name)
-                results.append({
-                    "plugin": cls.name, "outcome": "dry_run",
-                    "event_id": str(event_id),
-                })
+                results.append(
+                    {
+                        "plugin": cls.name,
+                        "outcome": "dry_run",
+                        "event_id": str(event_id),
+                    }
+                )
                 continue
 
             # TODO (future batch): build AutoHealContext + run lifecycle

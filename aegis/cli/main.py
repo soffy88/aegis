@@ -1,4 +1,5 @@
 """CLI: aegis <subcommand>"""
+
 from __future__ import annotations
 
 import argparse
@@ -9,10 +10,12 @@ from aegis.server.runtime.config import AegisSettings
 
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
+
     cfg = AegisSettings()
     uvicorn.run(
         "aegis.server.app:app",
-        host=cfg.host, port=cfg.port,
+        host=cfg.host,
+        port=cfg.port,
         log_level=cfg.log_level.lower(),
         reload=args.reload,
     )

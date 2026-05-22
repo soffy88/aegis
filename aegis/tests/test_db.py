@@ -1,4 +1,5 @@
 """Tests for persistence.db module."""
+
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -83,5 +84,6 @@ class TestAcquire:
         db_module._pool = fake_pool
 
         from aegis.server.persistence.db import acquire
+
         async for conn in acquire():
             assert conn is fake_conn

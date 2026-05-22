@@ -1,4 +1,5 @@
 """Alert ingestion endpoint — triggers Brain pipeline + AutoHeal."""
+
 from __future__ import annotations
 
 import secrets
@@ -35,7 +36,8 @@ async def ingest_alert(
 
     alert_event_id = await append_event(
         conn=conn,
-        org_id=org_id, project_id=project_id,
+        org_id=org_id,
+        project_id=project_id,
         event_type="alert_fired",
         severity=body.severity,
         service=body.service,
@@ -49,7 +51,8 @@ async def ingest_alert(
 
     pipeline = await run_brain_pipeline(
         conn=conn,
-        org_id=org_id, project_id=project_id,
+        org_id=org_id,
+        project_id=project_id,
         user_id=None,
         alert_payload={
             "alert_name": body.alert_name,

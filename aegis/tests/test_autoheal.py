@@ -1,4 +1,5 @@
 """Tests for AutoHealDispatcher skeleton."""
+
 from __future__ import annotations
 
 import uuid
@@ -45,7 +46,8 @@ class TestAutoHealDispatcher:
 
         result = await d.dispatch(
             conn=mock_db_conn,
-            org_id=test_org_id, project_id=test_project_id,
+            org_id=test_org_id,
+            project_id=test_project_id,
             alert_payload={"alert_name": "rabbitmq.foo"},
             trace_id="trc",
         )
@@ -62,7 +64,8 @@ class TestAutoHealDispatcher:
         d = AutoHealDispatcher(plugins={}, dry_run=True)
         result = await d.dispatch(
             conn=mock_db_conn,
-            org_id=test_org_id, project_id=test_project_id,
+            org_id=test_org_id,
+            project_id=test_project_id,
             alert_payload={"alert_name": "x"},
             trace_id="trc",
         )

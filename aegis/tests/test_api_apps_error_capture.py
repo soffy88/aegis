@@ -1,4 +1,5 @@
 """Tests verifying _run_install logs and records errors properly."""
+
 from __future__ import annotations
 
 import sys
@@ -27,10 +28,13 @@ async def test_run_install_import_error_captured() -> None:
     mock_pool: mock.MagicMock = mock.MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
-    with mock.patch(
-        "aegis.server.api.routers.apps.get_pool",
-        return_value=mock_pool,
-    ), mock.patch.dict("sys.modules", {"omodul.install_app": None}):
+    with (
+        mock.patch(
+            "aegis.server.api.routers.apps.get_pool",
+            return_value=mock_pool,
+        ),
+        mock.patch.dict("sys.modules", {"omodul.install_app": None}),
+    ):
         sys.modules.pop("omodul.install_app", None)
         sys.modules["omodul.install_app"] = None  # type: ignore[assignment]
 
@@ -61,12 +65,15 @@ async def test_run_install_unexpected_exception_captured() -> None:
     mock_pool: mock.MagicMock = mock.MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
-    with mock.patch(
-        "aegis.server.api.routers.apps.get_pool",
-        return_value=mock_pool,
-    ), mock.patch(
-        "asyncio.to_thread",
-        side_effect=RuntimeError("synthetic bug"),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.apps.get_pool",
+            return_value=mock_pool,
+        ),
+        mock.patch(
+            "asyncio.to_thread",
+            side_effect=RuntimeError("synthetic bug"),
+        ),
     ):
         await _run_install(
             install_id=install_id,
@@ -77,8 +84,7 @@ async def test_run_install_unexpected_exception_captured() -> None:
         )
 
     update_calls = [
-        c for c in mock_conn.execute.call_args_list
-        if "UPDATE installed_apps" in str(c[0][0])
+        c for c in mock_conn.execute.call_args_list if "UPDATE installed_apps" in str(c[0][0])
     ]
     assert len(update_calls) >= 1
     assert any("failed" in str(c[0]) for c in update_calls)

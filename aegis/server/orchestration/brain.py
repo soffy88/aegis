@@ -4,6 +4,7 @@ This batch only wires the dispatch flow. Actual LLM calls land in a future batch
 (omodul.triage_alert / omodul.diagnose_root_cause / omodul.propose_runbook
 need to be added to 3O main repo first).
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,20 +35,24 @@ async def run_brain_pipeline(
     Returns:
         dict with stages_run + outcome.
     """
-    log.info("brain_pipeline_start trace=%s alert=%s", trace_id,
-             alert_payload.get("alert_name"))
+    log.info("brain_pipeline_start trace=%s alert=%s", trace_id, alert_payload.get("alert_name"))
 
     # === Stage 1: Triage (stub) ===
     triage_event_id = await append_event(
-        conn=conn, org_id=org_id, project_id=project_id, user_id=user_id,
-        event_type="omodul_run", severity="info",
+        conn=conn,
+        org_id=org_id,
+        project_id=project_id,
+        user_id=user_id,
+        event_type="omodul_run",
+        severity="info",
         omodul_kind="triage_alert",
         payload={
             "stub": True,
             "would_call": "omodul.triage_alert",
             "alert_payload": alert_payload,
         },
-        trace_id=trace_id, initiated_by="agent",
+        trace_id=trace_id,
+        initiated_by="agent",
     )
 
     # Stub decision: escalate to RCA if severity >= warning
@@ -63,24 +68,36 @@ async def run_brain_pipeline(
 
     # === Stage 2: RCA (stub) ===
     rca_event_id = await append_event(
-        conn=conn, org_id=org_id, project_id=project_id, user_id=user_id,
-        event_type="omodul_run", severity="info",
+        conn=conn,
+        org_id=org_id,
+        project_id=project_id,
+        user_id=user_id,
+        event_type="omodul_run",
+        severity="info",
         omodul_kind="diagnose_root_cause",
         payload={
             "stub": True,
             "would_call": "omodul.diagnose_root_cause",
             "confidence_placeholder": 0.5,
         },
-        trace_id=trace_id, parent_id=triage_event_id, initiated_by="agent",
+        trace_id=trace_id,
+        parent_id=triage_event_id,
+        initiated_by="agent",
     )
 
     # === Stage 3: Runbook Proposer (stub) ===
     runbook_event_id = await append_event(
-        conn=conn, org_id=org_id, project_id=project_id, user_id=user_id,
-        event_type="omodul_run", severity="info",
+        conn=conn,
+        org_id=org_id,
+        project_id=project_id,
+        user_id=user_id,
+        event_type="omodul_run",
+        severity="info",
         omodul_kind="propose_runbook",
         payload={"stub": True, "would_call": "omodul.propose_runbook"},
-        trace_id=trace_id, parent_id=rca_event_id, root_cause_id=rca_event_id,
+        trace_id=trace_id,
+        parent_id=rca_event_id,
+        root_cause_id=rca_event_id,
         initiated_by="agent",
     )
 

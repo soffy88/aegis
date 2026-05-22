@@ -1,4 +1,5 @@
 """Tests for health endpoints (uses TestClient with overridden DB dep)."""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Generator
