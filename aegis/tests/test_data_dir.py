@@ -164,6 +164,40 @@ class TestLogDir:
 
 
 # ---------------------------------------------------------------------------
+# caddy_config_dir sentinel pattern (§3)
+# ---------------------------------------------------------------------------
+
+
+class TestCaddyConfigDir:
+    def test_caddy_config_dir_default_follows_data_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No env set: caddy_config_dir == data_dir / 'caddy'."""
+        monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
+        monkeypatch.delenv("AEGIS_CADDY_CONFIG_DIR", raising=False)
+        s = AegisSettings()
+        assert s.caddy_config_dir == s.data_dir / "caddy"
+
+    def test_caddy_config_dir_env_overrides(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AEGIS_CADDY_CONFIG_DIR overrides the sentinel default."""
+        custom = tmp_path / "custom-caddy"
+        monkeypatch.setenv("AEGIS_CADDY_CONFIG_DIR", str(custom))
+        s = AegisSettings()
+        assert s.caddy_config_dir == custom
+
+    def test_caddy_config_dir_follows_data_dir_when_data_dir_overridden(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CADDY_CONFIG_DIR unset: caddy_config_dir tracks AEGIS_DATA_DIR override."""
+        monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path / "yy"))
+        monkeypatch.delenv("AEGIS_CADDY_CONFIG_DIR", raising=False)
+        s = AegisSettings()
+        assert s.caddy_config_dir == tmp_path / "yy" / "caddy"
+
+
+# ---------------------------------------------------------------------------
 # Bug #6: install_dir required — endpoint returns 422 when invalid
 # ---------------------------------------------------------------------------
 

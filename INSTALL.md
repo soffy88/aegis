@@ -58,7 +58,17 @@ curl http://localhost:8080/health   # 应返回 {"status":"ok"...}
 curl http://localhost:8080/ready    # 应返回 {"status":"ready","db":"ok"}
 ```
 
-## 6. 常见问题
+## 6. 目录默认值
+
+| 配置项 | 默认值 | 环境变量 |
+|---|---|---|
+| 数据目录 | `~/.aegis` | `AEGIS_DATA_DIR` |
+| 日志目录 | `$AEGIS_DATA_DIR/logs` | `AEGIS_LOG_DIR` |
+| Caddy 配置目录 | `$AEGIS_DATA_DIR/caddy` | `AEGIS_CADDY_CONFIG_DIR` |
+
+所有目录在 `aegis serve` 启动时自动创建。不需要 root 权限。
+
+## 7. 常见问题
 
 ### Q: install_app 后台 fail, 但前端只显示 status=failed 看不到原因?
 

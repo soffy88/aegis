@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.3] — 2026-05-22
+
+### Fixed
+- caddy_config_dir 默认值改为 data_dir/caddy (sentinel + validator),不再硬编码 /etc/caddy/aegis (BATCH 15 §3)
+
+### Added
+- AEGIS_CADDY_CONFIG_DIR 环境变量支持
+- pre-commit hooks (codename guard + hardcoded-path guard + inline-secret guard + ruff)
+- .github/workflows/ci.yml for aegis + aegis-console
+
 ## [0.2.2] — 2026-05-22
 
 ### Fixed

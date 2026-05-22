@@ -82,7 +82,16 @@ class AegisSettings(BaseSettings):
 
     # === Caddy ===
     caddy_admin_url: str = "http://localhost:2019"
-    caddy_config_dir: str = "/etc/caddy/aegis"
+    caddy_config_dir: Path = Field(
+        default=_UNSET_PATH,
+        description="Caddy config dir (default: data_dir/caddy). Override: AEGIS_CADDY_CONFIG_DIR",
+    )
+
+    @model_validator(mode="after")
+    def resolve_caddy_config_dir(self) -> AegisSettings:
+        if self.caddy_config_dir == _UNSET_PATH:
+            self.caddy_config_dir = self.data_dir / "caddy"
+        return self
 
     # === Logging ===
     log_level: str = "INFO"
