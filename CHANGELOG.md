@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.5] — 2026-05-23
+
+### Removed
+- `aegis-autoheal-sdk` from runtime dependencies (0 runtime imports; will re-add in BATCH 18 when AutoHeal plugin work begins)
+
 ## [0.2.4] — 2026-05-23
 
 ### Added

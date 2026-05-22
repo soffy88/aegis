@@ -28,8 +28,3 @@ def test_omodul_install_app_callable() -> None:
     from omodul.install_app import install_app
 
     assert callable(install_app)
-
-
-def test_aegis_autoheal_sdk_importable() -> None:
-    """aegis-autoheal-sdk must be installed (Plugin ABC)."""
-    import aegis_autoheal_sdk  # noqa: F401
