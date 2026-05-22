@@ -16,3 +16,12 @@ build/
 .aegis/
 # 内部 spec / 架构文档不入开源仓
 docs/
+# 同级姊妹仓 (各自独立 git repo,不入主仓)
+aegis-appstore/
+aegis-autoheal-sdk/
+aegis-console/
+aegis-edge/
+aegis-poc/
+aegis-watch/
+# 内部 handoff 文档
+handoff_section6_updated.md
