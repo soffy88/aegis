@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_UNSET_PATH = Path("__aegis_unset__")
+
 
 class AegisSettings(BaseSettings):
     """Aegis main server configuration.
@@ -41,14 +43,14 @@ class AegisSettings(BaseSettings):
         default_factory=lambda: Path.home() / ".aegis",
         description="Root data directory; override with AEGIS_DATA_DIR",
     )
-    log_dir: Path | None = Field(
-        default=None,
+    log_dir: Path = Field(
+        default=_UNSET_PATH,
         description="Log directory; defaults to data_dir/logs. Override with AEGIS_LOG_DIR",
     )
 
     @model_validator(mode="after")
     def resolve_log_dir(self) -> AegisSettings:
-        if self.log_dir is None:
+        if self.log_dir == _UNSET_PATH:
             self.log_dir = self.data_dir / "logs"
         return self
 
