@@ -19,7 +19,8 @@ dependencies = [
     "pydantic-settings>=2.5",
     "httpx>=0.27",
     "PyYAML>=6.0",
-    "oprim @ git+https://github.com/soffy88/oprim.git@main",
+    "obase @ git+https://github.com/helios-plat/obase.git@main",
+    "oprim @ git+https://github.com/helios-plat/oprim.git@main",
 ]
 
 [project.optional-dependencies]
