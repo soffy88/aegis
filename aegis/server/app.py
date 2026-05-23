@@ -14,6 +14,7 @@ from aegis.server.api.routers import alerts, domains, events, health
 from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import projects as projects_router
+from aegis.server.api.routers import store as store_router
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -89,6 +90,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(apps_router.router)
     app.include_router(domains.router)
     app.include_router(projects_router.router)
+    app.include_router(store_router.router)
 
     return app
 
