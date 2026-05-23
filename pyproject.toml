@@ -46,6 +46,9 @@ smoke = [
 [project.scripts]
 aegis = "aegis.cli.main:cli_main"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["aegis"]
 
