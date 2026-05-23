@@ -113,3 +113,50 @@ async def container_logs(
     since_seconds: int | None = Query(default=None, ge=1),
 ) -> dict[str, Any]:
     return await _logs(container, tail, since_seconds)
+
+
+@router.get("/containers/{container}/stats")
+async def container_stats(container: str) -> dict[str, Any]:
+    """Single-shot container stats: CPU%, Mem MB, Net I/O kB/s."""
+
+    def _get_stats(name: str) -> dict[str, Any]:
+        import docker  # noqa: PLC0415
+
+        client = docker.from_env()
+        c = client.containers.get(name)
+        raw = c.stats(stream=False)
+
+        # CPU %
+        cpu_delta = (
+            raw["cpu_stats"]["cpu_usage"]["total_usage"]
+            - raw["precpu_stats"]["cpu_usage"]["total_usage"]
+        )
+        sys_delta = raw["cpu_stats"]["system_cpu_usage"] - raw["precpu_stats"]["system_cpu_usage"]
+        n_cpus = raw["cpu_stats"].get("online_cpus") or len(
+            raw["cpu_stats"]["cpu_usage"].get("percpu_usage", [1])
+        )
+        cpu_pct = round((cpu_delta / sys_delta) * n_cpus * 100, 2) if sys_delta > 0 else 0.0
+
+        # Memory
+        mem_usage = raw["memory_stats"].get("usage", 0)
+        mem_limit = raw["memory_stats"].get("limit", 1)
+        mem_mb = round(mem_usage / 1024 / 1024, 1)
+
+        # Network I/O
+        networks = raw.get("networks", {})
+        rx_bytes = sum(v.get("rx_bytes", 0) for v in networks.values())
+        tx_bytes = sum(v.get("tx_bytes", 0) for v in networks.values())
+
+        return {
+            "container": name,
+            "cpu_pct": cpu_pct,
+            "mem_mb": mem_mb,
+            "mem_limit_mb": round(mem_limit / 1024 / 1024, 1),
+            "net_rx_kb": round(rx_bytes / 1024, 1),
+            "net_tx_kb": round(tx_bytes / 1024, 1),
+        }
+
+    try:
+        return await asyncio.to_thread(_get_stats, container)
+    except Exception as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
