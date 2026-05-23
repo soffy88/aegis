@@ -70,7 +70,7 @@ async def _run_install(
     domain: str | None = None
 
     try:
-        from omodul.install_app import (  # noqa: PLC0415
+        from aegis.server.services.install_app import (  # noqa: PLC0415
             InstallAppConfig,
             InstallAppInput,
             install_app,

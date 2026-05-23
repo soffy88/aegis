@@ -110,7 +110,10 @@ class TestInstallFlow:
 
         with (
             mock.patch("aegis.server.api.routers.apps.get_pool", return_value=_pool_mock(bc)),
-            mock.patch("omodul.install_app.install_app", side_effect=_omodul_success),
+            mock.patch(
+                "aegis.server.services.install_app.install_app",
+                side_effect=_omodul_success,
+            ),
             _make_client(ec) as client,
         ):
             r = client.post(
@@ -137,7 +140,10 @@ class TestInstallFlow:
 
         with (
             mock.patch("aegis.server.api.routers.apps.get_pool", return_value=_pool_mock(bc)),
-            mock.patch("omodul.install_app.install_app", side_effect=_omodul_success),
+            mock.patch(
+                "aegis.server.services.install_app.install_app",
+                side_effect=_omodul_success,
+            ),
             _make_client(ec) as client,
         ):
             r = client.post(
@@ -166,7 +172,10 @@ class TestInstallFlow:
 
         with (
             mock.patch("aegis.server.api.routers.apps.get_pool", return_value=_pool_mock(bc)),
-            mock.patch("omodul.install_app.install_app", side_effect=_omodul_success),
+            mock.patch(
+                "aegis.server.services.install_app.install_app",
+                side_effect=_omodul_success,
+            ),
             _make_client(ec) as client,
         ):
             r = client.post(
@@ -218,7 +227,10 @@ class TestInstallFlow:
 
         with (
             mock.patch("aegis.server.api.routers.apps.get_pool", return_value=_pool_mock(bc)),
-            mock.patch("omodul.install_app.install_app", side_effect=_omodul_fail),
+            mock.patch(
+                "aegis.server.services.install_app.install_app",
+                side_effect=_omodul_fail,
+            ),
             _make_client(ec) as client,
         ):
             r = client.post(
@@ -249,7 +261,10 @@ class TestInstallFlow:
 
         with (
             mock.patch("aegis.server.api.routers.apps.get_pool", return_value=_pool_mock(bc)),
-            mock.patch("omodul.install_app.install_app", side_effect=_omodul_success),
+            mock.patch(
+                "aegis.server.services.install_app.install_app",
+                side_effect=_omodul_success,
+            ),
             _make_client(ec) as client,
         ):
             r = client.post(

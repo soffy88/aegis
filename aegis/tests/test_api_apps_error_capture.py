@@ -33,10 +33,10 @@ async def test_run_install_import_error_captured() -> None:
             "aegis.server.api.routers.apps.get_pool",
             return_value=mock_pool,
         ),
-        mock.patch.dict("sys.modules", {"omodul.install_app": None}),
+        mock.patch.dict("sys.modules", {"aegis.server.services.install_app": None}),
     ):
-        sys.modules.pop("omodul.install_app", None)
-        sys.modules["omodul.install_app"] = None  # type: ignore[assignment]
+        sys.modules.pop("aegis.server.services.install_app", None)
+        sys.modules["aegis.server.services.install_app"] = None  # type: ignore[assignment]
 
         await _run_install(
             install_id=install_id,
