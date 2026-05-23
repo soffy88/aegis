@@ -22,6 +22,14 @@ def _clean_state() -> None:
     _HEALTH_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _mock_discovery() -> None:
+    """Disable Docker discovery in unit tests."""
+    import aegis.server.services.project_discovery as disc_mod
+
+    disc_mod._discovery_cache = ([], 1e18)  # Cached empty, far-future timestamp
+
+
 @pytest.fixture
 def client() -> TestClient:
     app = create_app()

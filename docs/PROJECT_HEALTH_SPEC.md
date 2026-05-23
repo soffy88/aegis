@@ -65,3 +65,36 @@ This means existing projects (helixa, tide, hevi, selene) work without changes.
 ## Configuration
 
 Projects declare their health endpoint via Docker labels (see below) or manual registration.
+
+## How to make your project discoverable by Aegis
+
+Add Docker labels to your containers:
+
+```yaml
+# docker-compose.yml
+services:
+  myapp:
+    image: myapp:latest
+    labels:
+      aegis.project: stratum
+      aegis.health.path: /health
+      aegis.health.port: 8000
+      aegis.role: primary
+```
+
+### Label reference
+
+| Label | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `aegis.project` | Yes | — | Project name (used for grouping) |
+| `aegis.health.path` | No | `/health` | Health endpoint path |
+| `aegis.health.port` | No | Auto from EXPOSE | Port to reach health endpoint |
+| `aegis.role` | No | — | Container role (`primary`, `worker`, `cache`, etc.) |
+
+### Discovery behavior
+
+- Aegis queries Docker for containers with `aegis.project` label
+- Containers with the same `aegis.project` value are grouped into one project
+- Health is checked on the first container with a reachable port
+- Discovery results are cached for 30 seconds
+- If Docker is unavailable, discovery degrades gracefully (returns empty list)
