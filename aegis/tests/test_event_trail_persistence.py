@@ -37,7 +37,7 @@ async def test_save_decision_trail_completed() -> None:
     conn.execute.assert_called_once()
     sql = conn.execute.call_args[0][0]
     assert "INSERT INTO event_trail" in sql
-    assert "ON CONFLICT DO NOTHING" in sql
+    assert "ON CONFLICT (omodul_fingerprint) DO NOTHING" in sql
 
 
 @pytest.mark.asyncio
@@ -105,3 +105,51 @@ async def test_decision_trail_contains_steps() -> None:
     payload = json.loads(payload_json)
     assert payload["decision_trail"] == trail
     assert len(payload["decision_trail"]["steps"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_then_completed_retry_sql_uses_conflict_target() -> None:
+    """MF3: failed first, then completed retry — both issue INSERT with ON CONFLICT (omodul_fingerprint).
+
+    ADR-002 方案 A: DB keeps first record (failed), completed retry is silently dropped.
+    """
+    import json
+
+    pool = _mock_pool()
+    with mock.patch("aegis.server.persistence.db.get_pool", return_value=pool):
+        # First call: failed
+        await save_decision_trail(
+            omodul_name="install_self_hosted_app",
+            fingerprint="fp_retry_001",
+            decision_trail={"steps": []},
+            user_id="user_a",
+            status="failed",
+            error={"error_class": "ConnectionError", "error_message": "docker down"},
+        )
+        # Second call: completed (retry)
+        await save_decision_trail(
+            omodul_name="install_self_hosted_app",
+            fingerprint="fp_retry_001",
+            decision_trail={"steps": [{"step_no": 1}]},
+            user_id="user_a",
+            status="completed",
+        )
+
+    conn = pool.acquire.return_value.__aenter__.return_value
+    assert conn.execute.call_count == 2
+
+    # Both use ON CONFLICT (omodul_fingerprint) DO NOTHING
+    for call in conn.execute.call_args_list:
+        sql = call[0][0]
+        assert "ON CONFLICT (omodul_fingerprint) DO NOTHING" in sql
+
+    # First call has severity=warning (failed), second has severity=info (completed)
+    first_severity = conn.execute.call_args_list[0][0][1]
+    second_severity = conn.execute.call_args_list[1][0][1]
+    assert first_severity == "warning"
+    assert second_severity == "info"
+
+    # First call payload contains error
+    first_payload = json.loads(conn.execute.call_args_list[0][0][2])
+    assert first_payload["status"] == "failed"
+    assert first_payload["error"]["error_class"] == "ConnectionError"

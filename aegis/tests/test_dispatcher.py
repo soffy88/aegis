@@ -215,3 +215,16 @@ async def test_dispatcher_omodul_failure_no_dedup_but_persists(tmp_path: Path) -
     assert r["status"] == "failed"
     dedup.set.assert_not_called()
     mock_save.assert_called_once()
+
+
+@pytest.mark.xfail(
+    reason="主库 omodul __version__ 缺失 (Wiki 已知, 待主库 PATCH bump 修复). "
+           "Aegis 测试此处显式标记为 xfail, 不阻塞 PR. 主库修复后此测试转 xpass.",
+    strict=False,
+)
+def test_omodul_exposes_version() -> None:
+    """MF4: omodul should expose __version__ (Step 12 SPEC §1.4.2)."""
+    assert hasattr(omodul, "__version__"), (
+        "omodul 缺 __version__ 属性; 见 Wiki 2026-05-24 反馈, 主库 PATCH bump 时修."
+    )
+    assert omodul.__version__  # non-empty

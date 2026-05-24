@@ -104,7 +104,7 @@ async def save_decision_trail(
 ) -> None:
     """Persist omodul decision_trail to Postgres (additive, not replacing omodul's JSON).
 
-    Idempotent: ON CONFLICT (omodul_fingerprint) DO NOTHING.
+    Idempotent: ON CONFLICT (omodul_fingerprint) DO NOTHING (ADR-002 M1 方案 A).
     """
     from aegis.server.persistence.db import get_pool  # noqa: PLC0415
 
@@ -120,7 +120,7 @@ async def save_decision_trail(
                 'omodul_run', $1, $2::jsonb,
                 $3, $4, 'dispatcher'
             )
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (omodul_fingerprint) DO NOTHING
             """,
             "info" if status == "completed" else "warning",
             json.dumps({
