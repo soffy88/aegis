@@ -139,6 +139,30 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON CONFLICT (id) DO NOTHING;
         """,
     ),
+    (
+        "005_event_trail_unique_fingerprint",
+        """
+        -- ADR-002 M1: omodul_fingerprint UNIQUE (方案 A, 同 fp 只保留首次)
+        -- 去重: 保留最旧记录 (id 最小)
+        DELETE FROM event_trail a
+        USING event_trail b
+        WHERE a.id > b.id
+          AND a.omodul_fingerprint = b.omodul_fingerprint
+          AND a.omodul_fingerprint IS NOT NULL;
+
+        -- M2 预留: attempt_no 列
+        ALTER TABLE event_trail
+        ADD COLUMN IF NOT EXISTS attempt_no INTEGER DEFAULT 1;
+
+        -- UNIQUE 约束
+        ALTER TABLE event_trail
+        DROP CONSTRAINT IF EXISTS event_trail_omodul_fingerprint_unique;
+
+        ALTER TABLE event_trail
+        ADD CONSTRAINT event_trail_omodul_fingerprint_unique
+        UNIQUE (omodul_fingerprint);
+        """,
+    ),
 ]
 
 

@@ -61,52 +61,50 @@ async def _run_install(
     body: InstallAppRequest,
     data_dir: Path | None = None,
 ) -> None:
-    """Background task: run omodul.install_app and update DB status."""
+    """Background task: invoke omodul.install_self_hosted_app via dispatcher."""
+    from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
+    from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
+    from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
+
     resolved_dir: Path = data_dir if data_dir is not None else AegisSettings().data_dir
-    output_dir: Path = resolved_dir / "installs" / str(install_id)
 
     final_status: str = "failed"
     error_detail: str | None = None
     domain: str | None = None
 
     try:
-        from aegis.server.services.install_app import (  # noqa: PLC0415
-            InstallAppConfig,
-            InstallAppInput,
-            install_app,
+        import redis.asyncio as aioredis  # noqa: PLC0415
+
+        redis_client = aioredis.from_url("redis://localhost:6379")
+        dispatcher = OmodulDispatcher(
+            DedupCache(redis_client), BudgetTracker(redis_client), data_dir=str(resolved_dir),
         )
 
-        cfg = InstallAppConfig(register_domain=body.register_domain)
-        inp = InstallAppInput(
-            app_name=body.app_name,
-            project_dir=body.project_dir or str(output_dir),
-            image_to_pull=body.image_to_pull,
-            health_check_container=body.health_check_container,
-            domain=body.domain,
-            domain_target_url=body.domain_target_url,
+        result: Any = await dispatcher.invoke(
+            omodul_name="install_self_hosted_app",
+            config={
+                "app_slug": body.app_name,
+                "app_version": body.app_version or "latest",
+                "instance_name": body.app_name,
+                "config_hash": "",
+                "domain": body.domain or "",
+            },
+            input_data={
+                "app_config": {"image_to_pull": body.image_to_pull, "project_dir": body.project_dir},
+                "target_host": "localhost",
+                "docker_host": "unix:///var/run/docker.sock",
+                "caddy_admin_url": "http://localhost:2019",
+            },
+            user_id=str(org_id),
         )
-        result: Any = await asyncio.to_thread(install_app, cfg, inp, output_dir)
         final_status = str(result.get("status", "failed"))
-        findings: dict[str, Any] = result.get("findings", {})
-        if findings.get("error"):
-            error_detail = str(findings["error"])
-        if findings.get("domain_registered"):
-            domain = body.domain
-    except ImportError as exc:
-        log.exception(
-            "install_app import failed (cross-repo deps not installed) install_id=%s: %s",
-            install_id,
-            exc,
-        )
-        final_status = "failed"
-        error_detail = f"ImportError: {exc}"
+        if result.get("error"):
+            error_detail = str(result["error"])
+        await redis_client.aclose()
     except Exception as exc:  # noqa: BLE001
         log.exception(
-            "install_app background dispatch failed install_id=%s install_dir=%s %s: %s",
-            install_id,
-            output_dir,
-            type(exc).__name__,
-            exc,
+            "install dispatch failed install_id=%s %s: %s",
+            install_id, type(exc).__name__, exc,
         )
         final_status = "failed"
         error_detail = f"{type(exc).__name__}: {exc}"

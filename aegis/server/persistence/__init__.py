@@ -13,6 +13,7 @@ from aegis.server.persistence.event_trail import (
     append_event,
     causal_chain,
     recent_events,
+    save_decision_trail,
 )
 from aegis.server.persistence.migrations import apply_migrations
 
@@ -26,4 +27,5 @@ __all__ = [
     "get_pool",
     "init_pool",
     "recent_events",
+    "save_decision_trail",
 ]

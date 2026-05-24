@@ -61,13 +61,18 @@ class TestEventsApi:
 
 class TestAlertsApi:
     def test_ingest_alert(self, client: TestClient) -> None:
-        r = client.post(
-            "/api/v1/alerts/ingest",
-            json={
-                "alert_name": "rabbitmq.connection_reset",
-                "severity": "critical",
-            },
-        )
+        with mock.patch(
+            "aegis.server.api.routers.alerts.run_brain_pipeline",
+            new_callable=mock.AsyncMock,
+            return_value={"stage": "triage_only", "triage": {}},
+        ):
+            r = client.post(
+                "/api/v1/alerts/ingest",
+                json={
+                    "alert_name": "rabbitmq.connection_reset",
+                    "severity": "critical",
+                },
+            )
         assert r.status_code == 202
         body = r.json()
         assert "trace_id" in body
