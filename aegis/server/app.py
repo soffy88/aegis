@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from obase import ProviderRegistry
 
 from aegis.server.api.routers import alerts, domains, events, health
 from aegis.server.api.routers import apps as apps_router
@@ -26,6 +27,41 @@ from aegis.server.runtime.config import AegisSettings
 from aegis.server.runtime.logging import setup_logging
 
 log = logging.getLogger(__name__)
+
+
+def register_providers(cfg: AegisSettings) -> None:
+    """启动时注册 LLM provider 到 obase.ProviderRegistry."""
+    try:
+        import anthropic  # noqa: PLC0415
+
+        def _anthropic_caller(
+            *,
+            messages: list,
+            tools: list | None = None,
+            max_tokens: int = 4096,
+            stop_sequences: list[str] | None = None,
+            model: str = "",
+        ) -> dict:
+            client = anthropic.Anthropic()
+            kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+            if tools:
+                kwargs["tools"] = tools
+            if stop_sequences:
+                kwargs["stop_sequences"] = stop_sequences
+            msg = client.messages.create(**kwargs)
+            return {
+                "content": [b.model_dump() for b in msg.content],
+                "stop_reason": msg.stop_reason,
+                "usage": {
+                    "input_tokens": msg.usage.input_tokens,
+                    "output_tokens": msg.usage.output_tokens,
+                },
+            }
+
+        ProviderRegistry.register("llm", "anthropic", _anthropic_caller, replace=True)
+        log.info("registered llm provider: anthropic")
+    except ImportError:
+        log.debug("anthropic SDK not installed, skipping provider registration")
 
 
 def create_app(settings: AegisSettings | None = None) -> FastAPI:
@@ -64,6 +100,8 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             n = await apply_migrations(conn)
             if n:
                 log.info("applied %d migrations", n)
+
+        register_providers(cfg)
 
         yield
 
