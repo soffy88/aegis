@@ -50,6 +50,30 @@ jobs:
       - name: mypy
         run: mypy aegis/
 
+      - name: 3O Paradigm Compliance Checks (C0d)
+        run: |
+          set -e
+          echo "===== Check 1: no inlined omodul implementations ====="
+          ! grep -rn "def install_self_hosted_app\|def upgrade_self_hosted_app\|def backup_app_data\|def triage_signal\|def diagnose_root_cause\|def propose_action_plan\|def generate_incident_postmortem\|def configure_domain_for_app" aegis/server/ --include="*.py"
+
+          echo "===== Check 2: no raw docker SDK (use oprim) ====="
+          ! grep -rn "docker.from_env\|DockerClient\|client.containers" aegis/server/ --include="*.py"
+
+          echo "===== Check 3: no parallel 3O package structure ====="
+          ! find aegis/ -type d \( -name "oprim*" -o -name "oskill*" -o -name "omodul*" -o -name "obase*" -o -name "_3o*" -o -name "_omodul*" -o -name "_oskill*" \) | grep -v ".venv\|.git\|node_modules"
+
+          echo "===== Check 4: brain.py does not directly import omodul (must use dispatcher) ====="
+          ! grep "^from omodul import\|^import omodul" aegis/server/orchestration/brain.py
+
+          echo "All 3O paradigm compliance checks passed."
+
+      - name: aegis-watch isolation check (§8.4)
+        run: |
+          set -e
+          echo "===== aegis-watch must not import 3O main lib ====="
+          ! grep -rn "^from oprim\|^from oskill\|^from omodul\|^from obase\|^import oprim\|^import oskill\|^import omodul\|^import obase" aegis-watch/ --include="*.py"
+          echo "aegis-watch isolation OK."
+
       - name: pytest
         env:
           AEGIS_POSTGRES_DSN: postgresql://aegis:aegis@localhost:5432/aegis
