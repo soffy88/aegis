@@ -63,6 +63,39 @@ def register_providers(cfg: AegisSettings) -> None:
     except ImportError:
         log.debug("anthropic SDK not installed, skipping provider registration")
 
+    # Ollama (本地兜底, AEGIS_DESIGN 决策 2)
+    if cfg.ollama_base_url:
+        import httpx  # noqa: PLC0415
+
+        def _ollama_caller(
+            *,
+            messages: list,
+            tools: list | None = None,
+            max_tokens: int = 4096,
+            stop_sequences: list[str] | None = None,
+            model: str = "",
+        ) -> dict:
+            resp = httpx.post(
+                f"{cfg.ollama_base_url}/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "content": [{"type": "text", "text": data.get("message", {}).get("content", "")}],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": data.get("prompt_eval_count", 0),
+                    "output_tokens": data.get("eval_count", 0),
+                },
+            }
+
+        ProviderRegistry.register("llm", "ollama", _ollama_caller, replace=True)
+        log.info("registered llm provider: ollama (base_url=%s)", cfg.ollama_base_url)
+    else:
+        log.debug("ollama provider not configured (set AEGIS_OLLAMA_BASE_URL to enable)")
+
 
 def create_app(settings: AegisSettings | None = None) -> FastAPI:
     """Application factory.

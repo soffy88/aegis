@@ -68,6 +68,9 @@ class AegisSettings(BaseSettings):
     llm_provider: str = Field(default="anthropic", description="anthropic / openai / ollama")
     llm_model_default: str = "claude-haiku-4-5"
     llm_model_premium: str = "claude-sonnet-4-6"
+    ollama_base_url: str | None = Field(
+        default=None, description="Ollama API base URL (AEGIS_DESIGN 决策 2 双轨, 可选)"
+    )
 
     # === AutoHeal ===
     autoheal_enabled: bool = True

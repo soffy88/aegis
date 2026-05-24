@@ -64,3 +64,32 @@ def test_register_providers_at_startup() -> None:
         call_args = m.register.call_args
         assert call_args[0][0] == "llm"
         assert call_args[0][1] == "anthropic"
+
+
+def test_ollama_provider_registered_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama provider registered when AEGIS_OLLAMA_BASE_URL is set."""
+    monkeypatch.setenv("AEGIS_OLLAMA_BASE_URL", "http://localhost:11434")
+    with mock.patch("aegis.server.app.ProviderRegistry") as m:
+        from aegis.server.app import register_providers
+        from aegis.server.runtime.config import AegisSettings
+
+        settings = AegisSettings()
+        register_providers(settings)
+        # Should register both anthropic and ollama
+        calls = m.register.call_args_list
+        categories_names = [(c[0][0], c[0][1]) for c in calls]
+        assert ("llm", "ollama") in categories_names
+
+
+def test_ollama_provider_not_registered_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama provider NOT registered when AEGIS_OLLAMA_BASE_URL is unset."""
+    monkeypatch.delenv("AEGIS_OLLAMA_BASE_URL", raising=False)
+    with mock.patch("aegis.server.app.ProviderRegistry") as m:
+        from aegis.server.app import register_providers
+        from aegis.server.runtime.config import AegisSettings
+
+        settings = AegisSettings()
+        register_providers(settings)
+        calls = m.register.call_args_list
+        categories_names = [(c[0][0], c[0][1]) for c in calls]
+        assert ("llm", "ollama") not in categories_names
