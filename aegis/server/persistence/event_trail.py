@@ -92,6 +92,49 @@ async def append_event(
     return uuid.UUID(str(row["id"]))
 
 
+async def save_decision_trail(
+    *,
+    omodul_name: str,
+    fingerprint: str,
+    decision_trail: dict[str, Any],
+    user_id: str,
+    status: str,
+    error: dict[str, Any] | None = None,
+    report_path: str | None = None,
+) -> None:
+    """Persist omodul decision_trail to Postgres (additive, not replacing omodul's JSON).
+
+    Idempotent: ON CONFLICT (omodul_fingerprint) DO NOTHING.
+    """
+    from aegis.server.persistence.db import get_pool  # noqa: PLC0415
+
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO event_trail (
+                org_id, project_id, event_type, severity, payload,
+                omodul_fingerprint, omodul_kind, initiated_by
+            ) VALUES (
+                '00000000-0000-0000-0000-000000000001'::uuid,
+                '00000000-0000-0000-0000-000000000002'::uuid,
+                'omodul_run', $1, $2::jsonb,
+                $3, $4, 'dispatcher'
+            )
+            ON CONFLICT DO NOTHING
+            """,
+            "info" if status == "completed" else "warning",
+            json.dumps({
+                "decision_trail": decision_trail,
+                "user_id": user_id,
+                "status": status,
+                "error": error,
+                "report_path": report_path,
+            }, default=str),
+            fingerprint,
+            omodul_name,
+        )
+
+
 async def recent_events(
     *,
     conn: asyncpg.Connection,
