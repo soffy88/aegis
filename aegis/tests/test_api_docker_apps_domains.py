@@ -115,94 +115,103 @@ _INSPECT_DATA: dict[str, object] = {
 
 class TestDockerRouter:
     def test_inspect_ok(self, docker_client: TestClient) -> None:
+        result = mock.MagicMock()
+        result.model_dump.return_value = _INSPECT_DATA
         with mock.patch(
-            "aegis.server.api.routers.docker._inspect",
-            new_callable=mock.AsyncMock,
-            return_value=_INSPECT_DATA,
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=result,
         ):
             r = docker_client.get("/api/v1/docker/containers/nginx")
         assert r.status_code == 200
         assert r.json()["container_id"] == "abc123"
 
     def test_inspect_oprim_error_502(self, docker_client: TestClient) -> None:
-        from fastapi import HTTPException
+        from oprim._exceptions import OprimError
 
         with mock.patch(
-            "aegis.server.api.routers.docker._inspect",
-            new_callable=mock.AsyncMock,
-            side_effect=HTTPException(status_code=502, detail="daemon down"),
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            side_effect=OprimError("daemon down"),
         ):
             r = docker_client.get("/api/v1/docker/containers/missing")
         assert r.status_code == 502
         assert "daemon down" in r.json()["detail"]
 
     def test_start_ok(self, docker_client: TestClient) -> None:
+        result = mock.MagicMock()
+        result.model_dump.return_value = {
+            "container_id": "abc123",
+            "operation": "start",
+            "success": True,
+            "elapsed_ms": 50,
+            "state_before": "exited",
+            "state_after": "running",
+        }
         with mock.patch(
-            "aegis.server.api.routers.docker._start",
-            new_callable=mock.AsyncMock,
-            return_value={"container_id": "abc123", "container_name": "nginx", "state": "running"},
+            "aegis.server.api.routers.docker.docker_container_start",
+            return_value=result,
         ):
             r = docker_client.post("/api/v1/docker/containers/nginx/start")
         assert r.status_code == 200
 
     def test_stop_ok(self, docker_client: TestClient) -> None:
+        result = mock.MagicMock()
+        result.model_dump.return_value = {
+            "container_id": "abc123",
+            "operation": "stop",
+            "success": True,
+            "elapsed_ms": 50,
+            "state_before": "running",
+            "state_after": "exited",
+        }
         with mock.patch(
-            "aegis.server.api.routers.docker._stop",
-            new_callable=mock.AsyncMock,
-            return_value={"container_id": "abc123", "container_name": "nginx", "state": "exited"},
+            "aegis.server.api.routers.docker.docker_container_stop",
+            return_value=result,
         ):
             r = docker_client.post("/api/v1/docker/containers/nginx/stop")
         assert r.status_code == 200
 
     def test_restart_ok(self, docker_client: TestClient) -> None:
+        result = mock.MagicMock()
+        result.model_dump.return_value = {
+            "container_id": "abc123",
+            "operation": "restart",
+            "success": True,
+            "elapsed_ms": 50,
+            "state_before": "running",
+            "state_after": "running",
+        }
         with mock.patch(
-            "aegis.server.api.routers.docker._restart",
-            new_callable=mock.AsyncMock,
-            return_value={"container_id": "abc123", "container_name": "nginx", "state": "running"},
+            "aegis.server.api.routers.docker.docker_container_restart",
+            return_value=result,
         ):
             r = docker_client.post("/api/v1/docker/containers/nginx/restart")
         assert r.status_code == 200
 
     def test_logs_ok(self, docker_client: TestClient) -> None:
+        log_line = mock.MagicMock()
+        log_line.model_dump.return_value = {"timestamp": "2026-05-24T00:00:00Z", "message": "line1"}
         with mock.patch(
-            "aegis.server.api.routers.docker._logs",
-            new_callable=mock.AsyncMock,
-            return_value={
-                "container_id": "abc",
-                "container_name": "nginx",
-                "lines_fetched": 2,
-                "log_lines": ["line1", "line2"],
-                "stdout_truncated": False,
-                "stderr_truncated": False,
-            },
+            "aegis.server.api.routers.docker.docker_container_logs",
+            return_value=[log_line, log_line],
         ):
             r = docker_client.get("/api/v1/docker/containers/nginx/logs?tail=50")
         assert r.status_code == 200
-        assert r.json()["lines_fetched"] == 2
+        assert len(r.json()["lines"]) == 2
 
     def test_logs_since_seconds(self, docker_client: TestClient) -> None:
         with mock.patch(
-            "aegis.server.api.routers.docker._logs",
-            new_callable=mock.AsyncMock,
-            return_value={
-                "container_id": "abc",
-                "container_name": "nginx",
-                "lines_fetched": 0,
-                "log_lines": [],
-                "stdout_truncated": False,
-                "stderr_truncated": False,
-            },
+            "aegis.server.api.routers.docker.docker_container_logs",
+            return_value=[],
         ):
             r = docker_client.get("/api/v1/docker/containers/nginx/logs?tail=10&since_seconds=300")
         assert r.status_code == 200
 
     def test_logs_oprim_error_502(self, docker_client: TestClient) -> None:
-        from fastapi import HTTPException
+        from oprim._exceptions import OprimError
 
         with mock.patch(
-            "aegis.server.api.routers.docker._logs",
-            new_callable=mock.AsyncMock,
-            side_effect=HTTPException(status_code=502, detail="not found"),
+            "aegis.server.api.routers.docker.docker_container_logs",
+            side_effect=OprimError("not found"),
         ):
             r = docker_client.get("/api/v1/docker/containers/missing/logs")
         assert r.status_code == 502

@@ -1,4 +1,4 @@
-"""Project discovery via Docker labels.
+"""Project discovery via Docker labels (走 oprim).
 
 Convention:
   aegis.project=<name>       — required, project name
@@ -14,9 +14,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from oprim import docker_container_list
+
 log = logging.getLogger(__name__)
 
-# Cache for discovered projects
 _discovery_cache: tuple[list[dict[str, Any]], float] | None = None
 _CACHE_TTL = 30.0
 
@@ -59,10 +60,7 @@ def _infer_port(ports: list[dict[str, Any]]) -> int | None:
 
 
 def discover_projects() -> list[DiscoveredProject]:
-    """Discover projects from Docker containers with aegis.project label.
-
-    Returns cached results if within TTL.
-    """
+    """Discover projects from Docker containers with aegis.project label."""
     global _discovery_cache  # noqa: PLW0603
 
     now = time.monotonic()
@@ -70,18 +68,15 @@ def discover_projects() -> list[DiscoveredProject]:
         return [_dict_to_project(d) for d in _discovery_cache[0]]
 
     try:
-        import docker  # noqa: PLC0415
-
-        client = docker.from_env()
-        containers = client.containers.list(filters={"label": "aegis.project"})
+        containers = docker_container_list(all=True, filters={"label": ["aegis.project"]})
     except Exception as exc:
         log.warning("Docker unavailable for project discovery: %s", exc)
         return []
 
     projects: dict[str, DiscoveredProject] = {}
 
-    for container in containers:
-        labels = container.labels or {}
+    for info in containers:
+        labels = info.labels or {}
         project_name = labels.get("aegis.project", "")
         if not project_name:
             continue
@@ -89,23 +84,12 @@ def discover_projects() -> list[DiscoveredProject]:
         if project_name not in projects:
             projects[project_name] = DiscoveredProject(name=project_name)
 
-        # Extract port info
-        ports: list[dict[str, Any]] = []
-        try:
-            port_bindings = container.attrs.get("NetworkSettings", {}).get("Ports", {})
-            for _container_port, bindings in (port_bindings or {}).items():
-                if bindings:
-                    for b in bindings:
-                        ports.append({"HostPort": b.get("HostPort")})
-        except Exception:
-            pass
-
         dc = DiscoveredContainer(
-            id=container.short_id,
-            name=container.name,
-            image=str(container.image.tags[0]) if container.image.tags else "",
-            status=container.status,
-            ports=ports,
+            id=info.container_id[:12],
+            name=info.name,
+            image=info.image,
+            status=info.status,
+            ports=info.ports,
             health_path=labels.get("aegis.health.path", "/health"),
             health_port=int(labels["aegis.health.port"]) if "aegis.health.port" in labels else None,
             role=labels.get("aegis.role"),
