@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 import asyncpg
@@ -21,6 +24,68 @@ except ImportError:  # pragma: no cover
     http_health_probe = None  # type: ignore[assignment]
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/projects", tags=["projects"])
+
+_PROBE_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def _validate_health_url(url: str) -> None:
+    """Reject health_url values that could be used for SSRF.
+
+    Checks:
+    1. scheme must be http or https
+    2. all resolved A/AAAA records must be public (not loopback, private,
+       link-local, reserved, or multicast)
+
+    Note: DNS-rebinding between validation and probe is a residual risk that
+    requires oprim-level socket binding to fully eliminate. Documented here as
+    a known limitation rather than a false sense of full protection.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid health_url",
+        ) from exc
+
+    if parsed.scheme not in _PROBE_ALLOWED_SCHEMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="health_url scheme must be http or https",
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="health_url has no hostname",
+        )
+
+    try:
+        records = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="health_url hostname could not be resolved",
+        ) from exc
+
+    for info in records:
+        addr_str = info[4][0]
+        try:
+            addr = ipaddress.ip_address(addr_str)
+        except ValueError:
+            continue
+        if (
+            addr.is_loopback
+            or addr.is_private
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="health_url must not resolve to a private, loopback, or reserved address",
+            )
 
 
 class ProjectCreateRequest(BaseModel):
@@ -190,6 +255,7 @@ async def get_project_health(
             detail="project has no health_url configured (set config.health_url)",
         )
 
+    _validate_health_url(health_url)
     result = http_health_probe(url=health_url, timeout_sec=5)
     return {
         "project_id": str(project_id),

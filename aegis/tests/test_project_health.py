@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import socket
 import uuid
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator
 from datetime import datetime
 from unittest import mock
 
@@ -21,6 +22,10 @@ _PROJ = uuid.UUID("22222222-2222-2222-2222-222222222222")
 _USER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 _HEALTH_URL = "/api/v1/orgs/{org_id}/projects/{project_id}/health"
+
+# A genuinely public IP for getaddrinfo mocking.
+# 203.0.113.x (TEST-NET-3/RFC5737) is marked is_private in Python ≥3.11 — use 8.8.8.8 instead.
+_PUBLIC_DNS = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
 
 
 def _project_row(
@@ -41,7 +46,7 @@ def _project_row(
     }
 
 
-def _make_client(conn: mock.AsyncMock, role: str = "viewer") -> Generator[TestClient, None, None]:
+def _make_client(conn: mock.AsyncMock, role: str = "viewer") -> TestClient:
     fa = FastAPI()
     fa.include_router(projects_router.router)
 
@@ -81,8 +86,14 @@ class TestProjectHealthEndpoint:
     def test_health_check_healthy_project(self, conn: mock.AsyncMock) -> None:
         """Healthy probe → healthy=True, status 200."""
         client = _make_client(conn)
-        with mock.patch(
-            "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(True)
+        with (
+            mock.patch(
+                "aegis.server.api.routers.projects.socket.getaddrinfo",
+                return_value=_PUBLIC_DNS,
+            ),
+            mock.patch(
+                "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(True)
+            ),
         ):
             r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
         assert r.status_code == 200
@@ -95,8 +106,14 @@ class TestProjectHealthEndpoint:
     def test_health_check_unhealthy_project(self, conn: mock.AsyncMock) -> None:
         """Unhealthy probe → healthy=False, still status 200 (probe result, not HTTP error)."""
         client = _make_client(conn)
-        with mock.patch(
-            "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(False)
+        with (
+            mock.patch(
+                "aegis.server.api.routers.projects.socket.getaddrinfo",
+                return_value=_PUBLIC_DNS,
+            ),
+            mock.patch(
+                "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(False)
+            ),
         ):
             r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
         assert r.status_code == 200
@@ -126,3 +143,40 @@ class TestProjectHealthEndpoint:
         client = _make_client(conn)
         r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
         assert r.status_code == 404
+
+
+class TestHealthUrlSsrfValidation:
+    """_validate_health_url blocks SSRF-risky URLs before the probe is made."""
+
+    @pytest.fixture
+    def conn(self) -> mock.AsyncMock:
+        m = mock.AsyncMock()
+        m.fetchrow.return_value = _project_row()
+        return m
+
+    def test_private_ip_url_rejected_400(self, conn: mock.AsyncMock) -> None:
+        """health_url resolving to RFC1918 address → 400, probe never called."""
+        conn.fetchrow.return_value = _project_row(health_url="http://internal:8000/health")
+        private_dns = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.50", 0))]
+        client = _make_client(conn)
+        with (
+            mock.patch(
+                "aegis.server.api.routers.projects.socket.getaddrinfo",
+                return_value=private_dns,
+            ),
+            mock.patch("aegis.server.api.routers.projects.http_health_probe") as mock_probe,
+        ):
+            r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
+        assert r.status_code == 400
+        assert "private" in r.json()["detail"] or "reserved" in r.json()["detail"]
+        mock_probe.assert_not_called()
+
+    def test_bad_scheme_url_rejected_400(self, conn: mock.AsyncMock) -> None:
+        """health_url with file:// scheme → 400 without DNS resolution."""
+        conn.fetchrow.return_value = _project_row(health_url="file:///etc/passwd")
+        client = _make_client(conn)
+        with mock.patch("aegis.server.api.routers.projects.http_health_probe") as mock_probe:
+            r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
+        assert r.status_code == 400
+        assert "scheme" in r.json()["detail"]
+        mock_probe.assert_not_called()
