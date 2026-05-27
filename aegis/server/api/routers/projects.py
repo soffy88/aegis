@@ -256,7 +256,9 @@ async def get_project_health(
         )
 
     _validate_health_url(health_url)
-    result = http_health_probe(url=health_url, timeout_sec=5)
+    # follow_redirects=False: oprim default is already False, but made explicit
+    # to prevent a redirect to an internal host bypassing _validate_health_url.
+    result = http_health_probe(url=health_url, timeout_sec=5, follow_redirects=False)
     return {
         "project_id": str(project_id),
         "slug": project.slug,

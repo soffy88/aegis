@@ -180,3 +180,41 @@ class TestHealthUrlSsrfValidation:
         assert r.status_code == 400
         assert "scheme" in r.json()["detail"]
         mock_probe.assert_not_called()
+
+    def test_redirect_to_private_ip_rejected(self, conn: mock.AsyncMock) -> None:
+        """http_health_probe is called with follow_redirects=False.
+
+        Simulates: target URL returns 302 → 169.254.169.254 (cloud metadata).
+        Because follow_redirects=False, oprim returns the 302 response as-is
+        (healthy=False, status_code=302). The metadata host is never contacted
+        and its content never appears in the response.
+        """
+        # probe returns the 302 result without following it
+        redirect_result = mock.MagicMock()
+        redirect_result.healthy = False
+        redirect_result.status_code = 302
+        redirect_result.elapsed_ms = 5
+        redirect_result.error = "redirect not followed"
+
+        client = _make_client(conn)
+        with (
+            mock.patch(
+                "aegis.server.api.routers.projects.socket.getaddrinfo",
+                return_value=_PUBLIC_DNS,
+            ),
+            mock.patch(
+                "aegis.server.api.routers.projects.http_health_probe",
+                return_value=redirect_result,
+            ) as mock_probe,
+        ):
+            r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
+
+        assert r.status_code == 200
+        body = r.json()
+        # probe was not followed to the private redirect target
+        assert body["status_code"] == 302
+        assert "169.254.169.254" not in str(body)
+        # verify follow_redirects=False was explicitly passed
+        mock_probe.assert_called_once_with(
+            url="http://svc:8000/health", timeout_sec=5, follow_redirects=False
+        )
