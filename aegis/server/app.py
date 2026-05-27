@@ -13,6 +13,7 @@ from obase import ProviderRegistry
 
 from aegis.server.api.routers import alerts, domains, events, health
 from aegis.server.api.routers import apps as apps_router
+from aegis.server.api.routers import auth as auth_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import runbooks as runbooks_router
@@ -164,6 +165,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(projects_router.router)
     app.include_router(store_router.router)
     app.include_router(runbooks_router.router)
+    app.include_router(auth_router.router)
 
     return app
 

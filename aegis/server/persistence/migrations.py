@@ -252,6 +252,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         WHERE id = '00000000-0000-0000-0000-000000000002' AND slug != 'default';
         """,
     ),
+    (
+        "009_revoked_tokens",
+        """
+        CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti         VARCHAR(36) PRIMARY KEY,
+            user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            revoked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at  TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires
+            ON revoked_tokens(expires_at);
+        """,
+    ),
 ]
 
 

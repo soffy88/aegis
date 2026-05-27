@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, model_validator
@@ -98,3 +99,37 @@ class AegisSettings(BaseSettings):
 
     # === Logging ===
     log_level: str = "INFO"
+
+    # === JWT ===
+    jwt_secret: str = Field(
+        default="dev-secret-CHANGE-IN-PROD",
+        min_length=32,
+        description="HS256 signing secret, env: AEGIS_JWT_SECRET",
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_ttl_minutes: int = 60  # 1 hour
+    jwt_refresh_ttl_days: int = 30  # 30 days
+
+    # === Password policy (M1 relaxed, M2 tighten) ===
+    password_min_length: int = 12
+
+    # === Environment ===
+    env: str = Field(
+        default="dev",
+        description="Runtime environment: dev / prod (env: AEGIS_ENV)",
+    )
+
+    @model_validator(mode="after")
+    def validate_jwt_secret_in_prod(self) -> AegisSettings:
+        if self.env == "prod" and self.jwt_secret == "dev-secret-CHANGE-IN-PROD":
+            raise ValueError(
+                "AEGIS_JWT_SECRET must be set to a strong secret in production "
+                "(not the default dev value). Set AEGIS_JWT_SECRET env var."
+            )
+        return self
+
+
+@lru_cache
+def get_settings() -> AegisSettings:
+    """Return cached AegisSettings singleton. Call get_settings.cache_clear() in tests."""
+    return AegisSettings()
