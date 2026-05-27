@@ -15,6 +15,11 @@ from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.repositories.project_repo import ProjectRepository
 
+try:
+    from oprim import http_health_probe
+except ImportError:  # pragma: no cover
+    http_health_probe = None  # type: ignore[assignment]
+
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/projects", tags=["projects"])
 
 
@@ -155,6 +160,46 @@ async def update_project(
     from aegis.server.models import Project  # noqa: PLC0415
 
     return _project_to_dict(Project.from_row(row))
+
+
+@router.get("/{project_id}/health")
+async def get_project_health(
+    org_id: UUID,
+    project_id: UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Run an HTTP health probe against the project's configured health_url.
+
+    viewer+ required. Returns probe result including healthy, status_code,
+    elapsed_ms, and error. Requires project.config['health_url'] to be set.
+    """
+    project_repo = ProjectRepository(conn)
+    project = await project_repo.get_by_id(project_id)
+    if not project or project.org_id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="project not found in this org",
+        )
+
+    config = project.config or {}
+    health_url = config.get("health_url")
+    if not health_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project has no health_url configured (set config.health_url)",
+        )
+
+    result = http_health_probe(url=health_url, timeout_sec=5)
+    return {
+        "project_id": str(project_id),
+        "slug": project.slug,
+        "health_url": health_url,
+        "healthy": result.healthy,
+        "status_code": result.status_code,
+        "elapsed_ms": result.elapsed_ms,
+        "error": result.error,
+    }
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
