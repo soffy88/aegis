@@ -9,14 +9,16 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from aegis.server.api.deps import get_db_conn, require_org, require_project
+from aegis.server.api.deps import get_db_conn
+from aegis.server.auth.dependencies import UserContext
+from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.persistence import (
     append_event,
     causal_chain,
     recent_events,
 )
 
-router = APIRouter(prefix="/api/v1/events", tags=["events"])
+router = APIRouter(prefix="/api/v1/orgs/{org_id}/events", tags=["events"])
 
 
 class EventCreate(BaseModel):
@@ -43,10 +45,11 @@ class EventRead(BaseModel):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_event(
+    org_id: uuid.UUID,
     body: EventCreate,
+    project_id: uuid.UUID = Query(..., description="Project to attach this event to"),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    org_id: uuid.UUID = Depends(require_org),
-    project_id: uuid.UUID = Depends(require_project),
+    user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> dict[str, Any]:
     """Append a user-submitted event to event_trail."""
     event_id = await append_event(
@@ -67,13 +70,15 @@ async def create_event(
 
 @router.get("")
 async def list_events(
-    conn: asyncpg.Connection = Depends(get_db_conn),
-    org_id: uuid.UUID = Depends(require_org),
-    project_id: uuid.UUID = Depends(require_project),
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None = Query(default=None),
     service: str | None = Query(default=None),
     hours: int = Query(default=24, ge=1, le=720),
     limit: int = Query(default=50, ge=1, le=500),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> list[dict[str, Any]]:
+    """List events. viewer+ can read. project_id=None returns all projects in this org."""
     return await recent_events(
         conn=conn,
         org_id=org_id,
@@ -86,9 +91,12 @@ async def list_events(
 
 @router.get("/{event_id}/causal-chain")
 async def get_causal_chain(
+    org_id: uuid.UUID,
     event_id: uuid.UUID,
     conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> list[dict[str, Any]]:
+    """Walk causal chain from event_id. viewer+ can read."""
     chain = await causal_chain(conn=conn, event_id=event_id)
     if not chain:
         raise HTTPException(

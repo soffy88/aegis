@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -44,6 +45,7 @@ async def test_run_install_import_error_captured() -> None:
             project_id=project_id,
             trace_id="trc_test",
             body=body,
+            data_dir=Path("/tmp"),
         )
 
     calls = mock_conn.execute.call_args_list + mock_conn.fetchrow.call_args_list
@@ -81,6 +83,7 @@ async def test_run_install_unexpected_exception_captured() -> None:
             project_id=project_id,
             trace_id="trc_test",
             body=body,
+            data_dir=Path("/tmp"),
         )
 
     update_calls = [

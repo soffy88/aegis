@@ -1,15 +1,38 @@
-"""Tests for docker router → oprim integration (C0c-2)."""
+"""Tests for docker router → oprim integration."""
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Generator
 from unittest import mock
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from aegis.server.app import create_app
+from aegis.server.api.routers import docker as docker_router
+from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 
-client = TestClient(create_app())
+_ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
+_USER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+
+async def _fake_user() -> UserContext:
+    return UserContext(
+        user_id=_USER,
+        email="test@example.com",
+        orgs=[OrgInToken(org_id=_ORG, slug="test-org", role="owner")],
+    )
+
+
+@pytest.fixture
+def client() -> Generator[TestClient, None, None]:
+    fa = FastAPI()
+    fa.include_router(docker_router.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+    with TestClient(fa, raise_server_exceptions=False) as c:
+        yield c
 
 
 def _mock_op_result() -> MagicMock:
@@ -39,45 +62,45 @@ def _mock_inspect_result() -> MagicMock:
     return r
 
 
-def test_inspect_uses_oprim() -> None:
+def test_inspect_uses_oprim(client: TestClient) -> None:
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_inspect",
         return_value=_mock_inspect_result(),
     ):
-        resp = client.get("/api/v1/docker/containers/abc123")
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/abc123")
     assert resp.status_code == 200
     assert resp.json()["container_id"] == "abc123"
 
 
-def test_start_uses_oprim() -> None:
+def test_start_uses_oprim(client: TestClient) -> None:
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_start",
         return_value=_mock_op_result(),
     ):
-        resp = client.post("/api/v1/docker/containers/abc123/start")
+        resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/start")
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
 
-def test_stop_uses_oprim() -> None:
+def test_stop_uses_oprim(client: TestClient) -> None:
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_stop",
         return_value=_mock_op_result(),
     ):
-        resp = client.post("/api/v1/docker/containers/abc123/stop")
+        resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/stop")
     assert resp.status_code == 200
 
 
-def test_restart_uses_oprim() -> None:
+def test_restart_uses_oprim(client: TestClient) -> None:
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_restart",
         return_value=_mock_op_result(),
     ):
-        resp = client.post("/api/v1/docker/containers/abc123/restart")
+        resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/restart")
     assert resp.status_code == 200
 
 
-def test_logs_uses_oprim() -> None:
+def test_logs_uses_oprim(client: TestClient) -> None:
     log_line = MagicMock()
     log_line.model_dump.return_value = {"timestamp": "2026-05-24T00:00:00Z", "message": "started"}
 
@@ -85,17 +108,17 @@ def test_logs_uses_oprim() -> None:
         "aegis.server.api.routers.docker.docker_container_logs",
         return_value=[log_line],
     ):
-        resp = client.get("/api/v1/docker/containers/abc123/logs")
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/logs")
     assert resp.status_code == 200
     assert resp.json()["lines"][0]["message"] == "started"
 
 
-def test_inspect_oprim_error_returns_502() -> None:
+def test_inspect_oprim_error_returns_502(client: TestClient) -> None:
     from oprim._exceptions import OprimError
 
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_inspect",
         side_effect=OprimError("container not found"),
     ):
-        resp = client.get("/api/v1/docker/containers/ghost")
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/ghost")
     assert resp.status_code == 502

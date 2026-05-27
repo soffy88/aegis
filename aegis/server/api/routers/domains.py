@@ -8,14 +8,17 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from aegis.server.api.deps import get_db_conn, require_org, require_project
+from aegis.server.api.deps import get_db_conn
+from aegis.server.auth.dependencies import UserContext
+from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.repositories.project_repo import ProjectRepository
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/domains", tags=["domains"])
+router = APIRouter(prefix="/api/v1/orgs/{org_id}/domains", tags=["domains"])
 
 _EDGE_URL = "http://localhost:8081"
 _EDGE_TIMEOUT = 10.0
@@ -29,15 +32,17 @@ class DomainRegisterRequest(BaseModel):
 
 @router.get("")
 async def list_domains(
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    org_id: uuid.UUID = Depends(require_org),
-    project_id: uuid.UUID = Depends(require_project),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> list[dict[str, Any]]:
+    """List domains. project_id=None returns all in this org."""
     rows = await conn.fetch(
         """
         SELECT domain, target_url, tls_enabled, created_at
           FROM domains
-         WHERE org_id = $1 AND project_id = $2
+         WHERE org_id = $1 AND ($2::uuid IS NULL OR project_id = $2)
          ORDER BY created_at DESC
         """,
         org_id,
@@ -48,11 +53,20 @@ async def list_domains(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def register_domain(
+    org_id: uuid.UUID,
     req: DomainRegisterRequest,
+    project_id: uuid.UUID = Query(..., description="Project this domain belongs to"),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    org_id: uuid.UUID = Depends(require_org),
-    project_id: uuid.UUID = Depends(require_project),
+    user: UserContext = Depends(require_permission(Permission.CONFIGURE_NOTIFY)),
 ) -> dict[str, Any]:
+    """Register a domain. member+ required."""
+    project_repo = ProjectRepository(conn)
+    project = await project_repo.get_by_id(project_id)
+    if not project or project.org_id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="project not found in this org"
+        )
+
     # Forward to aegis-edge (best-effort — dev may not have edge running)
     edge_ok = False
     edge_error: str | None = None
@@ -100,10 +114,12 @@ async def register_domain(
 
 @router.delete("/{domain}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_domain(
+    org_id: uuid.UUID,
     domain: str,
     conn: asyncpg.Connection = Depends(get_db_conn),
-    org_id: uuid.UUID = Depends(require_org),
+    user: UserContext = Depends(require_permission(Permission.CONFIGURE_NOTIFY)),
 ) -> None:
+    """Delete a domain. member+ required."""
     result = await conn.execute(
         "DELETE FROM domains WHERE domain = $1 AND org_id = $2",
         domain,

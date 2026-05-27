@@ -17,14 +17,27 @@ from fastapi.testclient import TestClient
 from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import apps as apps_router
 from aegis.server.app import create_app
+from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 from aegis.server.runtime.config import AegisSettings
 
 _APP_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+_ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
+_PROJ = uuid.UUID("22222222-2222-2222-2222-222222222222")
+_USER = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+
+async def _fake_user() -> UserContext:
+    return UserContext(
+        user_id=_USER,
+        email="test@example.com",
+        orgs=[OrgInToken(org_id=_ORG, slug="test-org", role="owner")],
+    )
 
 
 def _apps_only_fa() -> FastAPI:
     fa: FastAPI = FastAPI()
     fa.include_router(apps_router.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
     return fa
 
 
@@ -207,7 +220,7 @@ class TestInstallDirRequired:
         """POST /install without install_dir → 422, detail references install_dir."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
-                "/api/v1/apps/install",
+                f"/api/v1/orgs/{_ORG}/apps/install?project_id={_PROJ}",
                 json={"app_name": "nginx"},
             )
         assert r.status_code == 422
@@ -217,7 +230,7 @@ class TestInstallDirRequired:
         """POST /install with install_dir="" → 422."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
-                "/api/v1/apps/install",
+                f"/api/v1/orgs/{_ORG}/apps/install?project_id={_PROJ}",
                 json={"app_name": "nginx", "install_dir": ""},
             )
         assert r.status_code == 422
@@ -227,7 +240,7 @@ class TestInstallDirRequired:
         """POST /install with install_dir='   ' → 422 (whitespace stripped, then rejected)."""
         with mock.patch("aegis.server.api.routers.apps._run_install"):
             r = apps_client.post(
-                "/api/v1/apps/install",
+                f"/api/v1/orgs/{_ORG}/apps/install?project_id={_PROJ}",
                 json={"app_name": "nginx", "install_dir": "   "},
             )
         assert r.status_code == 422
