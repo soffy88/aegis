@@ -163,6 +163,95 @@ MIGRATIONS: list[tuple[str, str]] = [
         UNIQUE (omodul_fingerprint);
         """,
     ),
+    (
+        "006_multitenancy_upgrade",
+        """
+        -- ===== orgs: add slug =====
+        ALTER TABLE orgs ADD COLUMN IF NOT EXISTS slug VARCHAR(50);
+
+        UPDATE orgs
+        SET slug = lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))
+        WHERE slug IS NULL;
+
+        UPDATE orgs
+        SET slug = trim(both '-' from substring(slug from 1 for 50))
+        WHERE slug IS NOT NULL;
+
+        UPDATE orgs SET slug = 'org-' || substring(id::text from 1 for 8)
+        WHERE slug = '' OR slug IS NULL;
+
+        ALTER TABLE orgs ADD CONSTRAINT orgs_slug_unique UNIQUE (slug);
+        ALTER TABLE orgs ADD CONSTRAINT orgs_slug_format CHECK (slug ~ '^[a-z0-9-]{1,50}$');
+        ALTER TABLE orgs ALTER COLUMN slug SET NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_orgs_slug ON orgs(slug);
+
+        ALTER TABLE orgs DROP CONSTRAINT IF EXISTS orgs_plan_check;
+        ALTER TABLE orgs
+        ADD CONSTRAINT orgs_plan_check
+        CHECK (plan IN ('free', 'pro', 'enterprise'));
+
+        -- ===== users: RENAME hashed_password + add 3 columns =====
+        ALTER TABLE users RENAME COLUMN hashed_password TO password_hash;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+        ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_format;
+        ALTER TABLE users ADD CONSTRAINT users_email_format CHECK (email ~ '^[^@]+@[^@]+\\.[^@]+$');
+
+        -- ===== org_memberships: add operator role + joined_at =====
+        ALTER TABLE org_memberships DROP CONSTRAINT IF EXISTS org_memberships_role_check;
+        ALTER TABLE org_memberships ADD CONSTRAINT org_memberships_role_check
+            CHECK (role IN ('owner', 'admin', 'operator', 'member', 'viewer'));
+        ALTER TABLE org_memberships
+        ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+        -- ===== projects: add slug / display_name / docker_labels / config / archived_at =====
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug VARCHAR(50);
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_labels JSONB;
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS config JSONB;
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
+        UPDATE projects
+        SET slug = lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))
+        WHERE slug IS NULL;
+
+        UPDATE projects
+        SET slug = trim(both '-' from substring(slug from 1 for 50))
+        WHERE slug IS NOT NULL;
+
+        UPDATE projects SET slug = 'proj-' || substring(id::text from 1 for 8)
+        WHERE slug = '' OR slug IS NULL;
+
+        UPDATE projects SET display_name = name WHERE display_name IS NULL;
+
+        ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_slug_format;
+        ALTER TABLE projects ADD CONSTRAINT projects_slug_format CHECK (slug ~ '^[a-z0-9-]{1,50}$');
+        ALTER TABLE projects ALTER COLUMN slug SET NOT NULL;
+        ALTER TABLE projects ALTER COLUMN display_name SET NOT NULL;
+
+        ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_org_slug_unique;
+        ALTER TABLE projects ADD CONSTRAINT projects_org_slug_unique UNIQUE (org_id, slug);
+
+        CREATE INDEX IF NOT EXISTS idx_projects_archived_at ON projects(archived_at)
+        WHERE archived_at IS NOT NULL;
+        """,
+    ),
+    # Migration 007: SKIPPED
+    # event_trail / installed_apps / domains in BATCH 17 migration 002/003 already have project_id
+    (
+        "008_backfill_new_columns",
+        """
+        -- Ensure default org has slug='default'
+        UPDATE orgs SET slug = 'default'
+        WHERE id = '00000000-0000-0000-0000-000000000001' AND slug != 'default';
+
+        -- Ensure default project has slug='default', display_name filled
+        UPDATE projects SET slug = 'default', display_name = COALESCE(display_name, name)
+        WHERE id = '00000000-0000-0000-0000-000000000002' AND slug != 'default';
+        """,
+    ),
 ]
 
 
