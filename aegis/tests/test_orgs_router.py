@@ -441,3 +441,27 @@ class TestOrgsRouterRoles:
             headers=bearer(token),
         )
         assert resp.status_code == 404
+
+    async def test_change_role_to_owner_rejected_400(
+        self, orgs_client: httpx.AsyncClient, orgs_conn: asyncpg.Connection
+    ) -> None:
+        """Privilege escalation guard: PATCH member role=owner must return 400.
+
+        Without this check an ADMIN could bypass /transfer-ownership and create
+        extra owners via change_member_role (sibling-check asymmetry).
+        """
+        org = await make_org(orgs_conn, f"sec-{uuid4().hex[:8]}")
+        owner = await make_user(orgs_conn, f"os-{uuid4().hex[:8]}@test.com")
+        target = await make_user(orgs_conn, f"ts-{uuid4().hex[:8]}@test.com")
+        await add_member(orgs_conn, owner.id, org.id, Role.OWNER)
+        await add_member(orgs_conn, target.id, org.id, Role.MEMBER)
+        # Even an owner cannot use change_member_role to assign OWNER role.
+        token = make_token(owner.id, owner.email, [org_in_token(org.id, org.slug, "owner")])
+
+        resp = await orgs_client.patch(
+            f"/api/v1/orgs/{org.id}/members/{target.id}",
+            json={"role": "owner"},
+            headers=bearer(token),
+        )
+        assert resp.status_code == 400
+        assert "transfer-ownership" in resp.json()["detail"]

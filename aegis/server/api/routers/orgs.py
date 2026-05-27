@@ -266,6 +266,12 @@ async def change_member_role(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid role: {req.role}") from exc
 
+    if new_role == Role.OWNER:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "use /transfer-ownership to assign owner role",
+        )
+
     membership_repo = MembershipRepository(conn)
     target = await membership_repo.get(user_id=member_user_id, org_id=org_id)
     if not target:
