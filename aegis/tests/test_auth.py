@@ -23,6 +23,7 @@ TEST_EMAIL = "testauth@example.com"
 INACTIVE_EMAIL = "inactive-auth@example.com"
 
 os.environ.setdefault("AEGIS_JWT_SECRET", TEST_JWT_SECRET)
+os.environ.setdefault("AEGIS_JWT_REFRESH_SECURE", "false")  # tests run over HTTP
 
 RUN_SMOKE = os.getenv("RUN_SMOKE") == "1"
 SMOKE_SKIP = pytest.mark.skipif(not RUN_SMOKE, reason="set RUN_SMOKE=1 to run")
@@ -371,6 +372,32 @@ class TestAuthRouter:
         data = resp.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
+        # Rotation: a new refresh cookie must be issued
+        new_cookie = resp.cookies.get("refresh_token")
+        assert new_cookie is not None
+        assert new_cookie != refresh_cookie
+
+    async def test_refresh_rotates_old_token_rejected(self, auth_client: httpx.AsyncClient) -> None:
+        """After /refresh, replaying the old refresh token must return 401."""
+        login_resp = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        )
+        old_cookie = login_resp.cookies.get("refresh_token")
+        assert old_cookie
+
+        refresh_resp = await auth_client.post(
+            "/api/v1/auth/refresh",
+            cookies={"refresh_token": old_cookie},
+        )
+        assert refresh_resp.status_code == 200
+
+        # Replay the consumed (now-rotated) token
+        replay_resp = await auth_client.post(
+            "/api/v1/auth/refresh",
+            cookies={"refresh_token": old_cookie},
+        )
+        assert replay_resp.status_code == 401
 
     async def test_refresh_revoked_token_401(
         self, auth_client: httpx.AsyncClient, auth_conn: asyncpg.Connection

@@ -25,8 +25,22 @@ from aegis.server.repositories import (
     RevokedTokenRepository,
     UserRepository,
 )
+from aegis.server.runtime.config import get_settings
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    """Set httpOnly refresh cookie — Secure flag driven by config."""
+    response.set_cookie(
+        key="refresh_token",
+        value=token,
+        httponly=True,
+        secure=get_settings().jwt_refresh_secure,
+        samesite="lax",
+        max_age=30 * 86400,
+        path="/api/v1/auth",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -68,16 +82,7 @@ async def login(
     refresh, _refresh_exp, _jti = create_refresh_token(user_id=user.id)
 
     await user_repo.update_last_login(user.id)
-
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh,
-        httponly=True,
-        secure=False,  # M1 dev; set True in prod (HTTPS)
-        samesite="lax",
-        max_age=30 * 86400,
-        path="/api/v1/auth",
-    )
+    _set_refresh_cookie(response, refresh)
 
     return TokenResponse(
         access_token=access,
@@ -118,6 +123,15 @@ async def refresh(
             orgs_for_token.append({"org_id": str(org.id), "slug": org.slug, "role": m.role.value})
 
     access, access_exp = create_access_token(user_id=user.id, email=user.email, orgs=orgs_for_token)
+
+    # Rotate: revoke the consumed JTI and issue a fresh refresh token.
+    await revoked_repo.revoke(
+        jti=payload["jti"],
+        user_id=user.id,
+        expires_at=datetime.fromtimestamp(payload["exp"], tz=UTC),
+    )
+    new_refresh, _, _ = create_refresh_token(user_id=user.id)
+    _set_refresh_cookie(response, new_refresh)
 
     return TokenResponse(
         access_token=access,
