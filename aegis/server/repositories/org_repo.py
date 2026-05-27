@@ -55,6 +55,10 @@ class OrgRepository:
         )
         return Org.from_row(row) if row else None
 
+    async def update_name(self, org_id: UUID, name: str) -> Org | None:
+        """Update org display name. Returns updated org or None if not found."""
+        return await self.update(org_id, name=name)
+
     async def delete(self, org_id: UUID) -> bool:
         result = await self.conn.execute("DELETE FROM orgs WHERE id = $1", org_id)
         return result == "DELETE 1"
