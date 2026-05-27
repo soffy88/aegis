@@ -83,6 +83,10 @@ class MembershipRepository:
         )
         return OrgMembership.from_row(row) if row else None
 
+    async def list_by_org_with_users(self, org_id: UUID) -> list[tuple[OrgMembership, User]]:
+        """Alias for list_by_org; returns memberships with full user details."""
+        return await self.list_by_org(org_id)
+
     async def count_owners_in_org(self, org_id: UUID) -> int:
         return await self.conn.fetchval(
             "SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'owner'",

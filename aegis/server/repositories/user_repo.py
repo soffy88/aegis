@@ -51,3 +51,24 @@ class UserRepository:
         await self.conn.execute(
             "UPDATE users SET default_org_id = $1 WHERE id = $2", org_id, user_id
         )
+
+    async def update_profile(
+        self,
+        user_id: UUID,
+        *,
+        display_name: str | None = None,
+        default_org_id: UUID | None = None,
+    ) -> User:
+        """Partial profile update. None = leave unchanged."""
+        current = await self.get_by_id(user_id)
+        if not current:
+            raise ValueError(f"user {user_id} not found")
+        new_display_name = display_name if display_name is not None else current.display_name
+        new_default_org = default_org_id if default_org_id is not None else current.default_org_id
+        row = await self.conn.fetchrow(
+            "UPDATE users SET display_name = $1, default_org_id = $2 WHERE id = $3 RETURNING *",
+            new_display_name,
+            new_default_org,
+            user_id,
+        )
+        return User.from_row(row)
