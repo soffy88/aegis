@@ -1,15 +1,38 @@
-"""Tests for GET /api/v1/docker/containers/{c}/stats (走 oprim)."""
+"""Tests for GET /api/v1/orgs/{org_id}/docker/containers/{c}/stats (走 oprim)."""
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Generator
 from unittest import mock
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from aegis.server.app import create_app
+from aegis.server.api.routers import docker as docker_router
+from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 
-client = TestClient(create_app())
+_ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
+_USER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+
+async def _fake_user() -> UserContext:
+    return UserContext(
+        user_id=_USER,
+        email="test@example.com",
+        orgs=[OrgInToken(org_id=_ORG, slug="test-org", role="owner")],
+    )
+
+
+@pytest.fixture
+def client() -> Generator[TestClient, None, None]:
+    fa = FastAPI()
+    fa.include_router(docker_router.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+    with TestClient(fa, raise_server_exceptions=False) as c:
+        yield c
 
 
 def _mock_stats() -> MagicMock:
@@ -30,13 +53,13 @@ def _mock_stats() -> MagicMock:
     return s
 
 
-def test_stats_returns_cpu_mem_net() -> None:
+def test_stats_returns_cpu_mem_net(client: TestClient) -> None:
     """Stats endpoint returns CPU%, Mem MB, Net I/O via oprim."""
     with mock.patch(
         "aegis.server.api.routers.docker.docker_container_stats",
         return_value=_mock_stats(),
     ):
-        resp = client.get("/api/v1/docker/containers/myapp/stats")
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/myapp/stats")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -46,7 +69,7 @@ def test_stats_returns_cpu_mem_net() -> None:
     assert data["net_rx_kb"] == 1000.0
 
 
-def test_stats_container_not_found() -> None:
+def test_stats_container_not_found(client: TestClient) -> None:
     """Stats for nonexistent container returns 502."""
     from oprim._exceptions import OprimError
 
@@ -54,6 +77,6 @@ def test_stats_container_not_found() -> None:
         "aegis.server.api.routers.docker.docker_container_stats",
         side_effect=OprimError("not found"),
     ):
-        resp = client.get("/api/v1/docker/containers/ghost/stats")
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/ghost/stats")
 
     assert resp.status_code == 502

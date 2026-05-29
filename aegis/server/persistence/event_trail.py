@@ -101,12 +101,17 @@ async def save_decision_trail(
     status: str,
     error: dict[str, Any] | None = None,
     report_path: str | None = None,
+    project_id: uuid.UUID | None = None,
 ) -> None:
     """Persist omodul decision_trail to Postgres (additive, not replacing omodul's JSON).
 
     Idempotent: ON CONFLICT (omodul_fingerprint) DO NOTHING (ADR-002 M1 方案 A).
+    project_id: real project context when invoked via a scoped API call; falls back to
+    the self-hosted default (…0002) when called without an org context.
     """
     from aegis.server.persistence.db import get_pool  # noqa: PLC0415
+
+    _project_id = project_id or uuid.UUID("00000000-0000-0000-0000-000000000002")
 
     async with get_pool().acquire() as conn:
         await conn.execute(
@@ -116,22 +121,26 @@ async def save_decision_trail(
                 omodul_fingerprint, omodul_kind, initiated_by
             ) VALUES (
                 '00000000-0000-0000-0000-000000000001'::uuid,
-                '00000000-0000-0000-0000-000000000002'::uuid,
+                $5,
                 'omodul_run', $1, $2::jsonb,
                 $3, $4, 'dispatcher'
             )
             ON CONFLICT (omodul_fingerprint) DO NOTHING
             """,
             "info" if status == "completed" else "warning",
-            json.dumps({
-                "decision_trail": decision_trail,
-                "user_id": user_id,
-                "status": status,
-                "error": error,
-                "report_path": report_path,
-            }, default=str),
+            json.dumps(
+                {
+                    "decision_trail": decision_trail,
+                    "user_id": user_id,
+                    "status": status,
+                    "error": error,
+                    "report_path": report_path,
+                },
+                default=str,
+            ),
             fingerprint,
             omodul_name,
+            _project_id,
         )
 
 
@@ -139,43 +148,32 @@ async def recent_events(
     *,
     conn: asyncpg.Connection,
     org_id: uuid.UUID,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
     service: str | None = None,
     hours: int = 24,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Fetch recent events for a tenant."""
-    if service:
-        rows = await conn.fetch(
-            """
-            SELECT id, ts, event_type, severity, payload, omodul_kind, autoheal_plugin, trace_id
-            FROM event_trail
-            WHERE org_id = $1 AND project_id = $2 AND service = $3
-              AND ts > now() - ($4 || ' hours')::interval
-            ORDER BY ts DESC
-            LIMIT $5
-            """,
-            org_id,
-            project_id,
-            service,
-            str(hours),
-            limit,
-        )
-    else:
-        rows = await conn.fetch(
-            """
-            SELECT id, ts, event_type, severity, payload, omodul_kind, autoheal_plugin, trace_id
-            FROM event_trail
-            WHERE org_id = $1 AND project_id = $2
-              AND ts > now() - ($3 || ' hours')::interval
-            ORDER BY ts DESC
-            LIMIT $4
-            """,
-            org_id,
-            project_id,
-            str(hours),
-            limit,
-        )
+    """Fetch recent events for a tenant.
+
+    project_id: when None, returns events across all projects in the org.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id, ts, event_type, severity, payload, omodul_kind, autoheal_plugin, trace_id
+        FROM event_trail
+        WHERE org_id = $1
+          AND ($2::uuid IS NULL OR project_id = $2)
+          AND ($3::text IS NULL OR service = $3)
+          AND ts > now() - ($4 || ' hours')::interval
+        ORDER BY ts DESC
+        LIMIT $5
+        """,
+        org_id,
+        project_id,
+        service,
+        str(hours),
+        limit,
+    )
     return [dict(r) for r in rows]
 
 

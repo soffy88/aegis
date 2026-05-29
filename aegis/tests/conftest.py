@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from unittest import mock
 
 import pytest
+
+# Set a valid JWT secret before any module that calls AegisSettings() is imported.
+# The module-level `app = create_app()` in app.py runs during test collection;
+# without this, any test that imports from aegis.server.app will fail.
+os.environ.setdefault("AEGIS_JWT_SECRET", "test-secret-do-not-use-in-production-abc!")
 
 
 @pytest.fixture

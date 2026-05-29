@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,7 @@ class OmodulDispatcher:
         input_data: dict[str, Any],
         user_id: str,
         on_step: Callable[[dict[str, Any]], None] | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Invoke an omodul with dispatcher orchestration."""
         # 1. Resolve function + Config/Input classes
@@ -95,6 +97,7 @@ class OmodulDispatcher:
             user_id=user_id,
             status=result.get("status", "unknown"),
             error=result.get("error"),
+            project_id=project_id,
         )
 
         # 8. Dedup cache (only on success)

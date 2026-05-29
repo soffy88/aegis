@@ -6,13 +6,16 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from aegis.server.auth.dependencies import UserContext
+from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.runtime.config import AegisSettings
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/store", tags=["store"])
+router = APIRouter(prefix="/api/v1/orgs/{org_id}/store", tags=["store"])
 
 _apps_cache: list[dict[str, Any]] | None = None
 
@@ -39,14 +42,16 @@ def _load_apps() -> list[dict[str, Any]]:
     return apps
 
 
-@router.get("/apps")
-async def list_store_apps(
+@router.get("")
+async def list_catalog(
+    org_id: UUID,
     q: str | None = Query(default=None, description="Search query"),
     category: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=30, ge=1, le=100),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> dict[str, Any]:
-    """List available apps with search and pagination."""
+    """List available apps in the store catalog. viewer+ can browse."""
     apps = _load_apps()
 
     if q:
@@ -66,11 +71,15 @@ async def list_store_apps(
     return {"total": total, "page": page, "per_page": per_page, "items": items}
 
 
-@router.get("/apps/{slug}")
-async def get_store_app(slug: str) -> dict[str, Any]:
-    """Get a single app definition by slug."""
+@router.get("/{app_slug}")
+async def get_catalog_item(
+    org_id: UUID,
+    app_slug: str,
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Get a single app definition by slug. viewer+ can view."""
     apps = _load_apps()
     for app in apps:
-        if app.get("slug") == slug:
+        if app.get("slug") == app_slug:
             return app
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"App '{slug}' not found")
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"App '{app_slug}' not found")

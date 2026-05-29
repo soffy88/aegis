@@ -2,23 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import asyncpg
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from obase.auth import argon2_verify, jwt_sign_hs256, jwt_verify_hs256
 from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext, get_current_user
-from aegis.server.auth.exceptions import TokenInvalidError
-from aegis.server.auth.jwt_service import (
-    TokenType,
-    create_access_token,
-    create_refresh_token,
-    decode_token,
-)
-from aegis.server.auth.password_service import verify_password
 from aegis.server.repositories import (
     MembershipRepository,
     OrgRepository,
@@ -54,6 +47,29 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+def _issue_access_token(user_id: UUID, email: str, orgs: list[dict]) -> tuple[str, datetime]:
+    """Sign an access token; returns (token, expires_at)."""
+    settings = get_settings()
+    ttl_seconds = settings.jwt_access_ttl_minutes * 60
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    token = jwt_sign_hs256(
+        payload={"sub": str(user_id), "email": email, "orgs": orgs, "type": "access"},
+        secret=settings.jwt_secret,
+        expires_in_seconds=ttl_seconds,
+    )
+    return token, expires_at
+
+
+def _issue_refresh_token(user_id: UUID) -> str:
+    """Sign a refresh token with a fresh JTI; returns token."""
+    settings = get_settings()
+    return jwt_sign_hs256(
+        payload={"sub": str(user_id), "jti": str(uuid4()), "type": "refresh"},
+        secret=settings.jwt_secret,
+        expires_in_seconds=settings.jwt_refresh_ttl_days * 86400,
+    )
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
     req: LoginRequest,
@@ -68,7 +84,7 @@ async def login(
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
 
-    if not user.password_hash or not verify_password(req.password, user.password_hash):
+    if not user.password_hash or not argon2_verify(password=req.password, hash=user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
 
     memberships = await membership_repo.list_by_user(user.id)
@@ -78,8 +94,8 @@ async def login(
         if org:
             orgs_for_token.append({"org_id": str(org.id), "slug": org.slug, "role": m.role.value})
 
-    access, access_exp = create_access_token(user_id=user.id, email=user.email, orgs=orgs_for_token)
-    refresh, _refresh_exp, _jti = create_refresh_token(user_id=user.id)
+    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token)
+    refresh = _issue_refresh_token(user.id)
 
     await user_repo.update_last_login(user.id)
     _set_refresh_cookie(response, refresh)
@@ -100,9 +116,16 @@ async def refresh(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "no refresh token")
 
     try:
-        payload = decode_token(refresh_token, expected_type=TokenType.REFRESH)
-    except TokenInvalidError as e:
+        payload = jwt_verify_hs256(
+            token=refresh_token,
+            secret=get_settings().jwt_secret,
+            check_exp=True,
+        )
+    except Exception as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e)) from e
+
+    if payload.get("type") != "refresh":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong token type")
 
     revoked_repo = RevokedTokenRepository(conn)
     if await revoked_repo.is_revoked(payload["jti"]):
@@ -122,7 +145,7 @@ async def refresh(
         if org:
             orgs_for_token.append({"org_id": str(org.id), "slug": org.slug, "role": m.role.value})
 
-    access, access_exp = create_access_token(user_id=user.id, email=user.email, orgs=orgs_for_token)
+    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token)
 
     # Rotate: revoke the consumed JTI and issue a fresh refresh token.
     await revoked_repo.revoke(
@@ -130,8 +153,7 @@ async def refresh(
         user_id=user.id,
         expires_at=datetime.fromtimestamp(payload["exp"], tz=UTC),
     )
-    new_refresh, _, _ = create_refresh_token(user_id=user.id)
-    _set_refresh_cookie(response, new_refresh)
+    _set_refresh_cookie(response, _issue_refresh_token(user.id))
 
     return TokenResponse(
         access_token=access,
@@ -147,14 +169,19 @@ async def logout(
 ) -> None:
     if refresh_token:
         try:
-            payload = decode_token(refresh_token, expected_type=TokenType.REFRESH)
-            revoked_repo = RevokedTokenRepository(conn)
-            await revoked_repo.revoke(
-                jti=payload["jti"],
-                user_id=UUID(payload["sub"]),
-                expires_at=datetime.fromtimestamp(payload["exp"], tz=UTC),
+            payload = jwt_verify_hs256(
+                token=refresh_token,
+                secret=get_settings().jwt_secret,
+                check_exp=True,
             )
-        except TokenInvalidError:
+            if payload.get("type") == "refresh":
+                revoked_repo = RevokedTokenRepository(conn)
+                await revoked_repo.revoke(
+                    jti=payload["jti"],
+                    user_id=UUID(payload["sub"]),
+                    expires_at=datetime.fromtimestamp(payload["exp"], tz=UTC),
+                )
+        except Exception:
             pass  # logout always succeeds — silently ignore invalid tokens
 
     response.delete_cookie("refresh_token", path="/api/v1/auth")
