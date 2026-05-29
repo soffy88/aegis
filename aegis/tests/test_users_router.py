@@ -33,10 +33,16 @@ async def make_org(conn: asyncpg.Connection, slug: str) -> Any:
 
 
 def make_token(user_id: UUID, email: str, orgs: list[dict]) -> str:
-    from aegis.server.auth.jwt_service import create_access_token
+    from obase.auth import jwt_sign_hs256
 
-    token, _ = create_access_token(user_id=user_id, email=email, orgs=orgs)
-    return token
+    from aegis.server.runtime.config import get_settings
+
+    settings = get_settings()
+    return jwt_sign_hs256(
+        payload={"sub": str(user_id), "email": email, "orgs": orgs, "type": "access"},
+        secret=settings.jwt_secret,
+        expires_in_seconds=settings.jwt_access_ttl_minutes * 60,
+    )
 
 
 def bearer(token: str) -> dict:

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
-import socket
 from typing import Any
-from urllib.parse import urlparse
 from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
+from oprim import url_safety_check
+from oprim.url_safety_check import URLSafetyError
 from pydantic import BaseModel, Field
 
 from aegis.server.api.deps import get_db_conn
@@ -25,67 +24,25 @@ except ImportError:  # pragma: no cover
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/projects", tags=["projects"])
 
-_PROBE_ALLOWED_SCHEMES = frozenset({"http", "https"})
-
 
 def _validate_health_url(url: str) -> None:
-    """Reject health_url values that could be used for SSRF.
+    """Service-layer wrapper: calls oprim.url_safety_check + converts to HTTPException.
 
-    Checks:
-    1. scheme must be http or https
-    2. all resolved A/AAAA records must be public (not loopback, private,
-       link-local, reserved, or multicast)
-
-    Note: DNS-rebinding between validation and probe is a residual risk that
-    requires oprim-level socket binding to fully eliminate. Documented here as
-    a known limitation rather than a false sense of full protection.
+    Note: DNS-rebinding residual risk documented in oprim.url_safety_check docstring.
     """
     try:
-        parsed = urlparse(url)
-    except Exception as exc:
+        result = url_safety_check(url=url)
+    except URLSafetyError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="invalid health_url",
-        ) from exc
+            detail=f"URL validation error: {e}",
+        ) from e
 
-    if parsed.scheme not in _PROBE_ALLOWED_SCHEMES:
+    if not result.is_safe:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="health_url scheme must be http or https",
+            detail=f"URL safety check failed: {result.reason} (failed_check={result.failed_check})",
         )
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="health_url has no hostname",
-        )
-
-    try:
-        records = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="health_url hostname could not be resolved",
-        ) from exc
-
-    for info in records:
-        addr_str = info[4][0]
-        try:
-            addr = ipaddress.ip_address(addr_str)
-        except ValueError:
-            continue
-        if (
-            addr.is_loopback
-            or addr.is_private
-            or addr.is_link_local
-            or addr.is_reserved
-            or addr.is_multicast
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="health_url must not resolve to a private, loopback, or reserved address",
-            )
 
 
 class ProjectCreateRequest(BaseModel):

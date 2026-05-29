@@ -1,7 +1,7 @@
-"""C1-2 auth tests — password_service / jwt_service / router e2e / RevokedTokenRepository.
+"""C1-2 auth tests — RevokedTokenRepository + auth router e2e.
 
-Non-smoke (§1, §2): always run (no DB required).
-Smoke (§3, §4):     require RUN_SMOKE=1 + Docker.
+Non-smoke (§1): none (password_service / jwt_service tests removed — logic now in obase.auth).
+Smoke (§3, §4): require RUN_SMOKE=1 + Docker.
 """
 
 from __future__ import annotations
@@ -27,114 +27,6 @@ os.environ.setdefault("AEGIS_JWT_REFRESH_SECURE", "false")  # tests run over HTT
 
 RUN_SMOKE = os.getenv("RUN_SMOKE") == "1"
 SMOKE_SKIP = pytest.mark.skipif(not RUN_SMOKE, reason="set RUN_SMOKE=1 to run")
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# §1  password_service  (4 tests, no DB)
-# ════════════════════════════════════════════════════════════════════════════
-
-
-class TestPasswordService:
-    def test_hash_password_returns_argon2id_format(self) -> None:
-        from aegis.server.auth.password_service import hash_password
-
-        h = hash_password("my-password-12!")
-        assert h.startswith("$argon2id$")
-
-    def test_verify_password_correct(self) -> None:
-        from aegis.server.auth.password_service import hash_password, verify_password
-
-        h = hash_password("my-password-12!")
-        assert verify_password("my-password-12!", h) is True
-
-    def test_verify_password_wrong(self) -> None:
-        from aegis.server.auth.password_service import hash_password, verify_password
-
-        h = hash_password("correct-one-12!")
-        assert verify_password("wrong-one-12!!", h) is False
-
-    def test_verify_password_malformed_hash_returns_false(self) -> None:
-        from aegis.server.auth.password_service import verify_password
-
-        assert verify_password("any-password", "not-a-valid-hash") is False
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# §2  jwt_service  (5 tests, no DB)
-# ════════════════════════════════════════════════════════════════════════════
-
-
-class TestJwtService:
-    def setup_method(self) -> None:
-        os.environ["AEGIS_JWT_SECRET"] = TEST_JWT_SECRET
-        from aegis.server.runtime.config import get_settings
-
-        get_settings.cache_clear()
-
-    def teardown_method(self) -> None:
-        from aegis.server.runtime.config import get_settings
-
-        get_settings.cache_clear()
-
-    def test_create_access_token_decodable(self) -> None:
-        from aegis.server.auth.jwt_service import TokenType, create_access_token, decode_token
-
-        uid = uuid4()
-        token, exp = create_access_token(user_id=uid, email="a@b.com", orgs=[])
-        payload = decode_token(token, expected_type=TokenType.ACCESS)
-        assert payload["sub"] == str(uid)
-        assert payload["email"] == "a@b.com"
-        assert payload["type"] == TokenType.ACCESS
-
-    def test_create_refresh_token_has_jti(self) -> None:
-        from aegis.server.auth.jwt_service import TokenType, create_refresh_token, decode_token
-
-        uid = uuid4()
-        token, exp, jti = create_refresh_token(user_id=uid)
-        assert jti
-        payload = decode_token(token, expected_type=TokenType.REFRESH)
-        assert payload["jti"] == jti
-        assert payload["sub"] == str(uid)
-
-    def test_decode_access_token_wrong_type_raises(self) -> None:
-        from aegis.server.auth.exceptions import TokenInvalidError
-        from aegis.server.auth.jwt_service import TokenType, create_refresh_token, decode_token
-
-        uid = uuid4()
-        refresh_token, _, _ = create_refresh_token(user_id=uid)
-        with pytest.raises(TokenInvalidError, match="wrong token type"):
-            decode_token(refresh_token, expected_type=TokenType.ACCESS)
-
-    def test_decode_expired_token_raises(self) -> None:
-        from jose import jwt as jose_jwt
-
-        from aegis.server.auth.exceptions import TokenInvalidError
-        from aegis.server.auth.jwt_service import TokenType, decode_token
-
-        payload = {
-            "sub": str(uuid4()),
-            "type": TokenType.ACCESS,
-            "exp": int((datetime.now(UTC) - timedelta(hours=1)).timestamp()),
-        }
-        token = jose_jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
-        with pytest.raises(TokenInvalidError, match="jwt decode failed"):
-            decode_token(token, expected_type=TokenType.ACCESS)
-
-    def test_decode_bad_signature_raises(self) -> None:
-        from jose import jwt as jose_jwt
-
-        from aegis.server.auth.exceptions import TokenInvalidError
-        from aegis.server.auth.jwt_service import TokenType, decode_token
-
-        payload = {
-            "sub": str(uuid4()),
-            "type": TokenType.ACCESS,
-            "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
-        }
-        wrong_secret = "wrong-secret-totally-different-32c"
-        token = jose_jwt.encode(payload, wrong_secret, algorithm="HS256")
-        with pytest.raises(TokenInvalidError, match="jwt decode failed"):
-            decode_token(token, expected_type=TokenType.ACCESS)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -190,7 +82,8 @@ def minimal_auth_app() -> Any:
 @pytest.fixture
 async def test_user_data(auth_conn: asyncpg.Connection) -> Any:
     """Idempotent: get-or-create active test user with default-org membership."""
-    from aegis.server.auth.password_service import hash_password
+    from obase.auth import argon2_hash
+
     from aegis.server.models import Role
     from aegis.server.repositories import MembershipRepository, OrgRepository, UserRepository
 
@@ -202,7 +95,7 @@ async def test_user_data(auth_conn: asyncpg.Connection) -> Any:
     if user is None:
         user = await user_repo.create(
             email=TEST_EMAIL,
-            password_hash=hash_password(TEST_PASSWORD),
+            password_hash=argon2_hash(password=TEST_PASSWORD),
         )
         org = await org_repo.get_by_slug("default")
         if org:
@@ -213,7 +106,8 @@ async def test_user_data(auth_conn: asyncpg.Connection) -> Any:
 @pytest.fixture
 async def inactive_user_data(auth_conn: asyncpg.Connection) -> Any:
     """Idempotent: get-or-create inactive test user."""
-    from aegis.server.auth.password_service import hash_password
+    from obase.auth import argon2_hash
+
     from aegis.server.repositories import UserRepository
 
     user_repo = UserRepository(auth_conn)
@@ -221,7 +115,7 @@ async def inactive_user_data(auth_conn: asyncpg.Connection) -> Any:
     if user is None:
         user = await user_repo.create(
             email=INACTIVE_EMAIL,
-            password_hash=hash_password(TEST_PASSWORD),
+            password_hash=argon2_hash(password=TEST_PASSWORD),
         )
         await user_repo.set_active(user.id, is_active=False)
     return user
@@ -317,9 +211,9 @@ class TestAuthRouter:
         assert data["token_type"] == "bearer"
         assert data["expires_in"] > 0
         # Verify orgs embedded in token
-        from jose import jwt as jose_jwt
+        from obase.auth import jwt_verify_hs256
 
-        payload = jose_jwt.decode(data["access_token"], TEST_JWT_SECRET, algorithms=["HS256"])
+        payload = jwt_verify_hs256(token=data["access_token"], secret=TEST_JWT_SECRET)
         assert len(payload["orgs"]) > 0
         assert payload["orgs"][0]["slug"] == "default"
 
@@ -410,10 +304,11 @@ class TestAuthRouter:
         assert refresh_cookie
 
         # Manually revoke the token's jti
-        from aegis.server.auth.jwt_service import TokenType, decode_token
+        from obase.auth import jwt_verify_hs256
+
         from aegis.server.repositories import RevokedTokenRepository
 
-        payload = decode_token(refresh_cookie, expected_type=TokenType.REFRESH)
+        payload = jwt_verify_hs256(token=refresh_cookie, secret=TEST_JWT_SECRET)
         repo = RevokedTokenRepository(auth_conn)
         await repo.revoke(
             jti=payload["jti"],
@@ -432,7 +327,7 @@ class TestAuthRouter:
         assert resp.status_code == 401
 
     async def test_refresh_expired_cookie_401(self, auth_client: httpx.AsyncClient) -> None:
-        from jose import jwt as jose_jwt
+        import jwt as pyjwt
 
         expired_payload = {
             "sub": str(uuid4()),
@@ -440,7 +335,7 @@ class TestAuthRouter:
             "type": "refresh",
             "exp": int((datetime.now(UTC) - timedelta(hours=1)).timestamp()),
         }
-        expired_token = jose_jwt.encode(expired_payload, TEST_JWT_SECRET, algorithm="HS256")
+        expired_token = pyjwt.encode(expired_payload, TEST_JWT_SECRET, algorithm="HS256")
 
         resp = await auth_client.post(
             "/api/v1/auth/refresh",
@@ -465,10 +360,11 @@ class TestAuthRouter:
         assert logout_resp.status_code == 204
 
         # Token must be in revoked_tokens table
-        from aegis.server.auth.jwt_service import TokenType, decode_token
+        from obase.auth import jwt_verify_hs256
+
         from aegis.server.repositories import RevokedTokenRepository
 
-        payload = decode_token(refresh_cookie, expected_type=TokenType.REFRESH)
+        payload = jwt_verify_hs256(token=refresh_cookie, secret=TEST_JWT_SECRET)
         repo = RevokedTokenRepository(auth_conn)
         assert await repo.is_revoked(payload["jti"]) is True
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import socket
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -11,6 +10,7 @@ from unittest import mock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from oprim.url_safety_check import URLSafetyResult
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import projects as projects_router
@@ -23,9 +23,12 @@ _USER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 _HEALTH_URL = "/api/v1/orgs/{org_id}/projects/{project_id}/health"
 
-# A genuinely public IP for getaddrinfo mocking.
-# 203.0.113.x (TEST-NET-3/RFC5737) is marked is_private in Python ≥3.11 — use 8.8.8.8 instead.
-_PUBLIC_DNS = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+_SAFE_RESULT = URLSafetyResult(
+    is_safe=True,
+    reason=None,
+    resolved_ips=["8.8.8.8"],
+    failed_check=None,
+)
 
 
 def _project_row(
@@ -88,8 +91,8 @@ class TestProjectHealthEndpoint:
         client = _make_client(conn)
         with (
             mock.patch(
-                "aegis.server.api.routers.projects.socket.getaddrinfo",
-                return_value=_PUBLIC_DNS,
+                "aegis.server.api.routers.projects.url_safety_check",
+                return_value=_SAFE_RESULT,
             ),
             mock.patch(
                 "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(True)
@@ -108,8 +111,8 @@ class TestProjectHealthEndpoint:
         client = _make_client(conn)
         with (
             mock.patch(
-                "aegis.server.api.routers.projects.socket.getaddrinfo",
-                return_value=_PUBLIC_DNS,
+                "aegis.server.api.routers.projects.url_safety_check",
+                return_value=_SAFE_RESULT,
             ),
             mock.patch(
                 "aegis.server.api.routers.projects.http_health_probe", return_value=_probe(False)
@@ -157,12 +160,17 @@ class TestHealthUrlSsrfValidation:
     def test_private_ip_url_rejected_400(self, conn: mock.AsyncMock) -> None:
         """health_url resolving to RFC1918 address → 400, probe never called."""
         conn.fetchrow.return_value = _project_row(health_url="http://internal:8000/health")
-        private_dns = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.50", 0))]
+        unsafe_result = URLSafetyResult(
+            is_safe=False,
+            reason="is_private_blocked",
+            resolved_ips=["192.168.1.50"],
+            failed_check="is_private",
+        )
         client = _make_client(conn)
         with (
             mock.patch(
-                "aegis.server.api.routers.projects.socket.getaddrinfo",
-                return_value=private_dns,
+                "aegis.server.api.routers.projects.url_safety_check",
+                return_value=unsafe_result,
             ),
             mock.patch("aegis.server.api.routers.projects.http_health_probe") as mock_probe,
         ):
@@ -174,8 +182,20 @@ class TestHealthUrlSsrfValidation:
     def test_bad_scheme_url_rejected_400(self, conn: mock.AsyncMock) -> None:
         """health_url with file:// scheme → 400 without DNS resolution."""
         conn.fetchrow.return_value = _project_row(health_url="file:///etc/passwd")
+        scheme_result = URLSafetyResult(
+            is_safe=False,
+            reason="scheme_not_allowed",
+            resolved_ips=[],
+            failed_check=None,
+        )
         client = _make_client(conn)
-        with mock.patch("aegis.server.api.routers.projects.http_health_probe") as mock_probe:
+        with (
+            mock.patch(
+                "aegis.server.api.routers.projects.url_safety_check",
+                return_value=scheme_result,
+            ),
+            mock.patch("aegis.server.api.routers.projects.http_health_probe") as mock_probe,
+        ):
             r = client.get(_HEALTH_URL.format(org_id=_ORG, project_id=_PROJ))
         assert r.status_code == 400
         assert "scheme" in r.json()["detail"]
@@ -199,8 +219,8 @@ class TestHealthUrlSsrfValidation:
         client = _make_client(conn)
         with (
             mock.patch(
-                "aegis.server.api.routers.projects.socket.getaddrinfo",
-                return_value=_PUBLIC_DNS,
+                "aegis.server.api.routers.projects.url_safety_check",
+                return_value=_SAFE_RESULT,
             ),
             mock.patch(
                 "aegis.server.api.routers.projects.http_health_probe",

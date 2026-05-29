@@ -7,9 +7,9 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from obase.auth import jwt_verify_hs256
 
-from aegis.server.auth.exceptions import TokenInvalidError
-from aegis.server.auth.jwt_service import TokenType, decode_token
+from aegis.server.runtime.config import get_settings
 
 
 @dataclass
@@ -37,13 +37,24 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserContext:
     try:
-        payload = decode_token(token, expected_type=TokenType.ACCESS)
-    except TokenInvalidError as e:
+        payload = jwt_verify_hs256(
+            token=token,
+            secret=get_settings().jwt_secret,
+            check_exp=True,
+        )
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="wrong token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     return UserContext(
         user_id=UUID(payload["sub"]),
