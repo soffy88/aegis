@@ -22,6 +22,8 @@ dependencies = [
 
     # 3O 主库依赖
     "obase>=0.4.0",
+    # transitive dep of obase.text.fuzzy_match (obase 0.6.0+), aegis 显式声明保险
+    "rapidfuzz>=3.0",
     "oprim>=2.16.0",
     "oskill>=3.0",
     "omodul>=1.10",
@@ -45,6 +47,7 @@ smoke = [
     "aegis[test]",
     "testcontainers[postgres]>=3.7.0",
     "docker>=6.0",
+    "fakeredis>=2.0",
 ]
 
 [project.scripts]
