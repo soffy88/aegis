@@ -320,6 +320,38 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON alert_fired_history(org_id, project_id) WHERE escalated_at IS NULL;
         """,
     ),
+    (
+        "012_release_gates",
+        """
+        CREATE TABLE IF NOT EXISTS release_gates (
+            gate_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            project_id UUID NOT NULL REFERENCES projects(id),
+            autoheal_event_id UUID,
+            action_kind TEXT NOT NULL,
+            action_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            requested_by UUID NOT NULL REFERENCES users(id),
+            requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            state TEXT NOT NULL DEFAULT 'pending'
+                CHECK (state IN ('pending', 'approved', 'rejected', 'expired')),
+            decided_by UUID REFERENCES users(id),
+            decided_at TIMESTAMPTZ,
+            decision_reason TEXT,
+            expires_at TIMESTAMPTZ NOT NULL,
+            CHECK (
+                (decided_by IS NULL AND decided_at IS NULL) OR
+                (decided_by IS NOT NULL AND decided_at IS NOT NULL)
+            ),
+            UNIQUE (autoheal_event_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_gates_pending
+            ON release_gates(org_id, project_id, state, expires_at)
+            WHERE state = 'pending';
+        CREATE INDEX IF NOT EXISTS idx_release_gates_history
+            ON release_gates(org_id, project_id, requested_at DESC);
+        """,
+    ),
 ]
 
 
