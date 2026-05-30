@@ -266,6 +266,60 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON revoked_tokens(expires_at);
         """,
     ),
+    (
+        "010_alert_rules",
+        """
+        CREATE TABLE IF NOT EXISTS alert_rules (
+            rule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            project_id UUID NOT NULL REFERENCES projects(id),
+            name TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            threshold_warn REAL,
+            threshold_critical REAL,
+            operator TEXT NOT NULL DEFAULT '>='
+                CHECK (operator IN ('>=', '>', '<', '<=', '==')),
+            throttle_seconds INT NOT NULL DEFAULT 300
+                CHECK (throttle_seconds >= 0),
+            escalation_delay_seconds INT NOT NULL DEFAULT 1800
+                CHECK (escalation_delay_seconds >= 0),
+            dedup_bucket_seconds INT NOT NULL DEFAULT 3600
+                CHECK (dedup_bucket_seconds > 0),
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (org_id, project_id, name),
+            CHECK (threshold_warn IS NOT NULL OR threshold_critical IS NOT NULL)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_alert_rules_active
+            ON alert_rules(org_id, project_id) WHERE enabled = TRUE;
+        """,
+    ),
+    (
+        "011_alert_fired_history",
+        """
+        CREATE TABLE IF NOT EXISTS alert_fired_history (
+            fired_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            rule_id UUID NOT NULL REFERENCES alert_rules(rule_id) ON DELETE CASCADE,
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            project_id UUID NOT NULL REFERENCES projects(id),
+            dedup_key TEXT NOT NULL UNIQUE,
+            severity TEXT NOT NULL CHECK (severity IN ('warn', 'critical')),
+            current_value REAL,
+            triggered_reason TEXT,
+            fired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            escalated_at TIMESTAMPTZ,
+            last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_alert_fired_rule_fired
+            ON alert_fired_history(rule_id, fired_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_alert_fired_project_active
+            ON alert_fired_history(org_id, project_id) WHERE escalated_at IS NULL;
+        """,
+    ),
 ]
 
 
