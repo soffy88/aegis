@@ -21,12 +21,12 @@ dependencies = [
     "PyYAML>=6.0",
 
     # 3O 主库依赖
-    "obase @ file:///home/soffy/projects/platform/obase",
+    "obase>=0.7.0",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
-    "oprim @ file:///home/soffy/projects/platform/oprim",
-    "oskill @ file:///home/soffy/projects/platform/oskill",
-    "omodul @ file:///home/soffy/projects/platform/omodul",
+    "oprim>=2.20.0",
+    "oskill>=3.0",
+    "omodul>=1.10",
 ]
 
 [project.optional-dependencies]
