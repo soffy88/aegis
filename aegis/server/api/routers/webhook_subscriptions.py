@@ -135,4 +135,4 @@ async def list_deliveries(
     if not sub:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "webhook subscription not found")
     delivery_repo = WebhookDeliveryQueueRepository(conn)
-    return await delivery_repo.list_by_subscription(sub_id=sub_id, limit=limit)
+    return await delivery_repo.list_by_subscription(sub_id=sub_id, org_id=org_id, limit=limit)

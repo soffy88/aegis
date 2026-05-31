@@ -118,7 +118,7 @@ class TestWebhookDeliveryQueueRepository:
         batch = await repo.claim_next_batch(batch_size=1, now=_NOW)
         claimed = next(d for d in batch if d.delivery_id == delivery.delivery_id)
         await repo.mark_succeeded(delivery_id=claimed.delivery_id, status_code=200, now=_NOW)
-        rows = await repo.list_by_subscription(sub_id=sub_id)
+        rows = await repo.list_by_subscription(sub_id=sub_id, org_id=_ORG)
         updated = next(r for r in rows if r.delivery_id == delivery.delivery_id)
         assert updated.state == "succeeded"
         assert updated.last_status_code == 200
@@ -143,7 +143,7 @@ class TestWebhookDeliveryQueueRepository:
             backoff_seconds=30,
             now=_NOW,
         )
-        rows = await repo.list_by_subscription(sub_id=sub_id)
+        rows = await repo.list_by_subscription(sub_id=sub_id, org_id=_ORG)
         updated = next(r for r in rows if r.delivery_id == delivery.delivery_id)
         assert updated.state == "pending"
         assert updated.attempt_no == 1
@@ -163,7 +163,7 @@ class TestWebhookDeliveryQueueRepository:
         await repo.mark_dead_letter(
             delivery_id=claimed.delivery_id, status_code=400, error="bad request"
         )
-        rows = await repo.list_by_subscription(sub_id=sub_id)
+        rows = await repo.list_by_subscription(sub_id=sub_id, org_id=_ORG)
         updated = next(r for r in rows if r.delivery_id == delivery.delivery_id)
         assert updated.state == "dead_letter"
         assert updated.last_error == "bad request"

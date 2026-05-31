@@ -131,16 +131,18 @@ class WebhookDeliveryQueueRepository:
         self,
         *,
         sub_id: uuid.UUID,
+        org_id: uuid.UUID,
         limit: int = 50,
     ) -> list[WebhookDeliveryResponse]:
         rows = await self.conn.fetch(
             """
             SELECT * FROM webhook_delivery_queue
-            WHERE sub_id = $1
+            WHERE sub_id = $1 AND org_id = $2
             ORDER BY created_at DESC
-            LIMIT $2
+            LIMIT $3
             """,
             sub_id,
+            org_id,
             limit,
         )
         return [WebhookDeliveryResponse.model_validate(dict(r)) for r in rows]

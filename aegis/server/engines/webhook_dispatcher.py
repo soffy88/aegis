@@ -28,18 +28,25 @@ from aegis.server.repositories.webhook_subscription_repository import (
     WebhookSubscriptionRepository,
 )
 
+# Only env vars with this prefix may be used for webhook signing keys.
+# Prevents tenant-controlled input from reading arbitrary server secrets.
+_WEBHOOK_SECRET_ENV_PREFIX = "AEGIS_WEBHOOK_SECRET_"
+
 
 def _resolve_secret(secret_encrypted: str | None) -> str | None:
     """Resolve secret_encrypted field to a plain secret string.
 
-    - 'env:VAR_NAME' → os.environ[VAR_NAME]
-    - 'plain:xxx'    → xxx
-    - None           → None (no signing)
+    - 'env:AEGIS_WEBHOOK_SECRET_*' → os.environ[var]  (allowlisted prefix only)
+    - 'plain:xxx'                  → xxx  (M1 simplification; M2: replace with KMS)
+    - None or unrecognised         → None (no signing)
     """
     if not secret_encrypted:
         return None
     if secret_encrypted.startswith("env:"):
-        return os.environ.get(secret_encrypted[4:])
+        var_name = secret_encrypted[4:]
+        if not var_name.startswith(_WEBHOOK_SECRET_ENV_PREFIX):
+            return None  # reject env var names outside the dedicated allowlist prefix
+        return os.environ.get(var_name)
     if secret_encrypted.startswith("plain:"):
         return secret_encrypted[6:]
     return None
