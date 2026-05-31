@@ -168,6 +168,56 @@ class TestWebhookRouterValidation:
         )
         assert r.status_code == 422
 
+    def test_ssrf_private_ip_returns_422(self) -> None:
+        """Literal private-range IP in url is rejected at validation time."""
+        fa = _make_app()
+        conn = mock.AsyncMock()
+        _add_db(fa, conn)
+        _set_user(fa, "member")
+        c = TestClient(fa, raise_server_exceptions=False)
+        r = c.post(
+            f"/api/v1/orgs/{_ORG}/webhooks",
+            json={
+                "name": "h",
+                "url": "http://169.254.169.254/secret",
+                "event_types": ["alert.fired"],
+            },
+        )
+        assert r.status_code == 422
+
+    def test_ssrf_loopback_ip_returns_422(self) -> None:
+        fa = _make_app()
+        conn = mock.AsyncMock()
+        _add_db(fa, conn)
+        _set_user(fa, "member")
+        c = TestClient(fa, raise_server_exceptions=False)
+        r = c.post(
+            f"/api/v1/orgs/{_ORG}/webhooks",
+            json={"name": "h", "url": "http://127.0.0.1/admin", "event_types": ["alert.fired"]},
+        )
+        assert r.status_code == 422
+
+    def test_has_secret_in_response_not_secret_encrypted(self) -> None:
+        """Response contains has_secret bool, never the raw secret value."""
+        fa = _make_app()
+        conn = mock.AsyncMock()
+        conn.fetchrow = mock.AsyncMock(return_value=_sub_row(secret_encrypted="plain:abc"))
+        _add_db(fa, conn)
+        _set_user(fa, "member")
+        c = TestClient(fa)
+        r = c.post(
+            f"/api/v1/orgs/{_ORG}/webhooks",
+            json={
+                "name": "my-hook",
+                "url": "https://example.com/webhook",
+                "event_types": ["alert.fired"],
+            },
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert "secret_encrypted" not in body
+        assert body["has_secret"] is True
+
 
 class TestWebhookTestEndpoint:
     def test_test_endpoint_enqueues_delivery(self) -> None:
