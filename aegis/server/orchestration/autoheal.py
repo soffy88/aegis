@@ -147,6 +147,9 @@ class AutoHealEngine:
     # C2-3: injected to enable the approval gate workflow.
     # None = approval feature disabled (existing behaviour preserved).
     release_gate_service: Any | None = None
+    # C2-5: injected to enable webhook notifications on terminal states.
+    # None = webhook feature disabled (existing behaviour preserved).
+    webhook_dispatcher: Any | None = None
 
     async def handle(
         self,
@@ -178,6 +181,9 @@ class AutoHealEngine:
         if not pre.success:
             self.state = EngineState.failed
             self._log("pre_check_failed", plugin=plugin.name)
+            await self._maybe_enqueue_webhook(
+                org_id=org_id, plugin_name=plugin.name, event_id=event_id
+            )
             return self.state
 
         # 2. C2-3: approval gate (skipped if service not injected or context incomplete)
@@ -211,6 +217,9 @@ class AutoHealEngine:
             if decision_state != "approved":
                 self.state = EngineState.cancelled
                 self._log("approval_cancelled", decision=decision_state, plugin=plugin.name)
+                await self._maybe_enqueue_webhook(
+                    org_id=org_id, plugin_name=plugin.name, event_id=event_id
+                )
                 return self.state
 
             self._log("approval_granted", plugin=plugin.name)
@@ -243,7 +252,36 @@ class AutoHealEngine:
             self.state = EngineState.completed
             self._log("completed_no_verify", plugin=plugin.name)
 
+        await self._maybe_enqueue_webhook(org_id=org_id, plugin_name=plugin.name, event_id=event_id)
         return self.state
+
+    async def _maybe_enqueue_webhook(
+        self,
+        *,
+        org_id: uuid.UUID | None,
+        plugin_name: str,
+        event_id: uuid.UUID | None,
+    ) -> None:
+        """Enqueue autoheal.* webhook if dispatcher injected and state is terminal."""
+        if self.webhook_dispatcher is None or org_id is None:
+            return
+        terminal_map = {
+            EngineState.completed: "autoheal.completed",
+            EngineState.failed: "autoheal.failed",
+            EngineState.cancelled: "autoheal.cancelled",
+        }
+        event_type = terminal_map.get(self.state)
+        if event_type is None:
+            return
+        await self.webhook_dispatcher.enqueue_event(
+            org_id=org_id,
+            event_type=event_type,
+            payload={
+                "event_id": str(event_id) if event_id else None,
+                "plugin": plugin_name,
+                "final_state": self.state,
+            },
+        )
 
     async def _wait_for_decision(
         self,

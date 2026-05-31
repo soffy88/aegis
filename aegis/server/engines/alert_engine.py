@@ -12,7 +12,7 @@ evaluate_metric 流程:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from oprim import compute_dedup_key, evaluate_threshold_rule, should_throttle
@@ -21,6 +21,9 @@ from pydantic import BaseModel
 from aegis.server.repositories.alert_fired_repository import AlertFiredRepository
 from aegis.server.repositories.alert_rule_repository import AlertRuleRepository
 from aegis.server.schemas.alerting import AlertFiredResponse, AlertRuleResponse
+
+if TYPE_CHECKING:
+    from aegis.server.engines.webhook_dispatcher import WebhookDispatcher
 
 _THRESHOLD_OPS = {">=", ">", "<", "<="}
 
@@ -65,9 +68,11 @@ class AlertEngine:
         *,
         rule_repo: AlertRuleRepository,
         fired_repo: AlertFiredRepository,
+        webhook_dispatcher: WebhookDispatcher | None = None,
     ) -> None:
         self.rule_repo = rule_repo
         self.fired_repo = fired_repo
+        self.webhook_dispatcher = webhook_dispatcher
 
     async def evaluate_metric(
         self,
@@ -140,6 +145,21 @@ class AlertEngine:
             triggered_reason=reason,
             now=now,
         )
+
+        if is_new and self.webhook_dispatcher is not None:
+            await self.webhook_dispatcher.enqueue_event(
+                org_id=rule.org_id,
+                event_type="alert.fired",
+                payload={
+                    "rule_id": str(rule.rule_id),
+                    "project_id": str(rule.project_id),
+                    "severity": severity,
+                    "current_value": current_value,
+                    "dedup_key": dedup_key,
+                    "fired_at": now.isoformat(),
+                    "metric": rule.metric,
+                },
+            )
 
         return AlertEvaluationResult(
             rule_id=rule.rule_id,
