@@ -7,15 +7,23 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.server.repositories.release_gate_repository import ReleaseGateRepository
 from aegis.server.schemas.release_gate import ReleaseGateResponse
 
+if TYPE_CHECKING:
+    from aegis.server.engines.webhook_dispatcher import WebhookDispatcher
+
 
 class ReleaseGateService:
-    def __init__(self, repo: ReleaseGateRepository) -> None:
+    def __init__(
+        self,
+        repo: ReleaseGateRepository,
+        webhook_dispatcher: WebhookDispatcher | None = None,
+    ) -> None:
         self.repo = repo
+        self.webhook_dispatcher = webhook_dispatcher
 
     async def create_gate(
         self,
@@ -48,13 +56,25 @@ class ReleaseGateService:
         decision_reason: str,
     ) -> ReleaseGateResponse | None:
         """Approve a release_gate. Returns None if expired/already decided/not found."""
-        return await self.repo.decide(
+        gate = await self.repo.decide(
             gate_id=gate_id,
             org_id=org_id,
             decided_by=decided_by,
             decision="approved",
             decision_reason=decision_reason,
         )
+        if gate is not None and self.webhook_dispatcher is not None:
+            await self.webhook_dispatcher.enqueue_event(
+                org_id=org_id,
+                event_type="release.approved",
+                payload={
+                    "gate_id": str(gate.gate_id),
+                    "action_kind": gate.action_kind,
+                    "decided_by": str(decided_by),
+                    "decision_reason": decision_reason,
+                },
+            )
+        return gate
 
     async def reject(
         self,
@@ -65,13 +85,25 @@ class ReleaseGateService:
         decision_reason: str,
     ) -> ReleaseGateResponse | None:
         """Reject a release_gate. Returns None if expired/already decided/not found."""
-        return await self.repo.decide(
+        gate = await self.repo.decide(
             gate_id=gate_id,
             org_id=org_id,
             decided_by=decided_by,
             decision="rejected",
             decision_reason=decision_reason,
         )
+        if gate is not None and self.webhook_dispatcher is not None:
+            await self.webhook_dispatcher.enqueue_event(
+                org_id=org_id,
+                event_type="release.rejected",
+                payload={
+                    "gate_id": str(gate.gate_id),
+                    "action_kind": gate.action_kind,
+                    "decided_by": str(decided_by),
+                    "decision_reason": decision_reason,
+                },
+            )
+        return gate
 
     async def get_active_gate_by_event(
         self,
