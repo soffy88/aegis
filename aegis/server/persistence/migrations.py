@@ -352,6 +352,51 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON release_gates(org_id, project_id, requested_at DESC);
         """,
     ),
+    (
+        "013_webhooks",
+        """
+        CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+            sub_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            secret_encrypted TEXT,
+            event_types TEXT[] NOT NULL,
+            retry_count INT NOT NULL DEFAULT 3 CHECK (retry_count >= 0 AND retry_count <= 10),
+            retry_backoff_seconds INT[] NOT NULL DEFAULT '{5,15,45}',
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_subs_active
+            ON webhook_subscriptions(org_id) WHERE enabled = TRUE;
+
+        CREATE TABLE IF NOT EXISTS webhook_delivery_queue (
+            delivery_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sub_id UUID NOT NULL REFERENCES webhook_subscriptions(sub_id) ON DELETE CASCADE,
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            event_type TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            attempt_no INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL,
+            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_attempt_at TIMESTAMPTZ,
+            last_status_code INT,
+            last_error TEXT,
+            state TEXT NOT NULL DEFAULT 'pending'
+                CHECK (state IN ('pending', 'in_flight', 'succeeded', 'failed', 'dead_letter')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            succeeded_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_delivery_pending
+            ON webhook_delivery_queue(state, next_attempt_at)
+            WHERE state IN ('pending', 'in_flight');
+        CREATE INDEX IF NOT EXISTS idx_webhook_delivery_history
+            ON webhook_delivery_queue(sub_id, created_at DESC);
+        """,
+    ),
 ]
 
 
