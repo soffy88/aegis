@@ -7,7 +7,7 @@ name = "aegis"
 version = "0.1.0"
 description = "Aegis — AI-powered self-hosted PaaS (AIOps + Docker + AppStore + Caddy)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [{name = "Aegis Project"}]
 dependencies = [
