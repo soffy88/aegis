@@ -12,7 +12,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import asyncpg
 import pytest
@@ -41,6 +41,11 @@ def pg_container() -> Generator[Any, None, None]:
 @pytest.fixture
 async def pg_conn(pg_container: Any) -> AsyncGenerator[asyncpg.Connection, None]:
     dsn = pg_container.get_connection_url(driver=None)
+    # Init global pool so save_decision_trail can call get_pool() without crashing.
+    # Fixes AEGIS-BACKLOG-001.
+    from aegis.server.persistence.db import close_pool, init_pool
+
+    await init_pool(dsn=dsn, min_size=1, max_size=2)
     conn = await asyncpg.connect(dsn)
     from aegis.server.persistence.migrations import apply_migrations
 
@@ -49,6 +54,7 @@ async def pg_conn(pg_container: Any) -> AsyncGenerator[asyncpg.Connection, None]
         yield conn
     finally:
         await conn.close()
+        await close_pool()
 
 
 async def test_install_demo_app_via_dispatcher(pg_conn: asyncpg.Connection) -> None:
@@ -57,8 +63,8 @@ async def test_install_demo_app_via_dispatcher(pg_conn: asyncpg.Connection) -> N
     Covers:
     - dispatcher.invoke orchestration (dedup / budget / event_trail)
     - omodul mocked (AEGIS-BACKLOG-003: install_self_hosted_app 未进主库)
-    - save_decision_trail mocked (AEGIS-BACKLOG-001: conn DI 断链)
-    - event_trail Postgres write assertion skipped (AEGIS-BACKLOG-002: unskip)
+    - save_decision_trail real call (AEGIS-BACKLOG-001 fixed: pool init in pg_conn fixture)
+    - event_trail Postgres write asserted (AEGIS-BACKLOG-002 fixed: unskipped)
     """
     import fakeredis.aioredis
 
@@ -86,11 +92,6 @@ async def test_install_demo_app_via_dispatcher(pg_conn: asyncpg.Connection) -> N
         patch("omodul.install_self_hosted_app", mock_fn, create=True),
         patch("omodul.compute_fingerprint_for", mock_compute_fp),
         patch.object(dispatcher, "_resolve_class", side_effect=[mock_config_cls, mock_input_cls]),
-        # AEGIS-BACKLOG-001: save_decision_trail 用 get_pool(), smoke 无池
-        patch(
-            "aegis.server.persistence.event_trail.save_decision_trail",
-            new_callable=AsyncMock,
-        ),
     ):
         result = await dispatcher.invoke(
             omodul_name="install_self_hosted_app",
@@ -128,13 +129,7 @@ async def test_install_demo_app_via_dispatcher(pg_conn: asyncpg.Connection) -> N
 
             docker_container_stop(container_id=container_id, timeout_sec=5)
 
-    # AEGIS-BACKLOG-001: dispatcher save_decision_trail conn 来源断链
-    # (C0d 重构遗留), C2 完结后补 conn DI. AEGIS-BACKLOG-002: 本断言 unskip
-    pytest.skip(
-        "AEGIS-BACKLOG-001: dispatcher save_decision_trail conn 来源断链 "
-        "(C0d 重构遗留), C2 完结后补 conn DI. AEGIS-BACKLOG-002: 本断言 unskip"
-    )
-    # 以下代码保留, 不删, backlog 跟踪
+    # AEGIS-BACKLOG-001/002 fixed: pool initialized in pg_conn fixture, real write verified.
     row = await pg_conn.fetchrow(
         "SELECT * FROM event_trail WHERE omodul_fingerprint=$1",
         result["fingerprint"],
