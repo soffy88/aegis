@@ -403,6 +403,97 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE EXTENSION IF NOT EXISTS timescaledb;
         """,
     ),
+    (
+        "015_error_events_and_issues",
+        """
+        -- error_events: hypertable, 1-day chunk, 7-day compression
+        -- TimescaleDB requires partitioning col (ts) in PRIMARY KEY
+        CREATE TABLE IF NOT EXISTS error_events (
+            event_id UUID NOT NULL DEFAULT gen_random_uuid(),
+            issue_id UUID,
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            project_id UUID NOT NULL REFERENCES projects(id),
+            fingerprint TEXT NOT NULL,
+            ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            exception_type TEXT NOT NULL,
+            exception_value TEXT,
+            level TEXT NOT NULL DEFAULT 'error'
+                CHECK (level IN ('debug', 'info', 'warning', 'error', 'fatal')),
+            environment TEXT DEFAULT 'prod',
+            server_name TEXT,
+            release_name TEXT,
+
+            stacktrace JSONB,
+            breadcrumbs JSONB,
+            user_context JSONB,
+            tags JSONB,
+            extra JSONB,
+
+            sdk_name TEXT,
+            sdk_version TEXT,
+            platform TEXT,
+
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            PRIMARY KEY (event_id, ts)
+        );
+
+        SELECT create_hypertable('error_events', 'ts', chunk_time_interval => INTERVAL '1 day');
+
+        ALTER TABLE error_events SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'org_id, project_id, fingerprint',
+            timescaledb.compress_orderby = 'ts DESC'
+        );
+        SELECT add_compression_policy('error_events', INTERVAL '7 days');
+
+        CREATE INDEX IF NOT EXISTS idx_error_events_issue
+            ON error_events(issue_id, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_error_events_project_fp
+            ON error_events(org_id, project_id, fingerprint, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_error_events_release
+            ON error_events(release_name) WHERE release_name IS NOT NULL;
+
+        -- error_issues: 聚合, UNIQUE(org_id, project_id, fingerprint)
+        CREATE TABLE IF NOT EXISTS error_issues (
+            issue_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id),
+            project_id UUID NOT NULL REFERENCES projects(id),
+            fingerprint TEXT NOT NULL,
+
+            exception_type TEXT NOT NULL,
+            exception_value TEXT,
+            title TEXT GENERATED ALWAYS AS (
+                COALESCE(exception_type, 'Error')
+                || ': ' || COALESCE(LEFT(exception_value, 200), '')
+            ) STORED,
+
+            event_count BIGINT NOT NULL DEFAULT 1,
+            user_count INT NOT NULL DEFAULT 0,
+
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            state TEXT NOT NULL DEFAULT 'unresolved'
+                CHECK (state IN ('unresolved', 'resolved', 'ignored')),
+
+            first_release TEXT,
+            last_release TEXT,
+
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+            UNIQUE(org_id, project_id, fingerprint)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_error_issues_project_last_seen
+            ON error_issues(org_id, project_id, last_seen DESC);
+        CREATE INDEX IF NOT EXISTS idx_error_issues_unresolved
+            ON error_issues(org_id, project_id, last_seen DESC)
+            WHERE state = 'unresolved';
+        """,
+    ),
 ]
 
 
