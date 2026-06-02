@@ -3,7 +3,7 @@
 M1 scope:
 - Parse envelope bytes → list of event payloads
 - Write each event to error_events (fingerprint is a placeholder)
-- C3-4 ErrorAggregator will compute the real fingerprint and set issue_id
+- If aggregator is injected (C3-4): compute real fingerprint + upsert issue
 
 M1 fingerprint placeholder: "envelope-temp-<uuid4>" — avoids NULL constraint
 and makes rows identifiable before aggregation runs.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.server.lib.sentry_envelope import (
     SentryEnvelopeParseError,
@@ -23,10 +23,19 @@ from aegis.server.lib.sentry_envelope import (
 from aegis.server.repositories.error_event_repository import ErrorEventRepository
 from aegis.server.schemas.error_monitoring import ErrorEventCreate, ErrorEventResponse
 
+if TYPE_CHECKING:
+    from aegis.server.engines.error_aggregator import ErrorAggregator
+
 
 class ErrorIngestor:
-    def __init__(self, *, event_repo: ErrorEventRepository) -> None:
+    def __init__(
+        self,
+        *,
+        event_repo: ErrorEventRepository,
+        aggregator: ErrorAggregator | None = None,
+    ) -> None:
         self.event_repo = event_repo
+        self.aggregator = aggregator
 
     async def ingest_envelope(
         self,
@@ -52,6 +61,13 @@ class ErrorIngestor:
                     project_id=project_id,
                     payload=payload,
                 )
+                # C3-4: aggregate if aggregator injected (backward-compatible)
+                if self.aggregator is not None:
+                    custom_fp = payload.get("fingerprint")
+                    event = await self.aggregator.aggregate_event(
+                        event=event,
+                        custom_fingerprint=custom_fp if isinstance(custom_fp, list) else None,
+                    )
                 results.append(event)
             except SentryEnvelopeParseError:
                 # Single-event parse failure: skip, do not abort batch.
