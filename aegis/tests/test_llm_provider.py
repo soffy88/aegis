@@ -53,7 +53,7 @@ def test_register_providers_at_startup() -> None:
     """startup 注册 anthropic provider."""
     with (
         mock.patch("aegis.server.app.ProviderRegistry") as m,
-        mock.patch("aegis.server.app.anthropic", create=True),
+        mock.patch.dict("sys.modules", {"anthropic": mock.MagicMock()}),
     ):
         from aegis.server.app import register_providers
         from aegis.server.runtime.config import AegisSettings
