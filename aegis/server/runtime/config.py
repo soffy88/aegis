@@ -30,7 +30,7 @@ class AegisSettings(BaseSettings):
 
     # === Postgres ===
     postgres_dsn: str = Field(
-        default="postgresql://aegis:aegis@localhost:5432/aegis",
+        default="postgresql://aegis:aegis@localhost:5434/aegis",
         description="Postgres connection string (asyncpg-compatible)",
     )
     postgres_pool_min: int = 2

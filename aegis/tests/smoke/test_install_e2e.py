@@ -34,7 +34,7 @@ _MOCK_OMODUL_RESULT = {
 def pg_container() -> Generator[Any, None, None]:
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("timescale/timescaledb:2.26.3-pg18") as pg:
         yield pg
 
 
