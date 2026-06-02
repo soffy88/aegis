@@ -15,6 +15,7 @@ from aegis.server.api.routers import alert_fired, alert_rules, alerts, domains, 
 from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import auth as auth_router
 from aegis.server.api.routers import docker as docker_router
+from aegis.server.api.routers import envelope as envelope_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import release_gates as release_gates_router
@@ -176,6 +177,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(orgs_router.router)
     app.include_router(users_router.router)
+    app.include_router(envelope_router.router)
 
     return app
 
