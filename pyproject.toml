@@ -51,6 +51,9 @@ smoke = [
     "docker>=6.0",
     "fakeredis>=2.0",
 ]
+c3-e2e = [
+    "sentry-sdk[fastapi]>=2.0",
+]
 
 [project.scripts]
 aegis = "aegis.cli.main:cli_main"
