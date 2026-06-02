@@ -70,6 +70,22 @@ class ErrorEventRepository:
         )
         return result == "UPDATE 1"
 
+    async def update_fingerprint_and_issue(
+        self,
+        *,
+        event_id: uuid.UUID,
+        fingerprint: str,
+        issue_id: uuid.UUID,
+    ) -> bool:
+        """C3-4 aggregator: backfill real fingerprint + issue_id in a single UPDATE."""
+        result = await self.conn.execute(
+            "UPDATE error_events SET fingerprint = $1, issue_id = $2 WHERE event_id = $3",
+            fingerprint,
+            issue_id,
+            event_id,
+        )
+        return result == "UPDATE 1"
+
     async def list_by_issue(
         self,
         *,
