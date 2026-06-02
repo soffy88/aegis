@@ -3,7 +3,7 @@
 PYTHON := .venv/bin/python
 PYTEST := $(PYTHON) -m pytest
 
-.PHONY: help test test-smoke test-unit lint typecheck format check sync
+.PHONY: help test test-smoke test-unit lint typecheck format check sync test-c3-e2e
 
 help:
 	@echo "Aegis development commands:"
@@ -15,6 +15,7 @@ help:
 	@echo "  make typecheck  - mypy typecheck"
 	@echo "  make format     - ruff format"
 	@echo "  make check      - lint + typecheck + test (CI 跑这个)"
+	@echo "  make test-c3-e2e - C3-7 e2e: 触发测试错误 + DB 验证全链路 (需 AEGIS_SENTRY_DSN + Aegis local server)"
 
 sync:
 	uv sync --all-extras
@@ -38,3 +39,8 @@ format:
 	$(PYTHON) -m ruff format aegis/
 
 check: lint typecheck test
+
+test-c3-e2e: ## C3-7 e2e: 触发测试错误 + DB 验证全链路
+	AEGIS_SENTRY_ENABLED=true \
+	AEGIS_SENTRY_DSN=$(AEGIS_SENTRY_DSN) \
+	$(PYTHON) -m scripts.c3_e2e_trigger

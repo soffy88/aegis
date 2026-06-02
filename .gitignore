@@ -14,8 +14,10 @@ build/
 *.db
 *.sqlite
 .aegis/
-# 内部 spec / 架构文档不入开源仓
-docs/
+# 内部 spec / 架构文档不入开源仓 (docs/* 允许例外)
+docs/*
+# C3-7 SDK 接入文档入仓 (业务方接入参考, !例外必须跟 docs/* 同用)
+!docs/sdk-integration/
 # 同级姊妹仓 (各自独立 git repo,不入主仓)
 aegis-appstore/
 aegis-autoheal-sdk/
