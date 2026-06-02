@@ -15,7 +15,10 @@ from aegis.server.repositories.webhook_subscription_repository import (
     WebhookSubscriptionRepository,
 )
 from aegis.server.schemas.webhook import (
+    VALID_EVENT_TYPES,
     WebhookDeliveryResponse,
+    WebhookEventTypeInfo,
+    WebhookEventTypesResponse,
     WebhookSubscriptionCreate,
     WebhookSubscriptionResponse,
     WebhookSubscriptionUpdate,
@@ -54,6 +57,24 @@ async def list_webhooks(
 ) -> list[WebhookSubscriptionResponse]:
     repo = WebhookSubscriptionRepository(conn)
     return await repo.list_by_org(org_id=org_id, enabled_only=enabled_only)
+
+
+@router.get("/event-types", response_model=WebhookEventTypesResponse)
+async def list_webhook_event_types(
+    org_id: uuid.UUID,
+    user: UserContext = Depends(require_permission(Permission.VIEW_ORG)),
+) -> WebhookEventTypesResponse:
+    """List all supported webhook event types with derived category.
+
+    M2-A-3 (AEGIS-BACKLOG-034): backend single source of truth — console reads
+    dynamically instead of duplicating VALID_EVENT_TYPES.
+    """
+    return WebhookEventTypesResponse(
+        event_types=[
+            WebhookEventTypeInfo(event_type=et, category=et.split(".")[0])
+            for et in sorted(VALID_EVENT_TYPES)
+        ]
+    )
 
 
 @router.get("/{sub_id}", response_model=WebhookSubscriptionResponse)

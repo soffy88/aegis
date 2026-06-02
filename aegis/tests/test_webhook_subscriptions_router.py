@@ -342,3 +342,44 @@ class TestWebhookDeliveriesEndpoint:
         c = TestClient(fa, raise_server_exceptions=False)
         r = c.get(f"/api/v1/orgs/{_ORG}/webhooks/{_SUB_ID}/deliveries")
         assert r.status_code == 404
+
+
+class TestWebhookEventTypesEndpoint:
+    def test_list_webhook_event_types_success(self) -> None:
+        fa = _make_app()
+        _set_user(fa, "viewer")
+        c = TestClient(fa)
+        r = c.get(f"/api/v1/orgs/{_ORG}/webhooks/event-types")
+        assert r.status_code == 200
+        body = r.json()
+        assert "event_types" in body
+        assert len(body["event_types"]) == 9
+        event_type_strs = {et["event_type"] for et in body["event_types"]}
+        assert "error.new_issue" in event_type_strs
+        assert "error.spike" in event_type_strs
+
+    def test_list_webhook_event_types_response_format(self) -> None:
+        fa = _make_app()
+        _set_user(fa, "viewer")
+        c = TestClient(fa)
+        r = c.get(f"/api/v1/orgs/{_ORG}/webhooks/event-types")
+        assert r.status_code == 200
+        first = r.json()["event_types"][0]
+        assert "event_type" in first
+        assert "category" in first
+        assert first["category"] == first["event_type"].split(".")[0]
+
+    def test_list_webhook_event_types_unauthorized(self) -> None:
+        fa = _make_app()
+        c = TestClient(fa, raise_server_exceptions=False)
+        r = c.get(f"/api/v1/orgs/{_ORG}/webhooks/event-types")
+        assert r.status_code == 401
+
+    def test_list_webhook_event_types_categories(self) -> None:
+        fa = _make_app()
+        _set_user(fa, "viewer")
+        c = TestClient(fa)
+        r = c.get(f"/api/v1/orgs/{_ORG}/webhooks/event-types")
+        assert r.status_code == 200
+        categories = {et["category"] for et in r.json()["event_types"]}
+        assert categories == {"alert", "autoheal", "release", "error"}
