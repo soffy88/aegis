@@ -77,6 +77,21 @@ class ProjectRepository:
         )
         return Project.from_row(row) if row else None
 
+    async def get_by_id_and_public_key(
+        self, *, project_id: UUID, public_key: str
+    ) -> Project | None:
+        """C3-6 envelope router auth: verify (project_id, public_key) pair.
+
+        Returns Project (contains org_id needed by envelope router), or None on
+        auth failure. sentry_public_key is never exposed in public API responses.
+        """
+        row = await self.conn.fetchrow(
+            "SELECT * FROM projects WHERE id = $1 AND sentry_public_key = $2",
+            project_id,
+            public_key,
+        )
+        return Project.from_row(row) if row else None
+
     async def archive(self, project_id: UUID) -> bool:
         result = await self.conn.execute(
             "UPDATE projects SET archived_at = NOW() WHERE id = $1 AND archived_at IS NULL",
