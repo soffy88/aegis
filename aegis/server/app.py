@@ -35,6 +35,40 @@ from aegis.server.runtime.logging import setup_logging
 log = logging.getLogger(__name__)
 
 
+def init_sentry_if_enabled() -> None:
+    """C3-7: Aegis self-monitoring via sentry-python (dev/test only).
+
+    Enabled only when AEGIS_SENTRY_ENABLED=true AND ENV != 'prod'.
+    Prod is excluded to prevent a self-monitoring death loop if platform-postgres
+    is down (Aegis can't write its own errors → SDK retries → more errors).
+    """
+    if os.environ.get("AEGIS_SENTRY_ENABLED") != "true":
+        return
+    if os.environ.get("ENV") == "prod":
+        return
+    dsn = os.environ.get("AEGIS_SENTRY_DSN")
+    if not dsn:
+        return
+
+    try:
+        import sentry_sdk  # noqa: PLC0415
+        from sentry_sdk.integrations.fastapi import FastApiIntegration  # noqa: PLC0415
+        from sentry_sdk.integrations.starlette import StarletteIntegration  # noqa: PLC0415
+
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.environ.get("ENV", "dev"),
+            release=f"aegis@{os.environ.get('AEGIS_VERSION', 'dev')}",
+            traces_sample_rate=0.0,
+            profiles_sample_rate=0.0,
+            send_default_pii=False,
+            integrations=[FastApiIntegration(), StarletteIntegration()],
+        )
+        log.info("aegis sentry self-monitoring enabled")
+    except ImportError:
+        log.debug("sentry-sdk not installed (optional c3-e2e extra), skipping")
+
+
 def register_providers(cfg: AegisSettings) -> None:
     """启动时注册 LLM provider 到 obase.ProviderRegistry."""
     try:
@@ -179,7 +213,14 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(users_router.router)
     app.include_router(envelope_router.router)
 
+    # C3-7: test error endpoint — dev/test only, never registered in prod
+    if os.environ.get("ENV") != "prod":
+        from aegis.server.api.routers import test_error  # noqa: PLC0415
+
+        app.include_router(test_error.router)
+
     return app
 
 
+init_sentry_if_enabled()
 app = create_app()
