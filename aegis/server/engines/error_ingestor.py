@@ -64,7 +64,7 @@ class ErrorIngestor:
                 # C3-4: aggregate if aggregator injected (backward-compatible)
                 if self.aggregator is not None:
                     custom_fp = payload.get("fingerprint")
-                    event = await self.aggregator.aggregate_event(
+                    event, _issue, _is_new = await self.aggregator.aggregate_event(
                         event=event,
                         custom_fingerprint=custom_fp if isinstance(custom_fp, list) else None,
                     )
