@@ -23,6 +23,20 @@ VALID_EVENT_TYPES = {
     "error.spike",  # C3-5: error rate exceeded threshold
 }
 
+
+class WebhookEventTypeInfo(BaseModel):
+    """Single webhook event type with derived category (M3+ UI-friendly grouping)."""
+
+    event_type: str
+    category: str  # derived from event_type prefix: 'alert', 'autoheal', 'release', 'error'
+
+
+class WebhookEventTypesResponse(BaseModel):
+    """Response for GET /webhooks/event-types (M2-A-3 AEGIS-BACKLOG-034)."""
+
+    event_types: list[WebhookEventTypeInfo]
+
+
 # Private/loopback/link-local ranges blocked at webhook URL creation.
 # Full DNS-rebinding protection (resolve-at-delivery) is AEGIS-BACKLOG-013 M2.
 _BLOCKED_NETWORK_CLASSES = (
