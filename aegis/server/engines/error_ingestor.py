@@ -4,6 +4,7 @@ M1 scope:
 - Parse envelope bytes → list of event payloads
 - Write each event to error_events (fingerprint is a placeholder)
 - If aggregator is injected (C3-4): compute real fingerprint + upsert issue
+- If alerter is injected (C3-5): fire webhook on new issues
 
 M1 fingerprint placeholder: "envelope-temp-<uuid4>" — avoids NULL constraint
 and makes rows identifiable before aggregation runs.
@@ -25,6 +26,7 @@ from aegis.server.schemas.error_monitoring import ErrorEventCreate, ErrorEventRe
 
 if TYPE_CHECKING:
     from aegis.server.engines.error_aggregator import ErrorAggregator
+    from aegis.server.engines.error_alerter import ErrorAlerter
 
 
 class ErrorIngestor:
@@ -33,9 +35,11 @@ class ErrorIngestor:
         *,
         event_repo: ErrorEventRepository,
         aggregator: ErrorAggregator | None = None,
+        alerter: ErrorAlerter | None = None,
     ) -> None:
         self.event_repo = event_repo
         self.aggregator = aggregator
+        self.alerter = alerter
 
     async def ingest_envelope(
         self,
@@ -64,10 +68,13 @@ class ErrorIngestor:
                 # C3-4: aggregate if aggregator injected (backward-compatible)
                 if self.aggregator is not None:
                     custom_fp = payload.get("fingerprint")
-                    event = await self.aggregator.aggregate_event(
+                    event, issue, is_new = await self.aggregator.aggregate_event(
                         event=event,
                         custom_fingerprint=custom_fp if isinstance(custom_fp, list) else None,
                     )
+                    # C3-5: trigger webhook on new issue
+                    if self.alerter is not None and is_new:
+                        await self.alerter.handle_new_issue(issue=issue)
                 results.append(event)
             except SentryEnvelopeParseError:
                 # Single-event parse failure: skip, do not abort batch.

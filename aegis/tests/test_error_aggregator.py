@@ -116,10 +116,12 @@ async def test_aggregate_event_new_issue(
     issue = _make_issue_response()
     mock_issue_repo.upsert_by_fingerprint.return_value = (issue, True)
     event = _fake_event()
-    result = await aggregator.aggregate_event(event=event)
-    assert result.issue_id == issue.issue_id
-    assert result.fingerprint != "envelope-temp-placeholder"
-    assert len(result.fingerprint) == 64
+    updated_event, returned_issue, is_new = await aggregator.aggregate_event(event=event)
+    assert is_new is True
+    assert updated_event.issue_id == issue.issue_id
+    assert returned_issue.issue_id == issue.issue_id
+    assert updated_event.fingerprint != "envelope-temp-placeholder"
+    assert len(updated_event.fingerprint) == 64
     mock_event_repo.update_fingerprint_and_issue.assert_awaited_once()
 
 
@@ -132,8 +134,9 @@ async def test_aggregate_event_existing_issue(
     issue = _make_issue_response(issue_id=existing_issue_id)
     mock_issue_repo.upsert_by_fingerprint.return_value = (issue, False)
     event = _fake_event()
-    result = await aggregator.aggregate_event(event=event)
-    assert result.issue_id == existing_issue_id
+    updated_event, returned_issue, is_new = await aggregator.aggregate_event(event=event)
+    assert is_new is False
+    assert updated_event.issue_id == existing_issue_id
     mock_issue_repo.upsert_by_fingerprint.assert_awaited_once()
 
 
@@ -149,7 +152,7 @@ async def test_aggregate_event_calls_compute_event_fingerprint(
     )
     with patch("aegis.server.engines.error_aggregator.compute_event_fingerprint") as mock_fp:
         mock_fp.return_value = "a" * 64
-        await aggregator.aggregate_event(event=event)
+        await aggregator.aggregate_event(event=event)  # noqa: F841
     mock_fp.assert_called_once_with(
         exception_type="ValueError",
         exception_value="out of range",
@@ -167,7 +170,7 @@ async def test_aggregate_event_with_custom_fingerprint(
     event = _fake_event()
     with patch("aegis.server.engines.error_aggregator.compute_event_fingerprint") as mock_fp:
         mock_fp.return_value = "b" * 64
-        await aggregator.aggregate_event(
+        await aggregator.aggregate_event(  # noqa: F841
             event=event,
             custom_fingerprint=["payment-flow", "retry-exhausted"],
         )
@@ -188,7 +191,7 @@ async def test_aggregate_event_message_only_no_stacktrace(
     event = _fake_event(exception_type="Message", exception_value="info log", stacktrace=None)
     with patch("aegis.server.engines.error_aggregator.compute_event_fingerprint") as mock_fp:
         mock_fp.return_value = "c" * 64
-        await aggregator.aggregate_event(event=event)
+        await aggregator.aggregate_event(event=event)  # noqa: F841
     mock_fp.assert_called_once_with(
         exception_type="Message",
         exception_value="info log",
@@ -212,7 +215,7 @@ async def test_aggregate_event_with_stacktrace_extracts_top_frame(
     event = _fake_event(stacktrace=stacktrace)
     with patch("aegis.server.engines.error_aggregator.compute_event_fingerprint") as mock_fp:
         mock_fp.return_value = "d" * 64
-        await aggregator.aggregate_event(event=event)
+        await aggregator.aggregate_event(event=event)  # noqa: F841
     _, kwargs = mock_fp.call_args
     assert kwargs["top_frame_function"] == "inner"
     assert kwargs["top_frame_filename"] == "/app/inner.py"
@@ -228,9 +231,9 @@ async def test_aggregate_event_different_exception_creates_new_issue(
     mock_issue_repo.upsert_by_fingerprint.side_effect = [(issue_a, True), (issue_b, True)]
     event_a = _fake_event(exception_type="TypeError")
     event_b = _fake_event(exception_type="ValueError")
-    result_a = await aggregator.aggregate_event(event=event_a)
-    result_b = await aggregator.aggregate_event(event=event_b)
-    assert result_a.issue_id != result_b.issue_id
+    ev_a, issue_a_r, _ = await aggregator.aggregate_event(event=event_a)
+    ev_b, issue_b_r, _ = await aggregator.aggregate_event(event=event_b)
+    assert ev_a.issue_id != ev_b.issue_id
 
 
 async def test_aggregate_event_same_exception_same_issue(
@@ -245,9 +248,9 @@ async def test_aggregate_event_same_exception_same_issue(
     ]
     event1 = _fake_event()
     event2 = _fake_event(event_id=uuid.uuid4())
-    result1 = await aggregator.aggregate_event(event=event1)
-    result2 = await aggregator.aggregate_event(event=event2)
-    assert result1.issue_id == result2.issue_id
+    ev1, _, _ = await aggregator.aggregate_event(event=event1)
+    ev2, _, _ = await aggregator.aggregate_event(event=event2)
+    assert ev1.issue_id == ev2.issue_id
 
 
 async def test_aggregate_event_release_tracking(
@@ -256,7 +259,7 @@ async def test_aggregate_event_release_tracking(
     mock_issue_repo: AsyncMock,
 ) -> None:
     event = _fake_event(release_name="v2.0.0")
-    await aggregator.aggregate_event(event=event)
+    await aggregator.aggregate_event(event=event)  # noqa: F841
     call_kwargs = mock_issue_repo.upsert_by_fingerprint.call_args.kwargs
     assert call_kwargs["release_name"] == "v2.0.0"
 
@@ -325,16 +328,18 @@ async def test_aggregate_event_updates_event_record(
     assert ev.issue_id is None
 
     # Aggregate
-    result = await agg.aggregate_event(event=ev)
+    updated_ev, issue, is_new = await agg.aggregate_event(event=ev)
 
-    assert result.fingerprint != "envelope-temp-smoke"
-    assert len(result.fingerprint) == 64
-    assert result.issue_id is not None
+    assert is_new is True
+    assert updated_ev.fingerprint != "envelope-temp-smoke"
+    assert len(updated_ev.fingerprint) == 64
+    assert updated_ev.issue_id is not None
+    assert updated_ev.issue_id == issue.issue_id
 
     # Verify DB row was updated
     rows = await conn_agg.fetch(
         "SELECT fingerprint, issue_id FROM error_events WHERE event_id = $1",
         ev.event_id,
     )
-    assert rows[0]["fingerprint"] == result.fingerprint
-    assert rows[0]["issue_id"] == result.issue_id
+    assert rows[0]["fingerprint"] == updated_ev.fingerprint
+    assert rows[0]["issue_id"] == updated_ev.issue_id

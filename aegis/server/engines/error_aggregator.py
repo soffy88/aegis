@@ -16,7 +16,7 @@ from oprim import compute_event_fingerprint
 
 from aegis.server.repositories.error_event_repository import ErrorEventRepository
 from aegis.server.repositories.error_issue_repository import ErrorIssueRepository
-from aegis.server.schemas.error_monitoring import ErrorEventResponse
+from aegis.server.schemas.error_monitoring import ErrorEventResponse, ErrorIssueResponse
 
 
 class ErrorAggregator:
@@ -34,7 +34,7 @@ class ErrorAggregator:
         *,
         event: ErrorEventResponse,
         custom_fingerprint: list[str] | None = None,
-    ) -> ErrorEventResponse:
+    ) -> tuple[ErrorEventResponse, ErrorIssueResponse, bool]:
         """Aggregate one event: compute fingerprint → upsert issue → backfill event.
 
         Args:
@@ -44,7 +44,8 @@ class ErrorAggregator:
                 by oprim.compute_event_fingerprint.
 
         Returns:
-            Updated event with real fingerprint and issue_id set.
+            Tuple of (updated_event, issue, is_new).
+            is_new=True means this fingerprint was seen for the first time.
         """
         top_func, top_file = self._top_frame(event.stacktrace)
 
@@ -56,7 +57,7 @@ class ErrorAggregator:
             custom_fingerprint=custom_fingerprint,
         )
 
-        issue, _ = await self.issue_repo.upsert_by_fingerprint(
+        issue, is_new = await self.issue_repo.upsert_by_fingerprint(
             org_id=event.org_id,
             project_id=event.project_id,
             fingerprint=fingerprint,
@@ -71,7 +72,10 @@ class ErrorAggregator:
             issue_id=issue.issue_id,
         )
 
-        return event.model_copy(update={"fingerprint": fingerprint, "issue_id": issue.issue_id})
+        updated_event = event.model_copy(
+            update={"fingerprint": fingerprint, "issue_id": issue.issue_id}
+        )
+        return (updated_event, issue, is_new)
 
     @staticmethod
     def _top_frame(

@@ -19,6 +19,8 @@ VALID_EVENT_TYPES = {
     "release.approved",
     "release.rejected",
     "release.expired",
+    "error.new_issue",  # C3-5: new error issue created
+    "error.spike",  # C3-5: error rate exceeded threshold
 }
 
 # Private/loopback/link-local ranges blocked at webhook URL creation.
