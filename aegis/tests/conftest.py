@@ -28,3 +28,15 @@ def test_org_id() -> uuid.UUID:
 @pytest.fixture
 def test_project_id() -> uuid.UUID:
     return uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+@pytest.fixture
+async def truncate_webhook_tables(conn: object) -> object:
+    """TRUNCATE webhook tables before each test to eliminate inter-test ordering coupling.
+
+    AEGIS-BACKLOG-023: module-scope pg_container + function-scope conn share one DB;
+    rows accumulate across tests. CASCADE is safe: only webhook_delivery_queue references
+    webhook_subscriptions, and both are in the TRUNCATE list.
+    """
+    await conn.execute("TRUNCATE webhook_delivery_queue, webhook_subscriptions CASCADE")
+    return

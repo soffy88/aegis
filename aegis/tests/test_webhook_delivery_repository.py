@@ -72,7 +72,9 @@ async def sub_id(conn: asyncpg.Connection) -> uuid.UUID:
 
 
 class TestWebhookDeliveryQueueRepository:
-    async def test_enqueue(self, conn: asyncpg.Connection, sub_id: uuid.UUID) -> None:
+    async def test_enqueue(
+        self, conn: asyncpg.Connection, truncate_webhook_tables: object, sub_id: uuid.UUID
+    ) -> None:
         repo = WebhookDeliveryQueueRepository(conn)
         delivery = await repo.enqueue(
             sub_id=sub_id,
@@ -87,7 +89,7 @@ class TestWebhookDeliveryQueueRepository:
         assert delivery.payload == {"rule_id": "abc"}
 
     async def test_claim_next_batch_skips_in_flight(
-        self, conn: asyncpg.Connection, sub_id: uuid.UUID
+        self, conn: asyncpg.Connection, truncate_webhook_tables: object, sub_id: uuid.UUID
     ) -> None:
         repo = WebhookDeliveryQueueRepository(conn)
         await repo.enqueue(
@@ -106,7 +108,9 @@ class TestWebhookDeliveryQueueRepository:
         ids2 = {d.delivery_id for d in batch2}
         assert ids1.isdisjoint(ids2)
 
-    async def test_mark_succeeded(self, conn: asyncpg.Connection, sub_id: uuid.UUID) -> None:
+    async def test_mark_succeeded(
+        self, conn: asyncpg.Connection, truncate_webhook_tables: object, sub_id: uuid.UUID
+    ) -> None:
         repo = WebhookDeliveryQueueRepository(conn)
         delivery = await repo.enqueue(
             sub_id=sub_id,
@@ -124,7 +128,7 @@ class TestWebhookDeliveryQueueRepository:
         assert updated.last_status_code == 200
 
     async def test_mark_failed_for_retry_increments_attempt(
-        self, conn: asyncpg.Connection, sub_id: uuid.UUID
+        self, conn: asyncpg.Connection, truncate_webhook_tables: object, sub_id: uuid.UUID
     ) -> None:
         repo = WebhookDeliveryQueueRepository(conn)
         delivery = await repo.enqueue(
@@ -149,7 +153,9 @@ class TestWebhookDeliveryQueueRepository:
         assert updated.attempt_no == 1
         assert updated.next_attempt_at > _NOW
 
-    async def test_mark_dead_letter(self, conn: asyncpg.Connection, sub_id: uuid.UUID) -> None:
+    async def test_mark_dead_letter(
+        self, conn: asyncpg.Connection, truncate_webhook_tables: object, sub_id: uuid.UUID
+    ) -> None:
         repo = WebhookDeliveryQueueRepository(conn)
         delivery = await repo.enqueue(
             sub_id=sub_id,
@@ -158,8 +164,7 @@ class TestWebhookDeliveryQueueRepository:
             payload={},
             max_attempts=1,
         )
-        # batch_size=100 ensures we get all pending rows (previous tests may leave re-queued rows)
-        batch = await repo.claim_next_batch(batch_size=100, now=None)
+        batch = await repo.claim_next_batch(batch_size=10, now=None)
         claimed = next(d for d in batch if d.delivery_id == delivery.delivery_id)
         await repo.mark_dead_letter(
             delivery_id=claimed.delivery_id, status_code=400, error="bad request"
