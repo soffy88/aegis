@@ -28,7 +28,7 @@ _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 def pg_container() -> Generator[Any, None, None]:
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("timescale/timescaledb:2.26.3-pg18") as pg:
         yield pg
 
 

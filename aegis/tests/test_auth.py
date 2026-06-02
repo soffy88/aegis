@@ -40,7 +40,7 @@ def pg_container() -> Generator[Any, None, None]:
         pytest.skip("set RUN_SMOKE=1 to run")
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("timescale/timescaledb:2.26.3-pg18") as pg:
         yield pg
 
 

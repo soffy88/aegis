@@ -397,6 +397,12 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON webhook_delivery_queue(sub_id, created_at DESC);
         """,
     ),
+    (
+        "014_timescaledb_extension",
+        """
+        CREATE EXTENSION IF NOT EXISTS timescaledb;
+        """,
+    ),
 ]
 
 
