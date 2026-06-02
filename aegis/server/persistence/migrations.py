@@ -494,6 +494,19 @@ MIGRATIONS: list[tuple[str, str]] = [
             WHERE state = 'unresolved';
         """,
     ),
+    (
+        "016_projects_sentry_public_key",
+        """
+        -- C3-6: DSN public key for Sentry SDK authentication.
+        -- M1: auto-generated, query projects table for DSN.
+        -- M3+: console UI display + rotate (AEGIS-BACKLOG-028).
+        ALTER TABLE projects ADD COLUMN IF NOT EXISTS sentry_public_key TEXT UNIQUE NOT NULL
+            DEFAULT replace(gen_random_uuid()::text, '-', '');
+
+        CREATE INDEX IF NOT EXISTS idx_projects_sentry_public_key
+            ON projects(sentry_public_key);
+        """,
+    ),
 ]
 
 
