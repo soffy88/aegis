@@ -98,10 +98,10 @@ class TestWebhookDeliveryQueueRepository:
             max_attempts=3,
         )
         # First claim — should get 1
-        batch1 = await repo.claim_next_batch(batch_size=10, now=_NOW)
+        batch1 = await repo.claim_next_batch(batch_size=10, now=None)
         assert len(batch1) >= 1
-        # Second claim with same now — already in_flight, skip locked
-        batch2 = await repo.claim_next_batch(batch_size=10, now=_NOW)
+        # Second claim immediately after — already in_flight, skip locked
+        batch2 = await repo.claim_next_batch(batch_size=10, now=None)
         ids1 = {d.delivery_id for d in batch1}
         ids2 = {d.delivery_id for d in batch2}
         assert ids1.isdisjoint(ids2)
@@ -115,7 +115,7 @@ class TestWebhookDeliveryQueueRepository:
             payload={},
             max_attempts=4,
         )
-        batch = await repo.claim_next_batch(batch_size=1, now=_NOW)
+        batch = await repo.claim_next_batch(batch_size=1, now=None)
         claimed = next(d for d in batch if d.delivery_id == delivery.delivery_id)
         await repo.mark_succeeded(delivery_id=claimed.delivery_id, status_code=200, now=_NOW)
         rows = await repo.list_by_subscription(sub_id=sub_id, org_id=_ORG)
@@ -134,7 +134,7 @@ class TestWebhookDeliveryQueueRepository:
             payload={},
             max_attempts=4,
         )
-        batch = await repo.claim_next_batch(batch_size=1, now=_NOW)
+        batch = await repo.claim_next_batch(batch_size=1, now=None)
         claimed = next(d for d in batch if d.delivery_id == delivery.delivery_id)
         await repo.mark_failed_for_retry(
             delivery_id=claimed.delivery_id,
@@ -158,7 +158,8 @@ class TestWebhookDeliveryQueueRepository:
             payload={},
             max_attempts=1,
         )
-        batch = await repo.claim_next_batch(batch_size=1, now=_NOW)
+        # batch_size=100 ensures we get all pending rows (previous tests may leave re-queued rows)
+        batch = await repo.claim_next_batch(batch_size=100, now=None)
         claimed = next(d for d in batch if d.delivery_id == delivery.delivery_id)
         await repo.mark_dead_letter(
             delivery_id=claimed.delivery_id, status_code=400, error="bad request"
