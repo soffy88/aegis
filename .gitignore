@@ -10,6 +10,7 @@ build/
 *.egg-info/
 .env
 .env.local
+.env.aegis
 *.log
 *.db
 *.sqlite
@@ -20,6 +21,8 @@ docs/*
 !docs/sdk-integration/
 # M2-E M1 试用指南入仓 (trial user 参考)
 !docs/M1_TRIAL.md
+# M2-E prod 部署指南入仓 (Wiki ops 参考)
+!docs/PROD_DEPLOY.md
 # 同级姊妹仓 (各自独立 git repo,不入主仓)
 aegis-appstore/
 aegis-autoheal-sdk/
