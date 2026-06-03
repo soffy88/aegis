@@ -50,19 +50,26 @@ services:
     image: caddy:2-alpine
     container_name: aegis-caddy
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"  # HTTP/3
+    # 不 publish 端口 (cloudflared 替代外网暴露, CF 边缘 TLS termination)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - aegis-caddy-data:/data       # Let's Encrypt 证书持久化
+      - aegis-caddy-data:/data
       - aegis-caddy-config:/config
     networks:
       - helios-net
     depends_on:
       - aegis-backend
       - aegis-console
+
+  aegis-cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: aegis-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN:?required}
+    networks:
+      - helios-net
+    depends_on:
+      - aegis-caddy
 
 volumes:
   aegis-caddy-data:
