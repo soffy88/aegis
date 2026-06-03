@@ -18,6 +18,8 @@ build/
 docs/*
 # C3-7 SDK 接入文档入仓 (业务方接入参考, !例外必须跟 docs/* 同用)
 !docs/sdk-integration/
+# M2-E M1 试用指南入仓 (trial user 参考)
+!docs/M1_TRIAL.md
 # 同级姊妹仓 (各自独立 git repo,不入主仓)
 aegis-appstore/
 aegis-autoheal-sdk/
