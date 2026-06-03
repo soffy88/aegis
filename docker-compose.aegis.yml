@@ -1,0 +1,73 @@
+# Aegis prod stack — Wiki 主机, 跨 platform stack 共享 helios-net
+# 经理人 v2 §1 (Aegis SRE platform) 范围内, M3+ 扩展给其他项目公网发布
+
+services:
+  aegis-backend:
+    image: aegis-backend:${AEGIS_VERSION:-latest}
+    container_name: aegis-backend
+    restart: unless-stopped
+    environment:
+      # Database (platform-postgres in helios-net; AEGIS_ prefix from pydantic-settings)
+      AEGIS_POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@platform-postgres:5432/aegis
+
+      # Runtime env (ENV read by os.environ.get; AEGIS_ENV read by AegisSettings.env)
+      ENV: prod
+      AEGIS_ENV: prod
+      AEGIS_VERSION: ${AEGIS_VERSION:-latest}
+
+      # CORS (M2-E-Batch-1 AegisSettings field)
+      AEGIS_CORS_ORIGINS: https://aegis.uex.hk
+
+      # JWT
+      AEGIS_JWT_SECRET: ${AEGIS_JWT_SECRET:?required}
+      AEGIS_JWT_REFRESH_SECURE: 'true'
+
+      # Aegis 自监控 (C3-7 sentry-python, Wiki Q2 答 A prod 启)
+      AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-true}
+      AEGIS_SENTRY_DSN: ${AEGIS_SENTRY_DSN:-}
+
+      # LLM provider (可选, 跑 RCA / Brain 才需要, M1 试用阶段可不配)
+      AEGIS_LLM_PROVIDER: ${AEGIS_LLM_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      platform-postgres:
+        condition: service_healthy
+    networks:
+      - helios-net
+    # 不 publish ports (Caddy 内部 helios-net 调 aegis-backend:8000)
+
+  aegis-console:
+    image: aegis-console:${AEGIS_VERSION:-latest}
+    container_name: aegis-console
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    networks:
+      - helios-net
+    # 不 publish ports (Caddy 调 aegis-console:3000)
+
+  aegis-caddy:
+    image: caddy:2-alpine
+    container_name: aegis-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - aegis-caddy-data:/data       # Let's Encrypt 证书持久化
+      - aegis-caddy-config:/config
+    networks:
+      - helios-net
+    depends_on:
+      - aegis-backend
+      - aegis-console
+
+volumes:
+  aegis-caddy-data:
+  aegis-caddy-config:
+
+networks:
+  helios-net:
+    external: true
