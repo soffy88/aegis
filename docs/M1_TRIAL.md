@@ -32,6 +32,15 @@
 ## 8. 验证 webhook 投递
 - /orgs/<slug>/webhooks → 看 delivery 记录
 
+## 9. Aegis 自监控 (高级)
+
+Aegis prod 默认启用自监控 (AEGIS_SENTRY_ENABLED=true). 当 Aegis 自己代码异常时,
+错误会上报到 Aegis 自己的 project "aegis-self".
+
+DSN seed 流程 + 启用步骤参考: docs/PROD_DEPLOY.md §7.
+
+Wiki 可查 Aegis 内部错误: psql + WHERE project_id = '<aegis-self id>'.
+
 ## 已知限制 (M1)
 - ❌ 无 errors list / detail UI (M2-D ship 后有)
 - ❌ 无 DSN 显示 UI (M2-D ship 后有)
