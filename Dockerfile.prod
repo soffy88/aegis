@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.4
+FROM python:3.14-slim AS builder
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git openssh-client && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv==0.5.0
+
+COPY pyproject.toml uv.lock ./
+RUN mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
+RUN --mount=type=ssh uv sync --frozen --no-cache --no-dev
+
+# Runtime stage
+FROM python:3.14-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+COPY --from=builder /app/.venv ./.venv
+COPY aegis ./aegis
+COPY pyproject.toml ./
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV ENV=prod
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()" || exit 1
+
+CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

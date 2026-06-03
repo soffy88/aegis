@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _UNSET_PATH = Path("__aegis_unset__")
@@ -119,6 +119,20 @@ class AegisSettings(BaseSettings):
 
     # === Password policy (M1 relaxed, M2 tighten) ===
     password_min_length: int = 12
+
+    # === CORS ===
+    cors_allowed_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3010"],
+        description="允许的 CORS origin (prod: https://aegis.uex.hk). env: AEGIS_CORS_ORIGINS",
+        alias="AEGIS_CORS_ORIGINS",
+    )
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
 
     # === Environment ===
     env: str = Field(
