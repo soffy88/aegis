@@ -1,8 +1,7 @@
-# Aegis SRE platform Caddyfile
-# Aegis 自身公网发布 + (未来) 其他项目公网发布
+# Aegis SRE platform Caddyfile (M2-E-Batch-3 修订: Cloudflare Tunnel 模式)
+# CF 边缘负责 TLS + HSTS, Caddy 仅内部 HTTP 反代
 
-# Aegis console + API
-aegis.uex.hk {
+:8080 {
 	# /api/* → backend
 	handle /api/* {
 		reverse_proxy aegis-backend:8000
@@ -13,12 +12,8 @@ aegis.uex.hk {
 		reverse_proxy aegis-console:3000
 	}
 
-	# 自动 HTTPS (Let's Encrypt) — Caddy 默认行为
-	# 自动 HTTP → HTTPS redirect
-
-	# 安全 headers (M1 基础)
+	# 安全 headers (M1 基础, HSTS 由 CF 边缘加)
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
@@ -35,6 +30,6 @@ aegis.uex.hk {
 }
 
 # (未来) 其他项目公网发布同款模式:
-# helios.uex.hk { reverse_proxy helios-backend:8000 ... }
-# helixa.uex.hk { reverse_proxy helixa-backend:8000 ... }
-# 经理人 M3+ AEGIS-BACKLOG-045 (Aegis platform 给其他项目公网发布服务)
+# :8081 { reverse_proxy helios-backend:8000 ... }
+# Cloudflare Tunnel ingress 配 helios.uex.hk → aegis-caddy:8081
+# 经理人 M3+ AEGIS-BACKLOG-045 (Aegis platform 给其他项目公网发布)
