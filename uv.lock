@@ -88,7 +88,7 @@ requires-dist = [
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.21.0" },
     { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.31.0" },
-    { name = "oservice", git = "ssh://git@github.com/helios-plat/oservice.git?rev=v0.4.1" },
+    { name = "oservice", git = "ssh://git@github.com/helios-plat/oservice.git?rev=v0.4.2" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v3.14.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.5" },
@@ -1712,8 +1712,8 @@ dependencies = [
 
 [[package]]
 name = "oservice"
-version = "0.4.1"
-source = { git = "ssh://git@github.com/helios-plat/oservice.git?rev=v0.4.1#582ebff40a2cfaf843631617846eaa9e320c16f8" }
+version = "0.4.2"
+source = { git = "ssh://git@github.com/helios-plat/oservice.git?rev=v0.4.2#d542e7bbb0ecac25101cf5cbf2a4642b20b5e7d6" }
 dependencies = [
     { name = "obase" },
     { name = "omodul" },

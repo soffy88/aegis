@@ -180,10 +180,12 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
         from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
         from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
+        from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
 
         init_platform_alerter(cfg)
         init_rca_service(cfg)
         init_planner_service(cfg)
+        init_triage_service(cfg)
         init_app_installer(cfg)
 
         yield
