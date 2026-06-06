@@ -26,6 +26,7 @@ from aegis.server.api.routers import (
     edge as edge_router,
 )
 from aegis.server.api.routers import envelope as envelope_router
+from aegis.server.api.routers import incidents as incidents_router
 from aegis.server.api.routers import invite as invite_router
 from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import orgs as orgs_router
@@ -194,13 +195,19 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
         from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
 
-        init_platform_alerter(cfg)
+        alerter = init_platform_alerter(cfg)
         init_rca_service(cfg)
         init_planner_service(cfg)
         init_triage_service(cfg)
         init_app_installer(cfg)
 
+        from aegis.server.orchestration.cron import start_orchestration_crons  # noqa: PLC0415
+
+        cron_task = start_orchestration_crons(alerter=alerter)
+
         yield
+
+        cron_task.cancel()
 
         log.info("aegis_shutting_down")
         await close_pool()
@@ -238,6 +245,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(users_router.router)
     app.include_router(envelope_router.router)
     app.include_router(invite_router.router)
+    app.include_router(incidents_router.router)
 
     # C3-7: test error endpoint — dev/test only, never registered in prod
     if os.environ.get("ENV") != "prod":
