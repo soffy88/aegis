@@ -159,7 +159,9 @@ class AegisSettings(BaseSettings):
     rca_max_steps: int = 10
     rca_max_cost_usd_per_invocation: float = 5.0
     planner_llm_model: str = "claude-sonnet-4-6"
-    triage_llm_model: str = "claude-haiku-4-5"  # reserved for oservice v0.4.2
+    triage_llm_model: str = "claude-haiku-4-5"
+    triage_max_tokens: int = 1024
+    triage_throttle_seconds: int = 60
 
     # === Agent (S3) ===
     agent_token: str = Field(
