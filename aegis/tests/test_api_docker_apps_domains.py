@@ -367,6 +367,48 @@ class TestAppsRouter:
         r = apps_client.delete(f"/api/v1/orgs/{_ORG}/apps/{_APP_ID}")
         assert r.status_code == 404
 
+    def test_list_apps_returns_expected_fields(
+        self, apps_client: TestClient, apps_conn: mock.AsyncMock
+    ) -> None:
+        apps_conn.fetch.return_value = [
+            {
+                "id": _APP_ID,
+                "app_name": "homeassistant",
+                "app_version": "2024.1",
+                "install_dir": "/opt/ha",
+                "domain": "ha.local",
+                "status": "completed",
+                "installed_at": "2026-06-06T00:00:00Z",
+            }
+        ]
+        r = apps_client.get(f"/api/v1/orgs/{_ORG}/apps")
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) == 1
+        assert items[0]["app_name"] == "homeassistant"
+        assert items[0]["status"] == "completed"
+
+    def test_install_project_not_in_org_returns_404(
+        self, apps_client: TestClient, apps_conn: mock.AsyncMock
+    ) -> None:
+        other_org = uuid.UUID("99999999-9999-9999-9999-999999999999")
+        apps_conn.fetchrow.return_value = {
+            **_project_row(),
+            "org_id": other_org,
+        }
+        r = apps_client.post(
+            f"/api/v1/orgs/{_ORG}/apps/install?project_id={_PROJ}",
+            json={"app_name": "nginx", "install_dir": "/tmp/nginx"},
+        )
+        assert r.status_code == 404
+
+    def test_install_blank_install_dir_rejected(self, apps_client: TestClient) -> None:
+        r = apps_client.post(
+            f"/api/v1/orgs/{_ORG}/apps/install?project_id={_PROJ}",
+            json={"app_name": "nginx", "install_dir": "   "},
+        )
+        assert r.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Domains router tests
