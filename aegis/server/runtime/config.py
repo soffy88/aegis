@@ -161,6 +161,12 @@ class AegisSettings(BaseSettings):
     planner_llm_model: str = "claude-sonnet-4-6"
     triage_llm_model: str = "claude-haiku-4-5"  # reserved for oservice v0.4.2
 
+    # === Agent (S3) ===
+    agent_token: str = Field(
+        default="",
+        description="Bearer token required from aegis-agent. Empty = no auth (dev).",
+    )
+
     # === AppStore (S2) ===
     appstore_catalog_url: str = ""
     appstore_health_retries: int = 5
