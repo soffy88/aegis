@@ -149,6 +149,10 @@ async def create_invite(
 
     await _maybe_send_invite_email(conn=conn, org_id=org_id, to=body.email, token=token)
 
+    # M2-E: token returned so admin can share invite link manually (no email configured).
+    # M2-F+ risk: an admin could claim the token themselves to create an account for
+    # another email address. Mitigation: once AEGIS_RESEND_API_KEY is set, drop `token`
+    # from InviteResponse so the token only leaves the server through the email system.
     return InviteResponse(**dict(invite_row))
 
 
