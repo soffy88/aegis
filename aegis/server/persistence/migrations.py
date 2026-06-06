@@ -526,6 +526,52 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON agent_metrics(metric_name, ts DESC);
         """,
     ),
+    (
+        "018_invites",
+        """
+        CREATE TABLE IF NOT EXISTS org_invites (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id      UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            email       TEXT NOT NULL,
+            role        TEXT NOT NULL,
+            token       TEXT UNIQUE NOT NULL,
+            invited_by  UUID NOT NULL REFERENCES users(id),
+            expires_at  TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
+            accepted_at TIMESTAMPTZ,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_org_invites_token ON org_invites(token);
+        CREATE INDEX IF NOT EXISTS idx_org_invites_email ON org_invites(email);
+        CREATE INDEX IF NOT EXISTS idx_org_invites_org   ON org_invites(org_id);
+        """,
+    ),
+    (
+        "019_incidents",
+        """
+        CREATE TABLE IF NOT EXISTS incidents (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id          UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            title           TEXT NOT NULL,
+            started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            resolved_at     TIMESTAMPTZ,
+            severity        TEXT NOT NULL DEFAULT 'warning',
+            status          TEXT NOT NULL DEFAULT 'open',
+            postmortem_md   TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_incidents_org_status
+            ON incidents(org_id, status);
+        CREATE INDEX IF NOT EXISTS idx_incidents_org_started
+            ON incidents(org_id, started_at DESC);
+
+        -- event_trail parent_id / root_cause_id already added in 001_event_trail.
+        -- Add index on root_cause_id for fast incident event grouping.
+        CREATE INDEX IF NOT EXISTS idx_event_trail_root_cause
+            ON event_trail(root_cause_id) WHERE root_cause_id IS NOT NULL;
+        """,
+    ),
 ]
 
 

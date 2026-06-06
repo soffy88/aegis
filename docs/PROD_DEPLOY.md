@@ -104,6 +104,39 @@ docker exec platform-postgres psql -U postgres -d aegis -c \
 docker compose -f docker-compose.aegis.yml --env-file .env.aegis up -d aegis-backend
 ```
 
+## 7.5 手动创建 Admin 账户 (M2-E 期间, 无邮件 invite)
+
+M2-E 部署期间 `AEGIS_RESEND_API_KEY` 未配, invite 邮件不发送. 通过 psql 直接插入 admin 账户:
+
+```bash
+# 步骤 1: 生成 argon2id hash (在 aegis-backend 容器内)
+docker exec -it aegis-backend python - <<'EOF'
+from obase.auth import argon2_hash
+print(argon2_hash(password="YOUR_ADMIN_PASSWORD_HERE"))
+EOF
+
+# 步骤 2: 创建 user + org + membership
+docker exec platform-postgres psql -U postgres -d aegis <<'SQL'
+-- 替换 <hash> 为步骤 1 输出的 argon2id 字符串
+INSERT INTO users (email, password_hash, display_name)
+VALUES ('admin@your-domain.com', '<hash>', 'Admin')
+RETURNING id;
+
+-- 复制上方 user id → 替换 <user_id>
+-- 复制 org id (已存在) → 替换 <org_id>
+INSERT INTO org_memberships (org_id, user_id, role)
+VALUES ('<org_id>', '<user_id>', 'admin')
+ON CONFLICT DO NOTHING;
+SQL
+
+# 步骤 3: 验证
+docker exec platform-postgres psql -U postgres -d aegis -c \
+    "SELECT u.email, m.role FROM users u JOIN org_memberships m ON m.user_id = u.id;"
+```
+
+> **M2-F+**: 配置 `AEGIS_RESEND_API_KEY` + `AEGIS_EMAIL_FROM_ADDR` 后,
+> 通过 Console → Settings → Members → Invite 正常走 invite 流程.
+
 ## 8. 完成
 
 - ✅ https://aegis.uex.hk 公网可访问 (Cloudflare Tunnel + CF 边缘 TLS)
