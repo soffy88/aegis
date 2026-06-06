@@ -26,6 +26,7 @@ from aegis.server.api.routers import (
     edge as edge_router,
 )
 from aegis.server.api.routers import envelope as envelope_router
+from aegis.server.api.routers import invite as invite_router
 from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
@@ -236,6 +237,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(orgs_router.router)
     app.include_router(users_router.router)
     app.include_router(envelope_router.router)
+    app.include_router(invite_router.router)
 
     # C3-7: test error endpoint — dev/test only, never registered in prod
     if os.environ.get("ENV") != "prod":

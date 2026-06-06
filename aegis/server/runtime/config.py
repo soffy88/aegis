@@ -179,6 +179,16 @@ class AegisSettings(BaseSettings):
     autoheal_diagnose_min_confidence: float = 0.5
     autoheal_health_retries: int = 5
 
+    # === Email (Resend) ===
+    resend_api_key: str = Field(
+        default="",
+        description="Resend API key for transactional email. Empty = log only (dev).",
+    )
+    email_from_addr: str = Field(
+        default="noreply@aegis.uex.hk",
+        description="From address for Aegis-sent emails (env: AEGIS_EMAIL_FROM_ADDR)",
+    )
+
     # === Environment ===
     env: str = Field(
         default="dev",
