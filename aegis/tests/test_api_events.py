@@ -27,6 +27,20 @@ async def _fake_user() -> UserContext:
     )
 
 
+_EVENT_ID = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+_EVENT_ROW: dict[str, object] = {
+    "id": _EVENT_ID,
+    "ts": "2026-06-06T00:00:00Z",
+    "event_type": "service_down",
+    "severity": "critical",
+    "payload": {"service": "worker"},
+    "omodul_kind": None,
+    "autoheal_plugin": None,
+    "trace_id": "trc_abc123",
+}
+
+
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
     fa = FastAPI()
@@ -47,6 +61,38 @@ def client() -> Generator[TestClient, None, None]:
         yield c
 
 
+@pytest.fixture
+def event_detail_client() -> Generator[TestClient, None, None]:
+    fa = FastAPI()
+    fa.include_router(events.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn_found() -> AsyncIterator[mock.AsyncMock]:
+        m = mock.AsyncMock()
+        m.fetchrow.return_value = _EVENT_ROW
+        yield m
+
+    fa.dependency_overrides[get_db_conn] = _conn_found
+    with TestClient(fa) as c:
+        yield c
+
+
+@pytest.fixture
+def event_missing_client() -> Generator[TestClient, None, None]:
+    fa = FastAPI()
+    fa.include_router(events.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn_missing() -> AsyncIterator[mock.AsyncMock]:
+        m = mock.AsyncMock()
+        m.fetchrow.return_value = None
+        yield m
+
+    fa.dependency_overrides[get_db_conn] = _conn_missing
+    with TestClient(fa) as c:
+        yield c
+
+
 class TestEventsApi:
     def test_create_event(self, client: TestClient) -> None:
         r = client.post(
@@ -63,6 +109,17 @@ class TestEventsApi:
         r = client.get(f"/api/v1/orgs/{_ORG}/events")
         assert r.status_code == 200
         assert r.json() == []
+
+    def test_get_event_by_id_ok(self, event_detail_client: TestClient) -> None:
+        r = event_detail_client.get(f"/api/v1/orgs/{_ORG}/events/{_EVENT_ID}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["event_type"] == "service_down"
+        assert body["trace_id"] == "trc_abc123"
+
+    def test_get_event_by_id_not_found(self, event_missing_client: TestClient) -> None:
+        r = event_missing_client.get(f"/api/v1/orgs/{_ORG}/events/{_EVENT_ID}")
+        assert r.status_code == 404
 
 
 class TestAlertsApi:

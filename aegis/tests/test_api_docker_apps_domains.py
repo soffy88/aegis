@@ -150,7 +150,54 @@ _INSPECT_DATA: dict[str, object] = {
 }
 
 
+_LIST_ITEM: dict[str, object] = {
+    "container_id": "abc123",
+    "name": "nginx",
+    "image": "nginx:latest",
+    "state": "running",
+    "status": "Up 2 hours",
+    "started_at": None,
+    "finished_at": None,
+    "exit_code": None,
+    "health": None,
+    "restart_count": 0,
+    "labels": {},
+    "ports": {},
+    "mounts": [],
+}
+
+
 class TestDockerRouter:
+    def test_list_containers_returns_list(self, docker_client: TestClient) -> None:
+        item = mock.MagicMock()
+        item.model_dump.return_value = _LIST_ITEM
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_list",
+            return_value=[item],
+        ):
+            r = docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+        assert r.json()[0]["name"] == "nginx"
+
+    def test_list_containers_all_flag_forwarded(self, docker_client: TestClient) -> None:
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_list",
+            return_value=[],
+        ) as mock_list:
+            docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers?all=true")
+        mock_list.assert_called_once_with(all=True)
+
+    def test_list_containers_oprim_error_502(self, docker_client: TestClient) -> None:
+        from oprim._exceptions import OprimError
+
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_list",
+            side_effect=OprimError("daemon down"),
+        ):
+            r = docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+        assert r.status_code == 502
+
     def test_inspect_ok(self, docker_client: TestClient) -> None:
         result = mock.MagicMock()
         result.model_dump.return_value = _INSPECT_DATA
