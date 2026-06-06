@@ -161,6 +161,16 @@ class AegisSettings(BaseSettings):
     planner_llm_model: str = "claude-sonnet-4-6"
     triage_llm_model: str = "claude-haiku-4-5"  # reserved for oservice v0.4.2
 
+    # === AppStore (S2) ===
+    appstore_catalog_url: str = ""
+    appstore_health_retries: int = 5
+    appstore_skip_pull: bool = False
+
+    # === AutoHeal Engine (S2) ===
+    autoheal_circuit_breaker_enabled: bool = True
+    autoheal_diagnose_min_confidence: float = 0.5
+    autoheal_health_retries: int = 5
+
     # === Environment ===
     env: str = Field(
         default="dev",
