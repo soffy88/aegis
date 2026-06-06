@@ -32,7 +32,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         secure=get_settings().jwt_refresh_secure,
         samesite="lax",
         max_age=30 * 86400,
-        path="/api/v1/auth",
+        path="/",
     )
 
 
@@ -184,7 +184,7 @@ async def logout(
         except Exception:
             pass  # logout always succeeds — silently ignore invalid tokens
 
-    response.delete_cookie("refresh_token", path="/api/v1/auth")
+    response.delete_cookie("refresh_token", path="/")
 
 
 @router.get("/me")

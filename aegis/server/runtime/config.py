@@ -134,6 +134,33 @@ class AegisSettings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
+    # === Platform Alerter (S1 BrainAlerter) ===
+    platform_alerter_interval_seconds: int = 60
+    platform_alerter_throttle_seconds: int = 600
+    platform_alerter_thresholds: dict = Field(
+        default_factory=lambda: {
+            "cpu_percent": 85.0,
+            "ram_percent": 90.0,
+            "disk_percent": 85.0,
+            "pool_usage_percent": 85.0,
+            "slow_query_ms": 5000,
+            "rabbitmq_queue_depth": 1000,
+            "rabbitmq_consumer_min": 1,
+        }
+    )
+    platform_alerter_telegram_bot_token: str = ""
+    platform_alerter_telegram_chat_id: str = ""
+    platform_alerter_rabbitmq_mgmt_url: str = ""
+    platform_alerter_rabbitmq_queue_name: str = "tasks"
+    platform_alerter_disk_path: str = "/"
+
+    # === Brain / RCA (S1) ===
+    rca_llm_model: str = "claude-sonnet-4-6"
+    rca_max_steps: int = 10
+    rca_max_cost_usd_per_invocation: float = 5.0
+    planner_llm_model: str = "claude-sonnet-4-6"
+    triage_llm_model: str = "claude-haiku-4-5"  # reserved for oservice v0.4.2
+
     # === Environment ===
     env: str = Field(
         default="dev",

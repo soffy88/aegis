@@ -21,14 +21,15 @@ dependencies = [
     "PyYAML>=6.0",
 
     # 3O 主库依赖 — VCS specifiers pin to exact git tag SHA (dependency-confusion-safe)
-    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.8.0",
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.24.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.31.0",
     "alembic>=1.13",
     "python-frontmatter>=1.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@3.8.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.13.1",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v3.14.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.21.0",
+    "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@v0.4.1",
 ]
 
 [project.optional-dependencies]
@@ -90,8 +91,18 @@ python_version = "3.14"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "obase.*", "oprim.*", "oskill.*", "omodul.*", "testcontainers.*", "docker.*", "redis.*"]
+module = ["asyncpg.*", "obase.*", "oprim.*", "oskill.*", "omodul.*", "oservice.*", "testcontainers.*", "docker.*", "redis.*"]
 ignore_missing_imports = true
+
+[tool.uv]
+# oservice v0.4.1 internally pins obase@v0.9.0; override forces full tree to v0.11.0
+# safe only if obase v0.11.0 is backward-compatible with oservice v0.4.1 API surface
+override-dependencies = [
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.31.0",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v3.14.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.21.0",
+]
 
 [tool.ruff]
 line-length = 100
