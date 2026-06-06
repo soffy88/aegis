@@ -122,3 +122,44 @@ def test_inspect_oprim_error_returns_502(client: TestClient) -> None:
     ):
         resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/ghost")
     assert resp.status_code == 502
+
+
+def test_list_containers_uses_oprim(client: TestClient) -> None:
+    c1 = MagicMock()
+    c1.model_dump.return_value = {"container_id": "c1", "state": "running"}
+    with mock.patch(
+        "aegis.server.api.routers.docker.docker_ps",
+        return_value=[c1],
+    ):
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["container_id"] == "c1"
+
+
+def test_list_containers_empty(client: TestClient) -> None:
+    with mock.patch(
+        "aegis.server.api.routers.docker.docker_ps",
+        return_value=[],
+    ):
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_containers_rbac_unauthorized(client: TestClient) -> None:
+    """Test that a user with no membership in the org gets 403."""
+
+    async def _no_org_user() -> UserContext:
+        return UserContext(
+            user_id=_USER,
+            email="bad@example.com",
+            orgs=[],
+        )
+
+    client.app.dependency_overrides[get_current_user] = _no_org_user
+    try:
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+        assert resp.status_code == 403
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user

@@ -102,7 +102,7 @@ class AegisSettings(BaseSettings):
 
     # === JWT ===
     jwt_secret: str = Field(
-        default="dev-secret-CHANGE-IN-PROD",
+        default="dev-secret-CHANGE-IN-PROD-MUST-BE-32-BYTES",
         min_length=32,
         description="HS256 signing secret, env: AEGIS_JWT_SECRET",
     )
@@ -199,7 +199,7 @@ class AegisSettings(BaseSettings):
     def validate_jwt_secret_in_prod(self) -> AegisSettings:
         # Fail closed: reject the placeholder secret in every env except explicit "dev".
         # Unknown / unset env (e.g. "staging", "") is treated as non-dev.
-        if self.env != "dev" and self.jwt_secret == "dev-secret-CHANGE-IN-PROD":
+        if self.env != "dev" and "CHANGE-IN-PROD" in self.jwt_secret:
             raise ValueError(
                 "AEGIS_JWT_SECRET must be set to a strong secret outside of local dev "
                 "(env != 'dev'). Generate one with: openssl rand -hex 32"
