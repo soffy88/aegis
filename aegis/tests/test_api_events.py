@@ -121,6 +121,32 @@ class TestEventsApi:
         r = event_missing_client.get(f"/api/v1/orgs/{_ORG}/events/{_EVENT_ID}")
         assert r.status_code == 404
 
+    def test_list_events_offset_zero_is_default(self, client: TestClient) -> None:
+        with mock.patch(
+            "aegis.server.api.routers.events.recent_events",
+            new_callable=mock.AsyncMock,
+            return_value=[],
+        ) as m:
+            r = client.get(f"/api/v1/orgs/{_ORG}/events")
+        assert r.status_code == 200
+        _, kwargs = m.call_args
+        assert kwargs.get("offset", 0) == 0
+
+    def test_list_events_passes_offset_to_persistence(self, client: TestClient) -> None:
+        with mock.patch(
+            "aegis.server.api.routers.events.recent_events",
+            new_callable=mock.AsyncMock,
+            return_value=[],
+        ) as m:
+            r = client.get(f"/api/v1/orgs/{_ORG}/events?offset=50")
+        assert r.status_code == 200
+        _, kwargs = m.call_args
+        assert kwargs["offset"] == 50
+
+    def test_list_events_offset_negative_rejected(self, client: TestClient) -> None:
+        r = client.get(f"/api/v1/orgs/{_ORG}/events?offset=-1")
+        assert r.status_code == 422
+
 
 class TestAlertsApi:
     def test_ingest_alert(self, client: TestClient) -> None:

@@ -38,3 +38,26 @@ def get_plugin_callable(plugin_id: str) -> Callable[..., Any] | None:
 def list_plugin_ids() -> list[str]:
     """Return all registered plugin IDs from installed packages."""
     return [ep.name for ep in entry_points(group=_ENTRY_POINTS_GROUP)]
+
+
+def list_plugins() -> list[dict[str, Any]]:
+    """Return runbook-compatible metadata dicts for all installed plugins."""
+    result = []
+    for ep in entry_points(group=_ENTRY_POINTS_GROUP):
+        try:
+            cls = ep.load()
+        except Exception as exc:
+            log.warning("plugin_load_failed plugin_id=%s err=%s", ep.name, exc)
+            continue
+        result.append(
+            {
+                "name": getattr(cls, "name", ep.name),
+                "description": getattr(cls, "description", ""),
+                "trigger": getattr(cls, "matches_alert", ""),
+                "requires_approval": getattr(cls, "requires_approval_when", None) is not None,
+                "version": getattr(cls, "version", ""),
+                "steps": [],
+                "source": "plugin",
+            }
+        )
+    return result
