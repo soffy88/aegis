@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from oprim import (
     docker_container_inspect,
+    docker_container_list,
     docker_container_logs,
     docker_container_restart,
     docker_container_start,
@@ -23,6 +24,20 @@ from aegis.server.auth.rbac import Permission, require_permission
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/docker", tags=["docker"])
 
 _502 = status.HTTP_502_BAD_GATEWAY
+
+
+@router.get("/containers")
+async def list_containers(
+    org_id: UUID,
+    all: bool = Query(default=False, description="Include stopped containers"),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """List containers via oprim docker_container_list. viewer+ can read."""
+    try:
+        items = await asyncio.to_thread(docker_container_list, all=all)
+        return [c.model_dump() for c in items]
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
 
 @router.get("/containers/{container}")

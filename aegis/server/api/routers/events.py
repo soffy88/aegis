@@ -89,6 +89,32 @@ async def list_events(
     )
 
 
+@router.get("/{event_id}")
+async def get_event(
+    org_id: uuid.UUID,
+    event_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
+) -> dict[str, Any]:
+    """Fetch a single event by ID. viewer+ can read."""
+    row = await conn.fetchrow(
+        """
+        SELECT id, ts, event_type, severity, payload,
+               omodul_kind, autoheal_plugin, trace_id
+          FROM event_trail
+         WHERE id = $1 AND org_id = $2
+        """,
+        event_id,
+        org_id,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found",
+        )
+    return dict(row)
+
+
 @router.get("/{event_id}/causal-chain")
 async def get_causal_chain(
     org_id: uuid.UUID,
