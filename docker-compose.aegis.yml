@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     environment:
       # Database (platform-postgres in helios-net; AEGIS_ prefix from pydantic-settings)
-      AEGIS_POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@platform-postgres:5432/aegis
+      AEGIS_POSTGRES_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@platform-postgres:5432/aegis
 
       # Runtime env (ENV read by os.environ.get; AEGIS_ENV read by AegisSettings.env)
       ENV: prod
@@ -16,7 +16,6 @@ services:
       AEGIS_VERSION: ${AEGIS_VERSION:-latest}
 
       # CORS (M2-E-Batch-1 AegisSettings field)
-      AEGIS_CORS_ORIGINS: https://aegis.uex.hk
 
       # JWT
       AEGIS_JWT_SECRET: ${AEGIS_JWT_SECRET:?required}
@@ -29,9 +28,6 @@ services:
       # LLM provider (可选, 跑 RCA / Brain 才需要, M1 试用阶段可不配)
       AEGIS_LLM_PROVIDER: ${AEGIS_LLM_PROVIDER:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    depends_on:
-      platform-postgres:
-        condition: service_healthy
     networks:
       - helios-net
     # 不 publish ports (Caddy 内部 helios-net 调 aegis-backend:8000)
