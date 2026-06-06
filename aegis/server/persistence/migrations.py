@@ -507,6 +507,25 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON projects(sentry_public_key);
         """,
     ),
+    (
+        "017_agent_metrics",
+        """
+        CREATE TABLE IF NOT EXISTS agent_metrics (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+            hostname    TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            value       DOUBLE PRECISION NOT NULL,
+            unit        TEXT NOT NULL DEFAULT '',
+            tags        JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_metrics_host_ts
+            ON agent_metrics(hostname, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_metrics_name_ts
+            ON agent_metrics(metric_name, ts DESC);
+        """,
+    ),
 ]
 
 

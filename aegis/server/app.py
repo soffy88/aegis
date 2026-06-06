@@ -16,6 +16,7 @@ from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import auth as auth_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import envelope as envelope_router
+from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import release_gates as release_gates_router
@@ -180,10 +181,12 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
         from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
         from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
+        from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
 
         init_platform_alerter(cfg)
         init_rca_service(cfg)
         init_planner_service(cfg)
+        init_triage_service(cfg)
         init_app_installer(cfg)
 
         yield
@@ -205,6 +208,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router)
+    app.include_router(metrics_router.router)
     app.include_router(events.router)
     app.include_router(alerts.router)
     app.include_router(alert_rules.router)
