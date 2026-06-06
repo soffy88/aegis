@@ -1,14 +1,12 @@
 """Action Planner — ActionPlannerEngine assembly for Aegis platform.
 
-S1 bypass: ActionPlannerEngine is instantiated directly (not via assemble()).
-Reason: plugin_registry kind=layer4 is not recognized by oservice v0.4.1
-_detect_element_kind (same root cause as AEGIS-BACKLOG-070).
+S4: ActionPlannerEngine uses real plugin_registry via importlib.metadata entry_points.
+    Plugin discovery: aegis.server.plugins.registry.get_plugin_callable.
 
 Interface gap requiring wrapper:
 - llm_provider protocol: ActionPlannerEngine calls llm_provider(symptom=, context=)
   → [{plugin_id, params, description}] but ProviderRegistry callers have a different
   signature. _make_planner_llm_provider bridges this.
-- plugin_registry: S2 scope (aegis-plugins entry_points); stub used for S1.
 - rag: oskill.retrieve_runbook requires vector_encode_fn + vector_search_fn; deferred.
 
 TODO(AEGIS-BACKLOG-070): switch to assemble(manifest) after oservice v0.4.2 extends
@@ -27,6 +25,7 @@ from typing import Any
 from obase import ProviderRegistry
 from oservice.engines.action_planner import ActionPlannerEngine
 
+from aegis.server.plugins.registry import get_plugin_callable
 from aegis.server.runtime.config import AegisSettings
 
 log = logging.getLogger(__name__)
@@ -109,15 +108,6 @@ def _make_planner_llm_provider(
     return _provider
 
 
-# ── Plugin registry stub ──────────────────────────────────────────────────────
-
-
-def _plugin_registry_stub(plugin_id: str) -> Callable[..., Any] | None:
-    """Stub plugin registry — S2 sprint will wire aegis-plugins entry_points."""
-    log.warning("plugin_registry_stub plugin_id=%s (S2: aegis-plugins not yet wired)", plugin_id)
-    return None
-
-
 # ── Assembly ──────────────────────────────────────────────────────────────────
 
 
@@ -136,7 +126,7 @@ def build_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
     # Direct instantiation (AEGIS-BACKLOG-070)
     return ActionPlannerEngine(
         llm_provider=llm_provider,
-        plugin_registry=_plugin_registry_stub,
+        plugin_registry=get_plugin_callable,
         rag=None,  # TODO(AEGIS-BACKLOG-073): wire retrieve_runbook wrapper
         trigger={},
         config={"max_retries": 1, "step_timeout_seconds": 30},
