@@ -152,10 +152,12 @@ async def recent_events(
     service: str | None = None,
     hours: int = 24,
     limit: int = 50,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Fetch recent events for a tenant.
 
     project_id: when None, returns events across all projects in the org.
+    offset: skip this many rows (for pagination).
     """
     rows = await conn.fetch(
         """
@@ -167,12 +169,14 @@ async def recent_events(
           AND ts > now() - ($4 || ' hours')::interval
         ORDER BY ts DESC
         LIMIT $5
+        OFFSET $6
         """,
         org_id,
         project_id,
         service,
         str(hours),
         limit,
+        offset,
     )
     return [dict(r) for r in rows]
 

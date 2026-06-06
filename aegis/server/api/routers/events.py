@@ -75,10 +75,11 @@ async def list_events(
     service: str | None = Query(default=None),
     hours: int = Query(default=24, ge=1, le=720),
     limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> list[dict[str, Any]]:
-    """List events. viewer+ can read. project_id=None returns all projects in this org."""
+    """List events with offset pagination. viewer+ can read."""
     return await recent_events(
         conn=conn,
         org_id=org_id,
@@ -86,6 +87,7 @@ async def list_events(
         service=service,
         hours=hours,
         limit=limit,
+        offset=offset,
     )
 
 

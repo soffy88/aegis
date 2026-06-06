@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.plugins.registry import list_plugins
 from aegis.server.repositories.project_repo import ProjectRepository
 from aegis.server.services.runbook import (
     approve_execution,
@@ -33,8 +34,9 @@ async def list_all_runbooks(
     org_id: UUID,
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> list[dict[str, Any]]:
-    """List available runbooks. viewer+ can read."""
-    return [rb.model_dump() for rb in list_runbooks()]
+    """List available runbooks (YAML) merged with entry_points plugins."""
+    yaml_entries = [{**rb.model_dump(), "source": "yaml"} for rb in list_runbooks()]
+    return yaml_entries + list_plugins()
 
 
 # Register /executions/{exec_id} BEFORE /{name} to avoid path-param shadowing
