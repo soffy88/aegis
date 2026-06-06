@@ -31,8 +31,12 @@ class CleanupDiskPlugin(AutoHealPlugin):
 
         log_path = ctx.alert_payload.get("log_path", "")
         if log_path:
+            if log_path.startswith("-"):
+                return ActionResult.failed("invalid log_path: must not start with '-'")
             try:
-                subprocess.run(["truncate", "-s", "0", log_path], check=True, capture_output=True)
+                subprocess.run(
+                    ["truncate", "-s", "0", "--", log_path], check=True, capture_output=True
+                )
                 cleaned.append(f"truncated {log_path}")
             except subprocess.CalledProcessError:
                 pass
