@@ -163,3 +163,15 @@ def test_list_containers_rbac_unauthorized(client: TestClient) -> None:
         assert resp.status_code == 403
     finally:
         client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_list_containers_oprim_error_returns_502(client: TestClient) -> None:
+    from oprim._exceptions import OprimError
+
+    with mock.patch(
+        "aegis.server.api.routers.docker.docker_ps",
+        side_effect=OprimError("docker daemon not responding"),
+    ):
+        resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+    assert resp.status_code == 502
+    assert "docker daemon not responding" in resp.json()["detail"]
