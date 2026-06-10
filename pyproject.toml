@@ -28,7 +28,7 @@ dependencies = [
     "alembic>=1.13",
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@main",
     "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@main",
 ]
 
@@ -101,7 +101,7 @@ override-dependencies = [
     "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
     "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@main",
 ]
 
 [tool.ruff]

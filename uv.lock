@@ -13,7 +13,7 @@ resolution-markers = [
 [manifest]
 overrides = [
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
-    { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.22.0" },
+    { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=main" },
     { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
 ]
@@ -86,7 +86,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
-    { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.22.0" },
+    { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=main" },
     { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
     { name = "oservice", git = "ssh://git@github.com/helios-plat/oservice.git?rev=main" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
@@ -1639,8 +1639,8 @@ dependencies = [
 
 [[package]]
 name = "omodul"
-version = "1.21.0"
-source = { git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.22.0#ce0696c3e5015db0ec1fd4dac46a7a9d5d6a3022" }
+version = "1.22.0"
+source = { git = "ssh://git@github.com/helios-plat/omodul.git?rev=main#99b69fadbfb27e696017552360424cc5bf6bcd0e" }
 dependencies = [
     { name = "apscheduler" },
     { name = "numpy" },
