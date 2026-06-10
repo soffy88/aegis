@@ -29,7 +29,7 @@ dependencies = [
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
-    "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@v0.4.3",
+    "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@main",
 ]
 
 [project.optional-dependencies]
