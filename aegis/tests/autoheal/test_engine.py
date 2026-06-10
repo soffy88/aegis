@@ -6,6 +6,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aegis_autoheal_sdk import ActionResultStatus
 
 from aegis.server.autoheal.engine import AutoHealEngine, AutoHealState
 
@@ -40,6 +41,15 @@ def _cb_tripped() -> MagicMock:
     cb.should_trip = True
     cb.reasons = ["error_rate too high"]
     return cb
+
+
+def _mock_plugin(success=True):
+    m = MagicMock()
+    m.pre_check = AsyncMock(return_value=True)
+    m.execute = AsyncMock(return_value=MagicMock(status=ActionResultStatus.OK, detail="ok"))
+    m.post_verify = AsyncMock(return_value=success)
+    m.rollback = AsyncMock()
+    return m
 
 
 _SIGNAL = {"alert_name": "disk_full", "severity": "critical"}
@@ -101,12 +111,16 @@ async def test_run_fails_when_circuit_breaker_trips() -> None:
 async def test_run_skips_circuit_breaker_when_no_samples() -> None:
     """No health_samples → circuit_breaker_check must NOT be called."""
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin()
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
         patch("aegis.server.autoheal.engine.circuit_breaker_check") as mock_cb,
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
         await engine.run(signal=_SIGNAL, action_plan=_PLAN)
     mock_cb.assert_not_called()
@@ -116,60 +130,81 @@ async def test_run_skips_circuit_breaker_when_no_samples() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_succeeds_when_health_check_passes() -> None:
+async def test_run_succeeds_when_plugin_verifies() -> None:
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin(success=True)
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
-        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN, service_url="http://svc/health")
+        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN, plugin_name="test-plugin")
     assert state == AutoHealState.succeeded
+    plugin_mock.pre_check.assert_called_once()
+    plugin_mock.execute.assert_called_once()
+    plugin_mock.post_verify.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_run_succeeds_when_no_service_url() -> None:
-    """Empty service_url → skip health check, treat as healthy."""
+async def test_run_skips_applying_if_pre_check_false() -> None:
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin()
+    plugin_mock.pre_check = AsyncMock(return_value=False)
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action") as mock_health,
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
-        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN, service_url="")
-    mock_health.assert_not_called()
+        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN)
     assert state == AutoHealState.succeeded
+    plugin_mock.execute.assert_not_called()
 
 
 # ── Phase 4: rolling_back → rolled_back ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_run_rolls_back_when_health_check_fails() -> None:
+async def test_run_rolls_back_when_plugin_verify_fails() -> None:
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin(success=False)
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=False),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
-        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN, service_url="http://svc/health")
+        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN)
     assert state == AutoHealState.rolled_back
+    plugin_mock.rollback.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_rollback_event_recorded_in_history() -> None:
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin(success=False)
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=False),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
-        await engine.run(signal=_SIGNAL, action_plan=_PLAN, service_url="http://svc/health")
+        await engine.run(signal=_SIGNAL, action_plan=_PLAN)
     events = [e["event"] for e in engine.history]
+    assert "triggering_plugin_rollback" in events
     assert "rollback_start" in events
     assert "rolled_back" in events
 
@@ -180,11 +215,15 @@ async def test_rollback_event_recorded_in_history() -> None:
 @pytest.mark.asyncio
 async def test_run_skips_approval_when_no_release_gate_service() -> None:
     engine = AutoHealEngine(release_gate_service=None)
+    plugin_mock = _mock_plugin()
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
         state = await engine.run(
             signal=_SIGNAL,
@@ -200,11 +239,15 @@ async def test_run_skips_approval_when_requires_approval_false() -> None:
     mock_rgs = MagicMock()
     mock_rgs.create_gate = AsyncMock()
     engine = AutoHealEngine(release_gate_service=mock_rgs)
+    plugin_mock = _mock_plugin()
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
         state = await engine.run(
             signal=_SIGNAL,
@@ -271,11 +314,15 @@ async def test_run_approval_granted_continues_to_succeeded() -> None:
     mock_rgs.repo.get = AsyncMock(side_effect=[decided_pending, decided_approved, decided_approved])
 
     engine = AutoHealEngine(release_gate_service=mock_rgs)
+    plugin_mock = _mock_plugin()
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
         patch("asyncio.sleep", new_callable=AsyncMock),
     ):
         state = await engine.run(
@@ -293,13 +340,17 @@ async def test_run_approval_granted_continues_to_succeeded() -> None:
 @pytest.mark.asyncio
 async def test_history_contains_state_transitions_for_success_path() -> None:
     engine = AutoHealEngine()
+    plugin_mock = _mock_plugin()
     with (
         patch(
             "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
         ),
-        patch("aegis.server.autoheal.engine.verify_health_after_action", return_value=True),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
     ):
-        await engine.run(signal=_SIGNAL, action_plan=_PLAN, service_url="http://svc/health")
+        await engine.run(signal=_SIGNAL, action_plan=_PLAN)
     states_seen = {e["state"] for e in engine.history}
     assert AutoHealState.diagnosing in states_seen
     assert AutoHealState.applying in states_seen

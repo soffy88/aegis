@@ -9,10 +9,8 @@ Interface gap requiring wrapper:
   signature. _make_planner_llm_provider bridges this.
 - rag: oskill.retrieve_runbook requires vector_encode_fn + vector_search_fn; deferred.
 
-TODO(AEGIS-BACKLOG-070): switch to assemble(manifest) after oservice v0.4.2 extends
-  _detect_element_kind to accept kind='layer4'.
-TODO(AEGIS-BACKLOG-074): ActionPlannerEngine exposes only queue-based API; _execute_plan
-  is called directly here for FastAPI request/response pattern.
+AEGIS-BACKLOG-070: switched to assemble(manifest).
+AEGIS-BACKLOG-074: using public async invoke API.
 """
 
 from __future__ import annotations
@@ -23,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from obase import ProviderRegistry
+from oservice.assembler import ServiceManifest, assemble
 from oservice.engines.action_planner import ActionPlannerEngine
 
 from aegis.server.plugins.registry import get_plugin_callable
@@ -35,8 +34,8 @@ _PLANNER_SYSTEM_PROMPT = (
     "generate a concrete remediation plan as a JSON array of steps. "
     "Each step must have: plugin_id (str), params (object), description (str). "
     "Respond ONLY with a valid JSON array, e.g.: "
-    '[{{"plugin_id": "restart_service", "params": {{"name": "worker"}}, '
-    '"description": "restart the worker process"}}]'
+    '[{"plugin_id": "restart_planner_service", "params": {"name": "worker"}, '
+    '"description": "restart the worker process"}]'
 )
 
 
@@ -103,8 +102,9 @@ def _make_planner_llm_provider(
             return _parse_plan_response(_extract_text(resp))
         except Exception as exc:
             log.warning("planner_llm_call_failed: %s", exc)
-            return []
+            return {"steps": []}
 
+    _provider.__module__ = "obase.aegis_bridge"
     return _provider
 
 
@@ -116,31 +116,32 @@ def build_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
         raw_caller: Callable[..., Any] | None = ProviderRegistry.get("llm", cfg.llm_provider)
     else:
         log.warning(
-            "planner_build: llm provider %r not registered — planner will return empty plans",
+            "planner_build: llm provider %r not registered — planning will use stub",
             cfg.llm_provider,
         )
         raw_caller = None
 
     llm_provider = _make_planner_llm_provider(raw_caller, cfg.planner_llm_model)
+    get_plugin_callable.__module__ = "layer4.aegis_bridge"
 
-    # Direct instantiation (AEGIS-BACKLOG-070)
-    return ActionPlannerEngine(
-        llm_provider=llm_provider,
-        plugin_registry=get_plugin_callable,
-        rag=None,  # TODO(AEGIS-BACKLOG-073): wire retrieve_runbook wrapper
+    manifest = ServiceManifest(
+        skeleton="action_planner",
+        inject={
+            "llm_provider": [llm_provider],
+            "plugin_registry": [get_plugin_callable],
+            "rag": [],  # TODO(AEGIS-BACKLOG-073)
+        },
         trigger={},
-        config={"max_retries": 1, "step_timeout_seconds": 30},
+        config={
+            "max_retries": 2,
+            "step_timeout_seconds": 30,
+        },
         name="aegis-action-planner",
     )
+    return assemble(manifest)  # type: ignore[return-value]
 
-
-# ── Module-level singleton ────────────────────────────────────────────────────
 
 _planner_service: ActionPlannerEngine | None = None
-
-
-def get_planner_service() -> ActionPlannerEngine | None:
-    return _planner_service
 
 
 def init_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
@@ -149,25 +150,16 @@ def init_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
     return _planner_service
 
 
-# ── Brain API ─────────────────────────────────────────────────────────────────
+def get_planner_service() -> ActionPlannerEngine | None:
+    return _planner_service
 
 
 async def propose_action_plan(
-    investigation_result: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Propose action plan based on RCA investigation result.
-
-    Returns [{plugin_id, params, description}, ...], or [] if service not ready.
-    Direct call bypasses queue — TODO(AEGIS-BACKLOG-074).
-    """
+    symptom: str, context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     service = get_planner_service()
     if service is None:
-        log.error("planner_service_not_initialized — call init_planner_service first")
         return []
 
-    request = {
-        "symptom": investigation_result.get("final_answer", ""),
-        "context": investigation_result.get("history", []),
-    }
-    result = await service._execute_plan(request)  # type: ignore[attr-defined]
-    return result.get("step_results", [])
+    request = {"symptom": symptom, "evidence": context or {}}
+    return await service.invoke(request)

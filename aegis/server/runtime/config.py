@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _UNSET_PATH = Path("__aegis_unset__")
@@ -102,7 +103,7 @@ class AegisSettings(BaseSettings):
 
     # === JWT ===
     jwt_secret: str = Field(
-        default="dev-secret-CHANGE-IN-PROD",
+        default="dev-secret-CHANGE-IN-PROD-MUST-BE-32-BYTES",
         min_length=32,
         description="HS256 signing secret, env: AEGIS_JWT_SECRET",
     )
@@ -121,10 +122,10 @@ class AegisSettings(BaseSettings):
     password_min_length: int = 12
 
     # === CORS ===
-    cors_allowed_origins: list[str] = Field(
+    cors_allowed_origins: Any = Field(
         default_factory=lambda: ["http://localhost:3010"],
-        description="允许的 CORS origin (prod: https://aegis.uex.hk). env: AEGIS_CORS_ORIGINS",
-        alias="AEGIS_CORS_ORIGINS",
+        description="允许的 CORS origin. env: AEGIS_CORS_ALLOWED_ORIGINS",
+        validation_alias=AliasChoices("AEGIS_CORS_ALLOWED_ORIGINS", "AEGIS_CORS_ORIGINS"),
     )
 
     @field_validator("cors_allowed_origins", mode="before")
@@ -163,6 +164,36 @@ class AegisSettings(BaseSettings):
     triage_max_tokens: int = 1024
     triage_throttle_seconds: int = 60
 
+    # === Vector Store / RAG (BACKLOG-073) ===
+    runbook_vector_db_path: Path = Field(
+        default=_UNSET_PATH,
+        description="LanceDB runbook vector store 路径 (默认: data_dir/vector/runbooks)",
+    )
+    runbook_vector_dim: int = Field(
+        default=1024,
+        description=(
+            "Embedding 维度，需与 embedding provider 匹配 "
+            "(bge-m3=1024, text-embedding-3-small=1536)"
+        ),
+    )
+    runbook_vector_collection: str = "runbooks"
+    runbook_top_k: int = 5
+    runbook_min_score: float = 0.5
+    embedding_provider: str = Field(
+        default="default",
+        description="obase ProviderRegistry 中注册的 embedding provider 名",
+    )
+
+    # === Rate limiting ===
+    rate_limit_auth_requests: int = Field(
+        default=10,
+        description="Max login/register attempts per IP per window (AEGIS_RATE_LIMIT_AUTH_REQUESTS)",
+    )
+    rate_limit_auth_window_sec: int = Field(
+        default=60,
+        description="Sliding window in seconds for auth rate limit (AEGIS_RATE_LIMIT_AUTH_WINDOW_SEC)",
+    )
+
     # === Agent (S3) ===
     agent_token: str = Field(
         default="",
@@ -197,13 +228,43 @@ class AegisSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_jwt_secret_in_prod(self) -> AegisSettings:
-        # Fail closed: reject the placeholder secret in every env except explicit "dev".
-        # Unknown / unset env (e.g. "staging", "") is treated as non-dev.
-        if self.env != "dev" and self.jwt_secret == "dev-secret-CHANGE-IN-PROD":
+        # Fail closed: reject the placeholder secret unless env is explicitly "dev".
+        # If AEGIS_ENV is unset, the default "dev" is still acceptable for local dev.
+        # The key condition: if someone sets ENV=prod (docker-compose does this) but
+        # forgets AEGIS_JWT_SECRET, we must refuse to start.
+        is_dev = self.env == "dev"
+        has_placeholder = "CHANGE-IN-PROD" in self.jwt_secret
+        if has_placeholder and not is_dev:
             raise ValueError(
-                "AEGIS_JWT_SECRET must be set to a strong secret outside of local dev "
-                "(env != 'dev'). Generate one with: openssl rand -hex 32"
+                "AEGIS_JWT_SECRET must be set to a strong secret when AEGIS_ENV != 'dev'. "
+                "Generate one with: openssl rand -hex 32"
             )
+        return self
+
+    @model_validator(mode="after")
+    def resolve_runbook_vector_db_path(self) -> AegisSettings:
+        if self.runbook_vector_db_path == _UNSET_PATH:
+            self.runbook_vector_db_path = self.data_dir / "vector" / "runbooks"
+        return self
+
+    # === Backup / S3 ===
+    backup_s3_bucket: str = Field(
+        default="", description="S3 bucket for backups. Empty = local only"
+    )
+    backup_s3_endpoint_url: str | None = Field(
+        default=None, description="Custom S3 endpoint (MinIO etc)"
+    )
+    backup_s3_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
+    backup_s3_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
+    backup_s3_region: str = Field(default="us-east-1")
+    backup_local_dir: Path = Field(
+        default=_UNSET_PATH, description="Local backup dir (default: data_dir/backups)"
+    )
+
+    @model_validator(mode="after")
+    def resolve_backup_local_dir(self) -> AegisSettings:
+        if self.backup_local_dir == _UNSET_PATH:
+            self.backup_local_dir = self.data_dir / "backups"
         return self
 
 

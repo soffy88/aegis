@@ -30,6 +30,7 @@ def test_build_planner_service_returns_engine() -> None:
     assert hasattr(svc, "run")
     assert hasattr(svc, "health")
     assert hasattr(svc, "submit_request")
+    assert hasattr(svc, "invoke")
 
 
 def test_init_planner_service_sets_singleton() -> None:
@@ -50,17 +51,12 @@ async def test_propose_action_plan_returns_empty_when_no_service() -> None:
 @pytest.mark.asyncio
 async def test_propose_action_plan_calls_execute_plan() -> None:
     mock_engine = MagicMock()
-    mock_engine._execute_plan = AsyncMock(
-        return_value={
-            "status": "completed",
-            "step_results": [{"plugin_id": "free_disk", "status": "ok"}],
-        }
-    )
+    mock_engine.invoke = AsyncMock(return_value=[{"plugin_id": "free_disk", "status": "ok"}])
     with patch("aegis.server.brain.action_planner._planner_service", mock_engine):
         result = await propose_action_plan({"final_answer": "disk full on /data", "history": []})
-    mock_engine._execute_plan.assert_awaited_once()
-    request_arg = mock_engine._execute_plan.call_args[0][0]
-    assert "disk full" in request_arg["symptom"]
+    mock_engine.invoke.assert_awaited_once()
+    request_arg = mock_engine.invoke.call_args[0][0]
+    assert "disk full" in str(request_arg["symptom"])
     assert result == [{"plugin_id": "free_disk", "status": "ok"}]
 
 

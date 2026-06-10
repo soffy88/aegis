@@ -1,35 +1,31 @@
-# Aegis SRE platform Caddyfile (M2-E-Batch-3 修订: Cloudflare Tunnel 模式)
-# CF 边缘负责 TLS + HSTS, Caddy 仅内部 HTTP 反代
+# Aegis — helios-net 内部反代
+# cloudflared → aegis-caddy:80 → backend/console
+# Caddy Admin API 仅 helios-net 内可达 (aegis-backend 调用)
 
-:8080 {
-	# /api/* → backend
-	handle /api/* {
-		reverse_proxy aegis-backend:8000
-	}
-
-	# 其他 → console (Next.js mini server)
-	handle {
-		reverse_proxy aegis-console:3000
-	}
-
-	# 安全 headers (M1 基础, HSTS 由 CF 边缘加)
-	header {
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
-	}
-
-	# Access log
-	log {
-		output file /var/log/caddy/aegis.uex.hk.log {
-			roll_size 100MB
-			roll_keep 7
-		}
-		format json
-	}
+{
+    # Admin API 监听所有接口（仅 helios-net 内可达，不对外暴露）
+    admin 0.0.0.0:2019
+    # 不自动申请证书（TLS 由 Cloudflare 边缘终止）
+    auto_https off
 }
 
-# (未来) 其他项目公网发布同款模式:
-# :8081 { reverse_proxy helios-backend:8000 ... }
-# Cloudflare Tunnel ingress 配 helios.uex.hk → aegis-caddy:8081
-# 经理人 M3+ AEGIS-BACKLOG-045 (Aegis platform 给其他项目公网发布)
+# 主域名入口（cloudflared 转发进来的流量）
+:8080 {
+    # API 请求 → backend
+    handle /api/* {
+        reverse_proxy aegis-backend:8000
+    }
+
+    # WebSocket 终端
+    handle /api/v1/orgs/*/docker/containers/*/terminal {
+        reverse_proxy aegis-backend:8000 {
+            header_up Connection "Upgrade"
+            header_up Upgrade "websocket"
+        }
+    }
+
+    # 其余 → Next.js console
+    handle {
+        reverse_proxy aegis-console:3000
+    }
+}

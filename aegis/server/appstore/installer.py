@@ -70,18 +70,41 @@ def _make_compose_pull_wrapper(cfg: AegisSettings) -> Callable[..., Any]:
 def _make_compose_up_wrapper(cfg: AegisSettings) -> Callable[..., Any]:
     """compose_up(*, compose_file, env) → dict — wraps oprim.compose_up.
 
-    WARNING: oprim.compose_up v2.31.0 has no env parameter (AEGIS-BACKLOG-075).
-    env_vars from catalog are passed here but silently ignored until oprim v2.32.
+    Workaround for AEGIS-BACKLOG-075 (oprim.compose_up lacks env parameter):
+    env vars are written to a temp .env file alongside the compose file so that
+    Docker Compose picks them up automatically via the standard env_file convention.
+    This file is cleaned up after compose_up completes.
     """
+    import os  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
 
     def compose_up(*, compose_file: str, env: dict[str, Any]) -> dict[str, Any]:
-        if env:
-            log.warning(
-                "compose_up_wrapper: %d env vars dropped"
-                " (AEGIS-BACKLOG-075 oprim.compose_up lacks env param)",
-                len(env),
+        env_file_path: str | None = None
+        try:
+            if env:
+                # Write env vars to a temp file next to the compose file
+                compose_dir = os.path.dirname(os.path.abspath(compose_file))
+                fd, env_file_path = tempfile.mkstemp(
+                    suffix=".env", prefix=".aegis_", dir=compose_dir
+                )
+                with os.fdopen(fd, "w") as f:
+                    for k, v in env.items():
+                        # Escape newlines in values; Docker Compose reads KEY=VALUE lines
+                        safe_val = str(v).replace("\n", "\\n")
+                        f.write(f"{k}={safe_val}\n")
+                log.info("compose_up_wrapper: wrote %d env vars to %s", len(env), env_file_path)
+
+            return oprim_compose_up(
+                compose_file=compose_file, docker_host=cfg.docker_host, detach=True
             )
-        return oprim_compose_up(compose_file=compose_file, docker_host=cfg.docker_host, detach=True)
+        finally:
+            if env_file_path and os.path.exists(env_file_path):
+                try:
+                    os.unlink(env_file_path)
+                except OSError:
+                    log.warning(
+                        "compose_up_wrapper: failed to delete temp env file %s", env_file_path
+                    )
 
     return compose_up
 

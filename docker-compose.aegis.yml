@@ -1,36 +1,101 @@
-# Aegis prod stack — Wiki 主机, 跨 platform stack 共享 helios-net
-# 经理人 v2 §1 (Aegis SRE platform) 范围内, M3+ 扩展给其他项目公网发布
+# Aegis prod stack — helios-net 共享网络
+# 依赖外部服务: platform-postgres (helios-net), helios-redis (helios-net)
+# 外网入口: cloudflared → aegis-caddy → aegis-backend / aegis-console
 
 services:
+
   aegis-backend:
     image: aegis-backend:${AEGIS_VERSION:-latest}
     container_name: aegis-backend
     restart: unless-stopped
     environment:
-      # Database (platform-postgres in helios-net; AEGIS_ prefix from pydantic-settings)
-      AEGIS_POSTGRES_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@platform-postgres:5432/aegis
-
-      # Runtime env (ENV read by os.environ.get; AEGIS_ENV read by AegisSettings.env)
-      ENV: prod
+      # === 运行环境 ===
       AEGIS_ENV: prod
+      ENV: prod
       AEGIS_VERSION: ${AEGIS_VERSION:-latest}
 
-      # CORS (M2-E-Batch-1 AegisSettings field)
+      # === 数据库 (platform-postgres, helios-net 内) ===
+      AEGIS_POSTGRES_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@platform-postgres:5432/aegis
+      AEGIS_POSTGRES_POOL_MIN: "2"
+      AEGIS_POSTGRES_POOL_MAX: "10"
 
-      # JWT
+      # === Redis (helios-redis, helios-net 内) ===
+      AEGIS_REDIS_URL: redis://infisical-redis:6379/2
+
+      # === JWT ===
       AEGIS_JWT_SECRET: ${AEGIS_JWT_SECRET:?required}
-      AEGIS_JWT_REFRESH_SECURE: 'true'
+      AEGIS_JWT_REFRESH_SECURE: "true"
+      AEGIS_JWT_ACCESS_TTL_MINUTES: "60"
+      AEGIS_JWT_REFRESH_TTL_DAYS: "30"
 
-      # Aegis 自监控 (C3-7 sentry-python, Wiki Q2 答 A prod 启)
-      AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-true}
+      # === CORS ===
+      AEGIS_CORS_ALLOWED_ORIGINS: ${AEGIS_CORS_ALLOWED_ORIGINS:-https://aegis.uex.hk}
+
+      # === 数据目录 ===
+      AEGIS_DATA_DIR: /data/aegis
+
+      # === Docker socket (容器管理) ===
+      AEGIS_DOCKER_HOST: unix:///var/run/docker.sock
+
+      # === Caddy 反代管理 ===
+      AEGIS_CADDY_ADMIN_URL: http://aegis-caddy:2019
+
+      # === LLM (Brain / RCA, 可选) ===
+      AEGIS_LLM_PROVIDER: ${AEGIS_LLM_PROVIDER:-anthropic}
+      AEGIS_LLM_MODEL_DEFAULT: ${AEGIS_LLM_MODEL_DEFAULT:-claude-haiku-4-5}
+      AEGIS_LLM_MODEL_PREMIUM: ${AEGIS_LLM_MODEL_PREMIUM:-claude-sonnet-4-6}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # === Embedding (RAG Runbook 检索, 可选) ===
+      AEGIS_EMBEDDING_PROVIDER: ${AEGIS_EMBEDDING_PROVIDER:-default}
+      AEGIS_RUNBOOK_VECTOR_DIM: ${AEGIS_RUNBOOK_VECTOR_DIM:-1024}
+
+      # === AutoHeal ===
+      AEGIS_AUTOHEAL_ENABLED: ${AEGIS_AUTOHEAL_ENABLED:-true}
+      AEGIS_AUTOHEAL_DRY_RUN: ${AEGIS_AUTOHEAL_DRY_RUN:-false}
+
+      # === Backup / S3 (可选) ===
+      AEGIS_BACKUP_S3_BUCKET: ${AEGIS_BACKUP_S3_BUCKET:-}
+      AEGIS_BACKUP_S3_ENDPOINT_URL: ${AEGIS_BACKUP_S3_ENDPOINT_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AEGIS_BACKUP_S3_REGION: ${AEGIS_BACKUP_S3_REGION:-us-east-1}
+
+      # === 邮件 (Resend, 可选) ===
+      AEGIS_RESEND_API_KEY: ${AEGIS_RESEND_API_KEY:-}
+      AEGIS_EMAIL_FROM_ADDR: ${AEGIS_EMAIL_FROM_ADDR:-noreply@aegis.uex.hk}
+
+      # === 自监控 ===
+      AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-false}
       AEGIS_SENTRY_DSN: ${AEGIS_SENTRY_DSN:-}
 
-      # LLM provider (可选, 跑 RCA / Brain 才需要, M1 试用阶段可不配)
-      AEGIS_LLM_PROVIDER: ${AEGIS_LLM_PROVIDER:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # === Plan (自托管默认 enterprise) ===
+      AEGIS_SELF_HOSTED_MODE: "true"
+      AEGIS_DEFAULT_ORG_PLAN: enterprise
+
+      # === Agent token ===
+      AEGIS_AGENT_TOKEN: ${AEGIS_AGENT_TOKEN:-}
+
+    volumes:
+      # Docker socket — 容器管理核心
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 持久化数据：备份/向量库/Runbook
+      - aegis-data:/data/aegis
+      - /home/soffy/projects/aegis/aegis-appstore/apps:/data/aegis-appstore/apps:ro
+
     networks:
       - helios-net
-    # 不 publish ports (Caddy 内部 helios-net 调 aegis-backend:8000)
+
+    depends_on:
+      - aegis-caddy
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health').read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   aegis-console:
     image: aegis-console:${AEGIS_VERSION:-latest}
@@ -38,24 +103,34 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      # API 地址（容器内通过 helios-net 直连后端）
+      NEXT_PUBLIC_AEGIS_API: ${NEXT_PUBLIC_AEGIS_API:-https://aegis.uex.hk}
     networks:
       - helios-net
-    # 不 publish ports (Caddy 调 aegis-console:3000)
+    depends_on:
+      - aegis-backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
   aegis-caddy:
     image: caddy:2-alpine
     container_name: aegis-caddy
     restart: unless-stopped
-    # 不 publish 端口 (cloudflared 替代外网暴露, CF 边缘 TLS termination)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - aegis-caddy-data:/data
       - aegis-caddy-config:/config
     networks:
       - helios-net
-    depends_on:
-      - aegis-backend
-      - aegis-console
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
 
   aegis-cloudflared:
     image: cloudflare/cloudflared:latest
@@ -70,6 +145,7 @@ services:
 volumes:
   aegis-caddy-data:
   aegis-caddy-config:
+  aegis-data:          # 备份/向量库/Runbook YAML 持久化
 
 networks:
   helios-net:

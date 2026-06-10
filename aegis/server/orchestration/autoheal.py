@@ -290,16 +290,33 @@ class AutoHealEngine:
         poll_interval_sec: int = 10,
         max_wait_sec: int = 24 * 3600,
     ) -> None:
-        """Poll release_gate until state != pending or max_wait_sec exceeded."""
-        elapsed = 0
-        while elapsed < max_wait_sec:
-            gate = await self.release_gate_service.repo.get(
-                gate_id=gate_id, org_id=org_id, lazy_expire=True
+        """Poll release_gate until state != pending or max_wait_sec exceeded.
+
+        Uses asyncio.wait_for to cap total blocking time and ensure the task
+        is properly cancelled when the engine is torn down, preventing DB
+        connection leaks in long-running approval waits.
+        """
+
+        async def _poll() -> None:
+            elapsed = 0
+            while elapsed < max_wait_sec:
+                gate = await self.release_gate_service.repo.get(
+                    gate_id=gate_id, org_id=org_id, lazy_expire=True
+                )
+                if not gate or gate.state != "pending":
+                    return
+                await asyncio.sleep(poll_interval_sec)
+                elapsed += poll_interval_sec
+
+        try:
+            await asyncio.wait_for(_poll(), timeout=float(max_wait_sec))
+        except TimeoutError:
+            log.warning(
+                "autoheal_wait_decision_timeout gate_id=%s org_id=%s max_wait_sec=%d",
+                gate_id,
+                org_id,
+                max_wait_sec,
             )
-            if not gate or gate.state != "pending":
-                return
-            await asyncio.sleep(poll_interval_sec)
-            elapsed += poll_interval_sec
 
     def _log(self, event: str, **kwargs: Any) -> None:
         self.history.append({"event": event, "state": self.state, **kwargs})

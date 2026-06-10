@@ -21,6 +21,9 @@ from aegis.server.api.routers import (
 )
 from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import auth as auth_router
+from aegis.server.api.routers import autoheal as autoheal_router
+from aegis.server.api.routers import backups as backups_router
+from aegis.server.api.routers import brain as brain_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import (
     edge as edge_router,
@@ -29,6 +32,7 @@ from aegis.server.api.routers import envelope as envelope_router
 from aegis.server.api.routers import incidents as incidents_router
 from aegis.server.api.routers import invite as invite_router
 from aegis.server.api.routers import metrics as metrics_router
+from aegis.server.api.routers import nodes as nodes_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import release_gates as release_gates_router
@@ -36,6 +40,7 @@ from aegis.server.api.routers import runbooks as runbooks_router
 from aegis.server.api.routers import store as store_router
 from aegis.server.api.routers import users as users_router
 from aegis.server.api.routers import webhook_subscriptions as webhook_subscriptions_router
+from aegis.server.middleware.rate_limit import AuthRateLimitMiddleware
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -194,6 +199,18 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
         from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
         from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
+        from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
+        from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
+        from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
+
+        # 1. Load runbooks from YAML
+        load_runbooks()
+
+        # 2. Init LanceDB vector store
+        init_vector_store(cfg)
+
+        # 3. Index runbooks into vector store (RAG)
+        index_runbooks(cfg)
 
         alerter = init_platform_alerter(cfg)
         init_rca_service(cfg)
@@ -225,6 +242,11 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(
+        AuthRateLimitMiddleware,
+        max_requests=cfg.rate_limit_auth_requests,
+        window_sec=cfg.rate_limit_auth_window_sec,
+    )
     app.include_router(health.router)
     app.include_router(metrics_router.router)
     app.include_router(events.router)
@@ -234,7 +256,11 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(release_gates_router.router)
     app.include_router(webhook_subscriptions_router.router)
     app.include_router(docker_router.router)
+    app.include_router(autoheal_router.router)
+    app.include_router(brain_router.router)
+    app.include_router(nodes_router.router)
     app.include_router(apps_router.router)
+    app.include_router(backups_router.router)
     app.include_router(domains.router)
     app.include_router(edge_router.router)
     app.include_router(projects_router.router)
