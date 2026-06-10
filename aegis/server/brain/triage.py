@@ -1,15 +1,6 @@
-"""Triage — TriageEngine assembly. oservice v0.4.2 真装配.
+"""Triage — TriageEngine assembly for Aegis platform.
 
-injection_points (verified via TriageEngine.injection_points inspect):
-  llm_caller : kind=oprim, cardinality=1
-                called as llm_caller(config=dict, events=list, mode="score")
-                returns list[dict] with priority_score field on each event
-  filters    : kind=layer4, cardinality=0..n  (aegis 不注入, 留空)
-
-trigger: {"on_signal": True}  →  run() non-blocking, just sets _ready=True
-process(signal) → dict | None with priority_score (async, event-driven)
-
-Design: AEGIS_DESIGN v1.1.0 §7.3
+AEGIS-BACKLOG-070: switched to assemble(manifest).
 """
 
 from __future__ import annotations
@@ -20,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from obase import ProviderRegistry
+from oservice.assembler import ServiceManifest, assemble
 from oservice.engines.triage import TriageEngine
 
 from aegis.server.runtime.config import AegisSettings
@@ -104,7 +96,11 @@ def _make_triage_llm_caller(
                 for e in events
             ]
 
+    _llm_caller.__module__ = "obase.aegis_bridge"
     return _llm_caller
+
+
+# ── Assembly ──────────────────────────────────────────────
 
 
 def build_triage_service(cfg: AegisSettings) -> TriageEngine:
@@ -116,9 +112,12 @@ def build_triage_service(cfg: AegisSettings) -> TriageEngine:
 
     llm_caller = _make_triage_llm_caller(raw_caller, cfg.triage_llm_model, cfg.triage_max_tokens)
 
-    svc = TriageEngine(
-        llm_caller=llm_caller,
-        filters=None,
+    manifest = ServiceManifest(
+        skeleton="triage",
+        inject={
+            "llm_caller": [llm_caller],
+            "filters": [],
+        },
         trigger={"on_signal": True},
         config={
             "llm_config": {
@@ -128,10 +127,8 @@ def build_triage_service(cfg: AegisSettings) -> TriageEngine:
         },
         name="aegis-triage",
     )
-    svc.run()  # on_signal: non-blocking, sets _ready=True
-    log.info(
-        "triage_service_ready model=%s max_tokens=%d", cfg.triage_llm_model, cfg.triage_max_tokens
-    )
+    svc = assemble(manifest)
+    svc.run()
     return svc
 
 

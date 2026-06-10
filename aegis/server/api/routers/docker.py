@@ -3,33 +3,75 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from obase.auth import jwt_verify_hs256
 from oprim import (
+    docker_container_exec,
     docker_container_inspect,
     docker_container_logs,
     docker_container_restart,
     docker_container_start,
     docker_container_stats,
     docker_container_stop,
+    docker_network_create,
+    docker_network_delete,
     docker_ps,
+    docker_volume_create,
 )
 from oprim._exceptions import OprimError
+from pydantic import BaseModel
 
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.runtime.config import get_settings
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/docker", tags=["docker"])
 
 _502 = status.HTTP_502_BAD_GATEWAY
 
 
+class NetworkCreateRequest(BaseModel):
+    name: str
+    driver: str = "bridge"
+    internal: bool = False
+    labels: dict[str, str] | None = None
+    options: dict[str, str] | None = None
+
+
+class VolumeCreateRequest(BaseModel):
+    name: str
+    driver: str = "local"
+    labels: dict[str, str] | None = None
+    driver_opts: dict[str, str] | None = None
+
+
+class ContainerExecRequest(BaseModel):
+    command: list[str]
+    workdir: str | None = None
+    env: dict[str, str] | None = None
+    user: str | None = None
+    timeout_sec: int = 30
+
+
 @router.get("/containers")
 async def list_containers(
     org_id: UUID,
-    all: bool = Query(default=False, alias="showAll", description="Include stopped containers"),
+    all: bool = Query(default=False, description="Include stopped containers"),
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> list[dict[str, Any]]:
     """List containers via oprim docker_ps. viewer+ can read."""
@@ -135,3 +177,188 @@ async def container_stats(
         }
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/networks", status_code=status.HTTP_201_CREATED)
+async def create_network(
+    org_id: UUID,
+    req: NetworkCreateRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Create a docker network."""
+    try:
+        result = await asyncio.to_thread(
+            docker_network_create,
+            name=req.name,
+            driver=req.driver,
+            internal=req.internal,
+            labels=req.labels,
+            options=req.options,
+        )
+        return result.model_dump()
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.delete("/networks/{network_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_network(
+    org_id: UUID,
+    network_id: str,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> None:
+    """Delete a docker network."""
+    try:
+        await asyncio.to_thread(docker_network_delete, network_id=network_id)
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/volumes", status_code=status.HTTP_201_CREATED)
+async def create_volume(
+    org_id: UUID,
+    req: VolumeCreateRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Create a docker volume."""
+    try:
+        result = await asyncio.to_thread(
+            docker_volume_create,
+            name=req.name,
+            driver=req.driver,
+            labels=req.labels,
+            driver_opts=req.driver_opts,
+        )
+        return result.model_dump()
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/containers/{container}/exec", status_code=status.HTTP_200_OK)
+async def exec_container(
+    org_id: UUID,
+    container: str,
+    req: ContainerExecRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Execute a command in a container."""
+    try:
+        result = await asyncio.to_thread(
+            docker_container_exec,
+            container_id=container,
+            command=req.command,
+            workdir=req.workdir,
+            env=req.env,
+            user=req.user,
+            timeout_sec=req.timeout_sec,
+        )
+        return result.model_dump()
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.websocket("/containers/{container_name}/terminal")
+async def container_terminal(
+    websocket: WebSocket,
+    org_id: UUID,
+    container_name: str,
+    token: str,
+) -> None:
+    """Interactive container terminal (WebSocket + docker exec)."""
+    # 1. Validate token (WS cannot carry Authorization header easily)
+    try:
+        jwt_verify_hs256(
+            token=token,
+            secret=get_settings().jwt_secret,
+            check_exp=True,
+        )
+    except Exception:
+        await websocket.close(code=1008)  # Policy Violation
+        return
+
+    await websocket.accept()
+
+    # 2. Establish docker exec interactive session
+    import docker
+    import docker.errors
+
+    settings = get_settings()
+    try:
+        client = docker.DockerClient(base_url=settings.docker_host)
+        container = client.containers.get(container_name)
+    except docker.errors.NotFound:
+        await websocket.send_text(
+            json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
+        )
+        await websocket.close()
+        return
+    except Exception as exc:
+        await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
+        await websocket.close()
+        return
+
+    # 3. Create exec instance (interactive PTY)
+    exec_id = client.api.exec_create(
+        container_name,
+        cmd="/bin/sh",
+        stdin=True,
+        stdout=True,
+        stderr=True,
+        tty=True,
+    )
+    sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
+    sock._sock.setblocking(False)
+
+    loop = asyncio.get_event_loop()
+
+    async def read_docker() -> None:
+        """Docker → WebSocket."""
+        try:
+            while True:
+                data = await loop.run_in_executor(None, _read_socket, sock._sock)
+                if data is None:
+                    await asyncio.sleep(0.01)
+                    continue
+                if not data:  # EOF
+                    break
+                await websocket.send_text(
+                    json.dumps({"type": "output", "data": data.decode("utf-8", errors="replace")})
+                )
+        except Exception:
+            log.exception("terminal_read_docker_error")
+
+    async def read_ws() -> None:
+        """WebSocket → Docker."""
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                payload = json.loads(msg)
+                if payload.get("type") == "input":
+                    await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
+                elif payload.get("type") == "resize":
+                    client.api.exec_resize(
+                        exec_id["Id"],
+                        height=payload.get("rows", 24),
+                        width=payload.get("cols", 80),
+                    )
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            log.exception("terminal_read_ws_error")
+
+    try:
+        await asyncio.gather(read_docker(), read_ws())
+    finally:
+        sock.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+def _read_socket(sock: Any, size: int = 4096) -> bytes | None:
+    """Non-blocking socket read. Returns None if no data."""
+
+    try:
+        return sock.recv(size)
+    except (OSError, BlockingIOError):
+        return None

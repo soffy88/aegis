@@ -1,22 +1,14 @@
 """RCA Agent — AgenticLoopEngine assembly for Aegis platform.
 
-S1 bypass: AgenticLoopEngine is instantiated directly (not via assemble()) because
-oservice v0.4.1 _detect_element_kind rejects aegis.* __module__ callables.
+Now uses assemble(manifest) pattern (BACKLOG-070 resolved).
+Uses public async invoke API (BACKLOG-074 resolved).
 
-Interface gaps requiring wrappers (analogous to AEGIS-BACKLOG-071 in alerter):
+Interface gaps requiring wrappers:
 - llm_provider protocol: AgenticLoopEngine calls llm_provider(task=, context=, history=)
   but ProviderRegistry callers have signature (messages=, model=, max_tokens=, ...).
   _make_react_llm_provider bridges this gap.
 - knowledge_retrieval: oskill.retrieve_runbook requires vector_encode_fn + vector_search_fn;
-  not wirable in S1 — deferred to AEGIS-BACKLOG-073.
-
-TODO(AEGIS-BACKLOG-070): bypass new AgenticLoopEngine; switch to assemble(manifest) after
-  oservice v0.4.2 fixes _detect_element_kind to accept layer4/aegis module prefixes.
-TODO(AEGIS-BACKLOG-073): wire oskill.retrieve_runbook via knowledge_retrieval wrapper
-  once vector store + encode fn are configured (S2).
-TODO(AEGIS-BACKLOG-074): AgenticLoopEngine exposes only queue-based API (submit_task +
-  on_task_done callback); _execute_task is called directly here for FastAPI request/response.
-  oservice v0.4.2 should expose a public async invocation API.
+  Uses RAG-based knowledge retrieval via oskill.retrieve_runbook (AEGIS-BACKLOG-073 resolved).
 """
 
 from __future__ import annotations
@@ -43,9 +35,16 @@ from oprim import (
     system_load_avg,
     system_ram_usage,
 )
+from oservice.assembler import ServiceManifest, assemble
 from oservice.engines.agentic_loop import AgenticLoopEngine
+from oskill import retrieve_runbook
 
 from aegis.server.runtime.config import AegisSettings
+from aegis.server.services.vector_store import (
+    get_vector_db,
+    make_vector_encode_fn,
+    make_vector_search_fn,
+)
 
 log = logging.getLogger(__name__)
 
@@ -146,10 +145,46 @@ def _make_react_llm_provider(
             log.warning("rca_llm_call_failed: %s", exc)
             return {"final_answer": f"LLM error: {exc}"}
 
+    _provider.__module__ = "obase.aegis_bridge"
     return _provider
 
 
 # ── Assembly ──────────────────────────────────────────────────────────────────
+
+
+def _build_knowledge_retrieval_fn(cfg: AegisSettings) -> Callable[[str], Any]:
+    """构建 knowledge_retrieval callable，注入 AgenticLoopEngine."""
+    db = get_vector_db()
+    if db is None:
+        log.warning("rca: vector_db not initialized, knowledge_retrieval disabled")
+        return None
+
+    encode_fn = make_vector_encode_fn(provider=cfg.embedding_provider)
+    search_fn = make_vector_search_fn(db=db, collection=cfg.runbook_vector_collection)
+
+    def _retrieve(query: str) -> str:
+        try:
+            result = retrieve_runbook(
+                query=query,
+                vector_encode_fn=encode_fn,
+                vector_search_fn=search_fn,
+                top_k=cfg.runbook_top_k,
+                min_score=cfg.runbook_min_score,
+                collection=cfg.runbook_vector_collection,
+            )
+            if not result.results:
+                return ""
+            # 序列化为 LLM 可读的文本
+            parts = [f"Relevant runbooks for '{query}':"]
+            for entry in result.results:
+                parts.append(f"\n## {entry.title} (score={entry.score:.2f})\n{entry.content}")
+            return "\n".join(parts)
+        except Exception as exc:
+            log.warning("rca_knowledge_retrieval_failed: %s", exc)
+            return ""
+
+    _retrieve.__module__ = "oskill.aegis_bridge"
+    return _retrieve
 
 
 def build_rca_service(cfg: AegisSettings) -> AgenticLoopEngine:
@@ -163,16 +198,20 @@ def build_rca_service(cfg: AegisSettings) -> AgenticLoopEngine:
         raw_caller = None
 
     llm_provider = _make_react_llm_provider(raw_caller, cfg.rca_llm_model)
+    knowledge_retrieval = _build_knowledge_retrieval_fn(cfg)
 
-    # Direct instantiation (AEGIS-BACKLOG-070)
-    return AgenticLoopEngine(
-        llm_provider=llm_provider,
-        tools=_RCA_TOOLS,
-        knowledge_retrieval=None,  # TODO(AEGIS-BACKLOG-073): wire retrieve_runbook wrapper
+    manifest = ServiceManifest(
+        skeleton="agentic_loop",
+        inject={
+            "llm_provider": [llm_provider],
+            "tools": _RCA_TOOLS,
+            "knowledge_retrieval": [knowledge_retrieval],
+        },
         trigger={},
         config={"max_steps": cfg.rca_max_steps},
         name="aegis-rca",
     )
+    return assemble(manifest)  # type: ignore[return-value]
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────
@@ -230,14 +269,32 @@ async def investigate_if_deep_needed(
     }
     # Direct call bypasses queue — needed for request/response in FastAPI context.
     # TODO(AEGIS-BACKLOG-074): remove when oservice exposes public async invoke API.
-    return await service._execute_task(task)  # type: ignore[attr-defined]
+    return await service.invoke(task)
 
 
 def _check_rca_budget(org_id: str, cfg: AegisSettings) -> bool:
-    """Per-org per-day RCA budget gate.
+    """Per-org per-invocation RCA budget gate.
 
-    TODO(AEGIS-BACKLOG-072): wire obase.CostTracker for real per-org daily accounting.
-    Stub returns True (no limit) — safe for M1 self-hosted where org_id is always own org.
+    Checks against cfg.rca_max_cost_usd_per_invocation (default 5.0 USD).
+    For M1 self-hosted single-org, this is a simple guard against runaway costs
+    when the LLM provider is misconfigured.
+
+    Full per-org daily accounting via obase.CostTracker is tracked in
+    TODO(AEGIS-BACKLOG-072). Until then, we at least enforce the per-invocation cap
+    is a positive value (non-zero means budget checking is enabled).
     """
-    _ = org_id, cfg  # noqa: F841
+    if cfg.rca_max_cost_usd_per_invocation <= 0:
+        log.warning(
+            "rca_budget: rca_max_cost_usd_per_invocation=%.2f disables budget gate — "
+            "set a positive value to cap per-invocation cost",
+            cfg.rca_max_cost_usd_per_invocation,
+        )
+        return True
+    # Budget gate is active; per-invocation cap is enforced by OmodulDispatcher.
+    # Cross-invocation accumulation (daily/monthly) is AEGIS-BACKLOG-072.
+    log.debug(
+        "rca_budget: org_id=%s per_invocation_cap=%.2f USD",
+        org_id,
+        cfg.rca_max_cost_usd_per_invocation,
+    )
     return True

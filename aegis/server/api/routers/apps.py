@@ -17,7 +17,7 @@ from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.persistence import get_pool
 from aegis.server.persistence.event_trail import append_event
 from aegis.server.repositories.project_repo import ProjectRepository
-from aegis.server.runtime.config import AegisSettings
+from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -67,8 +67,10 @@ async def _run_install(
     from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
     from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
     from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
 
-    resolved_dir: Path = data_dir if data_dir is not None else AegisSettings().data_dir
+    cfg = get_settings()
+    resolved_dir: Path = data_dir if data_dir is not None else cfg.data_dir
 
     final_status: str = "failed"
     error_detail: str | None = None
@@ -77,7 +79,7 @@ async def _run_install(
     try:
         import redis.asyncio as aioredis  # noqa: PLC0415
 
-        redis_client = aioredis.from_url(AegisSettings().redis_url)
+        redis_client = aioredis.from_url(cfg.redis_url)
         dispatcher = OmodulDispatcher(
             DedupCache(redis_client),
             BudgetTracker(redis_client),
@@ -211,7 +213,7 @@ async def install_app_endpoint(
         )
 
     install_dir = req.install_dir
-    cfg_data_dir = AegisSettings().data_dir
+    cfg_data_dir = get_settings().data_dir
 
     install_id = await conn.fetchval(
         """

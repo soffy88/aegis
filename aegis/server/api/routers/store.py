@@ -25,19 +25,31 @@ def _load_apps() -> list[dict[str, Any]]:
     if _apps_cache is not None:
         return _apps_cache
 
-    settings = AegisSettings()
-    store_dir = Path(settings.data_dir).parent / "aegis-appstore" / "apps"
-    if not store_dir.exists():
-        # Fallback: sibling repo
-        store_dir = Path(__file__).resolve().parents[4] / "aegis-appstore" / "apps"
+    # 按优先级查找 apps 目录
+    candidates = [
+        Path("/data/aegis-appstore/apps"),  # 容器内挂载路径
+        Path(AegisSettings().data_dir).parent / "aegis-appstore" / "apps",  # data_dir 相对
+        Path(__file__).resolve().parents[4] / "aegis-appstore" / "apps",  # 源码相对
+    ]
 
-    apps: list[dict[str, Any]] = []
-    if store_dir.exists():
+    store_dir = next((p for p in candidates if p.exists()), None)
+
+    apps_map: dict[str, dict[str, Any]] = {}
+    if store_dir:
         for f in sorted(store_dir.glob("*.json")):
             try:
-                apps.append(json.loads(f.read_text()))
+                data = json.loads(f.read_text())
+                items = data if isinstance(data, list) else [data]
+                for a in items:
+                    if isinstance(a, dict) and "slug" in a:
+                        # Use slug as key for deduplication
+                        apps_map[a["slug"]] = a
             except Exception:
                 log.warning("Failed to parse app definition: %s", f)
+    else:
+        log.warning("AppStore apps directory not found, tried: %s", candidates)
+
+    apps = list(apps_map.values())
     _apps_cache = apps
     return apps
 

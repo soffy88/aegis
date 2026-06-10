@@ -92,7 +92,7 @@ async def test_investigate_skip_service_not_initialized() -> None:
 @pytest.mark.asyncio
 async def test_investigate_calls_execute_task_on_critical() -> None:
     mock_engine = MagicMock()
-    mock_engine._execute_task = AsyncMock(
+    mock_engine.invoke = AsyncMock(
         return_value={"status": "completed", "final_answer": "disk full"}
     )
     with patch("aegis.server.brain.rca._rca_service", mock_engine):
@@ -105,8 +105,8 @@ async def test_investigate_calls_execute_task_on_critical() -> None:
             },
             _cfg(),
         )
-    mock_engine._execute_task.assert_awaited_once()
-    task_arg = mock_engine._execute_task.call_args[0][0]
+    mock_engine.invoke.assert_awaited_once()
+    task_arg = mock_engine.invoke.call_args[0][0]
     assert task_arg["goal"] == "disk usage 97%"
     assert result == {"status": "completed", "final_answer": "disk full"}
 
@@ -114,9 +114,7 @@ async def test_investigate_calls_execute_task_on_critical() -> None:
 @pytest.mark.asyncio
 async def test_investigate_calls_execute_task_on_high() -> None:
     mock_engine = MagicMock()
-    mock_engine._execute_task = AsyncMock(
-        return_value={"status": "completed", "final_answer": "oom"}
-    )
+    mock_engine.invoke = AsyncMock(return_value={"status": "completed", "final_answer": "oom"})
     with patch("aegis.server.brain.rca._rca_service", mock_engine):
         result = await investigate_if_deep_needed(
             {"needs_deep_investigation": True, "severity": "high", "triage_summary": "oom"},
@@ -169,3 +167,22 @@ def test_parse_react_response_fallback_to_text() -> None:
 
 def test_check_rca_budget_stub_always_true() -> None:
     assert _check_rca_budget("any_org", _cfg()) is True
+
+
+def test_build_knowledge_retrieval_fn_returns_none_when_no_db() -> None:
+    """vector_db 未初始化时 _build_knowledge_retrieval_fn 返回 None."""
+    from aegis.server.brain.rca import _build_knowledge_retrieval_fn
+
+    with patch("aegis.server.brain.rca.get_vector_db", return_value=None):
+        fn = _build_knowledge_retrieval_fn(_cfg())
+    assert fn is None
+
+
+def test_build_knowledge_retrieval_fn_returns_callable_when_db_ready() -> None:
+    """vector_db 就绪时返回可调用的 retrieve fn."""
+    from aegis.server.brain.rca import _build_knowledge_retrieval_fn
+
+    mock_db = MagicMock()
+    with patch("aegis.server.brain.rca.get_vector_db", return_value=mock_db):
+        fn = _build_knowledge_retrieval_fn(_cfg())
+    assert callable(fn)

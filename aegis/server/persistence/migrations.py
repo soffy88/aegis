@@ -572,6 +572,65 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON event_trail(root_cause_id) WHERE root_cause_id IS NOT NULL;
         """,
     ),
+    (
+        "020_nodes",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_nodes (
+            node_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            host TEXT NOT NULL,
+            node_label TEXT NOT NULL,
+            docker_mode TEXT NOT NULL,
+            docker_host_url TEXT,
+            server_version TEXT,
+            os TEXT,
+            arch TEXT,
+            cpus INTEGER,
+            memory_bytes BIGINT,
+            registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(org_id, node_label)
+        );
+        """,
+    ),
+    (
+        "021_autoheal_events",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_alert_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            cycle_id UUID NOT NULL,
+            severity TEXT NOT NULL,
+            source TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            value DOUBLE PRECISION,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            handled BOOLEAN NOT NULL DEFAULT false,
+            handled_at TIMESTAMPTZ,
+            org_id UUID REFERENCES orgs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_events_org_id
+            ON aegis_alert_events(org_id);
+        CREATE INDEX IF NOT EXISTS idx_autoheal_events_created_at
+            ON aegis_alert_events(created_at DESC);
+        """,
+    ),
+    (
+        "022_backups",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_backups (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            app_slug TEXT NOT NULL,
+            instance_name TEXT NOT NULL,
+            backup_key TEXT,
+            size_bytes BIGINT DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            error TEXT,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            completed_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_backups_org_app ON aegis_backups (org_id, app_slug);
+        """,
+    ),
 ]
 
 

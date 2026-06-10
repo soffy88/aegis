@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import asyncpg
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from obase.auth import argon2_verify, jwt_sign_hs256, jwt_verify_hs256
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext, get_current_user
@@ -39,6 +39,13 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str = Field(..., min_length=12)
+    org_name: str = Field(..., min_length=1)
+    org_slug: str = Field(..., min_length=1, pattern=r"^[a-z0-9-]+$")
 
 
 class TokenResponse(BaseModel):
@@ -104,6 +111,69 @@ async def login(
         access_token=access,
         expires_in=int((access_exp - datetime.now(UTC)).total_seconds()),
     )
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register(
+    req: RegisterRequest,
+    response: Response,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+) -> dict:
+    """注册新用户，自动创建 org，自动登录返回 token."""
+    from obase.auth import argon2_hash  # noqa: PLC0415
+
+    # 检查邮箱是否已存在（事务外做，避免持锁）
+    existing = await conn.fetchval("SELECT id FROM users WHERE email = $1", req.email)
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+
+    slug_exists = await conn.fetchval("SELECT id FROM orgs WHERE slug = $1", req.org_slug)
+    if slug_exists:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Org slug already taken")
+
+    # 提前计算密码哈希（CPU 密集，避免在事务内持锁）
+    pw_hash = argon2_hash(password=req.password)
+
+    org_id = uuid4()
+    user_id = uuid4()
+
+    # 所有写操作放在一个事务里，保证原子性
+    async with conn.transaction():
+        await conn.execute(
+            """INSERT INTO orgs (id, slug, name, plan, created_at)
+               VALUES ($1, $2, $3, 'enterprise', now())""",
+            org_id,
+            req.org_slug,
+            req.org_name,
+        )
+        await conn.execute(
+            """INSERT INTO users (id, email, password_hash, is_active, created_at)
+               VALUES ($1, $2, $3, true, now())""",
+            user_id,
+            req.email,
+            pw_hash,
+        )
+        await conn.execute(
+            """INSERT INTO org_memberships (user_id, org_id, role, joined_at)
+               VALUES ($1, $2, 'owner', now())""",
+            user_id,
+            org_id,
+        )
+
+    # 自动登录（在事务外，避免 token 签发失败导致回滚）
+    orgs_for_token = [{"org_id": str(org_id), "slug": req.org_slug, "role": "owner"}]
+    access, access_exp = _issue_access_token(user_id, req.email, orgs_for_token)
+    refresh = _issue_refresh_token(user_id)
+    _set_refresh_cookie(response, refresh)
+
+    return {
+        "access_token": access,
+        "token_type": "bearer",
+        "expires_in": int((access_exp - datetime.now(UTC)).total_seconds()),
+        "user_id": str(user_id),
+        "org_id": str(org_id),
+        "org_slug": req.org_slug,
+    }
 
 
 @router.post("/refresh", response_model=TokenResponse)

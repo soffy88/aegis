@@ -37,7 +37,7 @@ def _resolve_secret(secret_encrypted: str | None) -> str | None:
     """Resolve secret_encrypted field to a plain secret string.
 
     - 'env:AEGIS_WEBHOOK_SECRET_*' → os.environ[var]  (allowlisted prefix only)
-    - 'plain:xxx'                  → xxx  (M1 simplification; M2: replace with KMS)
+    - 'plain:xxx'                  → xxx  (dev/testing only; warn in prod)
     - None or unrecognised         → None (no signing)
     """
     if not secret_encrypted:
@@ -48,6 +48,15 @@ def _resolve_secret(secret_encrypted: str | None) -> str | None:
             return None  # reject env var names outside the dedicated allowlist prefix
         return os.environ.get(var_name)
     if secret_encrypted.startswith("plain:"):
+        env = os.environ.get("AEGIS_ENV", "dev")
+        if env != "dev":
+            import logging  # noqa: PLC0415
+
+            logging.getLogger(__name__).warning(
+                "webhook_secret_plaintext: secret stored as 'plain:' in non-dev env (%s). "
+                "Use 'env:AEGIS_WEBHOOK_SECRET_<NAME>' for production.",
+                env,
+            )
         return secret_encrypted[6:]
     return None
 
