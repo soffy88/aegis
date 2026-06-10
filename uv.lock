@@ -14,8 +14,8 @@ resolution-markers = [
 overrides = [
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=main" },
-    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
-    { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
+    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=main" },
+    { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=main" },
 ]
 
 [[package]]
@@ -87,9 +87,9 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=main" },
-    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
+    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=main" },
     { name = "oservice", git = "ssh://git@github.com/helios-plat/oservice.git?rev=main" },
-    { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
+    { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=main" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.5" },
     { name = "pydantic-settings", specifier = ">=2.5" },
@@ -1678,8 +1678,8 @@ wheels = [
 
 [[package]]
 name = "oprim"
-version = "2.31.0"
-source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0#3300469d91d8344b1a527c776d54b36320c74236" }
+version = "2.36.0"
+source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=main#89c29f6def35e9d3d9a73f668038978027712ab5" }
 dependencies = [
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
@@ -1733,8 +1733,8 @@ dependencies = [
 
 [[package]]
 name = "oskill"
-version = "3.14.0"
-source = { git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0#1d57385ef387947c8b6f89e2d894fce0aae48a73" }
+version = "2.16.0"
+source = { git = "ssh://git@github.com/helios-plat/oskill.git?rev=main#067871dd9889e1e1cd28c511491ef4a3b3dc78c0" }
 dependencies = [
     { name = "aiohttp" },
     { name = "numpy" },

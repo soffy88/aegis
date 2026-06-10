@@ -24,10 +24,10 @@ dependencies = [
     "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@main",
     "alembic>=1.13",
     "python-frontmatter>=1.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@main",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@main",
     "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@main",
 ]
@@ -99,8 +99,8 @@ ignore_missing_imports = true
 # safe only if obase v0.11.0 is backward-compatible with oservice v0.4.2 API surface
 override-dependencies = [
     "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@main",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@main",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@main",
 ]
 
