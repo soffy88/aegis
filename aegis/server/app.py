@@ -7,9 +7,12 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from obase import ProviderRegistry
+
+from aegis.server.exceptions import AegisError, QuotaExceededError
 
 from aegis.server.api.routers import (
     alert_fired,
@@ -244,17 +247,44 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         description="AI-powered self-hosted PaaS",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(AegisError)
+    async def _handle_aegis_error(request: Request, exc: AegisError) -> JSONResponse:
+        """Map domain errors to a uniform {"error": {...}} envelope + status.
+
+        Without this, a raised AegisError leaks as a bare Starlette 500 with no
+        structured body. HTTPExceptions keep FastAPI's default handling.
+        """
+        code = (
+            status.HTTP_402_PAYMENT_REQUIRED
+            if isinstance(exc, QuotaExceededError)
+            else status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        log.warning(
+            "aegis_error path=%s type=%s detail=%s",
+            request.url.path,
+            type(exc).__name__,
+            exc,
+        )
+        return JSONResponse(
+            status_code=code,
+            content={"error": {"type": type(exc).__name__, "detail": str(exc)}},
+        )
+
+    # Middleware order matters: Starlette wraps the LAST-added outermost. Add the
+    # rate limiter first so CORS wraps it — otherwise a 429 is emitted outside
+    # CORSMiddleware and the browser can't read it on the (CORS-governed) login form.
+    app.add_middleware(
+        AuthRateLimitMiddleware,
+        max_requests=cfg.rate_limit_auth_requests,
+        window_sec=cfg.rate_limit_auth_window_sec,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
-    app.add_middleware(
-        AuthRateLimitMiddleware,
-        max_requests=cfg.rate_limit_auth_requests,
-        window_sec=cfg.rate_limit_auth_window_sec,
     )
     app.include_router(health.router)
     app.include_router(metrics_router.router)
