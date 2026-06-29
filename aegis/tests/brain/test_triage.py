@@ -46,7 +46,9 @@ def test_build_triage_service_name() -> None:
 
 def test_build_triage_service_llm_caller_injected() -> None:
     svc = build_triage_service(_cfg())
-    assert callable(svc.llm_caller)
+    # TriageEngine stores injected dependencies as a list (inject={"llm_caller": [fn]}).
+    assert isinstance(svc.llm_caller, list)
+    assert callable(svc.llm_caller[0])
 
 
 def test_build_triage_service_filters_empty() -> None:

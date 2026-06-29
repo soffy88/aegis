@@ -185,7 +185,8 @@ class TestDockerRouter:
             "aegis.server.api.routers.docker.docker_ps",
             return_value=[],
         ) as mock_list:
-            docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers?showAll=true")
+            # Router query param is `all` (the console also sends ?all=true).
+            docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers?all=true")
         mock_list.assert_called_once_with(all=True)
 
     def test_list_containers_oprim_error_502(self, docker_client: TestClient) -> None:

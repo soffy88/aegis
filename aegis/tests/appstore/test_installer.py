@@ -99,17 +99,27 @@ def test_compose_up_wrapper_calls_oprim_compose_up() -> None:
     assert result == {"status": "started"}
 
 
-def test_compose_up_wrapper_logs_warning_when_env_present(caplog: pytest.LogCaptureFixture) -> None:
+def test_compose_up_wrapper_writes_env_file_when_env_present(
+    tmp_path: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BACKLOG-075 resolved: env vars are written to a temp .env file next to the
+    compose file (no longer silently dropped / warned about)."""
     import logging
 
     cfg = _cfg()
     wrapper = _make_compose_up_wrapper(cfg)
+    compose_file = str(tmp_path / "docker-compose.yml")  # type: ignore[operator]
     with (
-        patch("aegis.server.appstore.installer.oprim_compose_up", return_value={}),
-        caplog.at_level(logging.WARNING, logger="aegis.server.appstore.installer"),
+        patch(
+            "aegis.server.appstore.installer.oprim_compose_up", return_value={"ok": True}
+        ) as mock_up,
+        caplog.at_level(logging.INFO, logger="aegis.server.appstore.installer"),
     ):
-        wrapper(compose_file="docker-compose.yml", env={"KEY": "val"})
-    assert any("BACKLOG-075" in r.message for r in caplog.records)
+        result = wrapper(compose_file=compose_file, env={"KEY": "val"})
+
+    assert result == {"ok": True}
+    mock_up.assert_called_once()
+    assert any("wrote 1 env vars" in r.getMessage() for r in caplog.records)
 
 
 # ── caddy_route_add wrapper ───────────────────────────────────────────────────
