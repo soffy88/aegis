@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
+import redis.asyncio as aioredis
 from obase import ProviderRegistry
 from oprim import (
     docker_inspect,
@@ -254,7 +256,7 @@ async def investigate_if_deep_needed(
         log.info("rca_skip_severity severity=%s not in (critical, high)", severity)
         return None
 
-    if org_id and not _check_rca_budget(org_id, cfg):
+    if org_id and not await _check_rca_budget(org_id, cfg):
         log.warning("rca_skip_budget org_id=%s daily budget exceeded", org_id)
         return None
 
@@ -272,29 +274,62 @@ async def investigate_if_deep_needed(
     return await service.invoke(task)
 
 
-def _check_rca_budget(org_id: str, cfg: AegisSettings) -> bool:
-    """Per-org per-invocation RCA budget gate.
+def _rca_daily_max_invocations(cfg: AegisSettings) -> int | None:
+    """Max deep investigations per org per day, or None if the daily gate is off.
 
-    Checks against cfg.rca_max_cost_usd_per_invocation (default 5.0 USD).
-    For M1 self-hosted single-org, this is a simple guard against runaway costs
-    when the LLM provider is misconfigured.
-
-    Full per-org daily accounting via obase.CostTracker is tracked in
-    TODO(AEGIS-BACKLOG-072). Until then, we at least enforce the per-invocation cap
-    is a positive value (non-zero means budget checking is enabled).
+    Each investigation reserves one per-invocation slot, so the daily ceiling is
+    daily_budget / per_invocation_cap (at least 1 when both are positive).
     """
-    if cfg.rca_max_cost_usd_per_invocation <= 0:
+    per_inv = cfg.rca_max_cost_usd_per_invocation
+    daily = cfg.rca_max_cost_usd_per_org_daily
+    if per_inv <= 0 or daily <= 0:
+        return None
+    return max(1, int(daily // per_inv))
+
+
+async def _check_rca_budget(org_id: str, cfg: AegisSettings) -> bool:
+    """Per-org daily RCA budget gate (Redis-shared across workers).
+
+    Reserves one slot per call via an atomic INCR on a per-org per-day key. Returns
+    False once the day's investigation count exceeds the derived ceiling. Fails OPEN
+    on any Redis error or when the gate is disabled — incident response must never be
+    blocked by a budget-infra outage; the per-invocation cap (OmodulDispatcher) still
+    bounds single-call cost.
+    """
+    daily_max = _rca_daily_max_invocations(cfg)
+    if daily_max is None:
         log.warning(
-            "rca_budget: rca_max_cost_usd_per_invocation=%.2f disables budget gate — "
-            "set a positive value to cap per-invocation cost",
+            "rca_budget: daily gate disabled (per_invocation=%.2f daily=%.2f) — "
+            "set positive values to cap per-org daily spend",
             cfg.rca_max_cost_usd_per_invocation,
+            cfg.rca_max_cost_usd_per_org_daily,
         )
         return True
-    # Budget gate is active; per-invocation cap is enforced by OmodulDispatcher.
-    # Cross-invocation accumulation (daily/monthly) is AEGIS-BACKLOG-072.
-    log.debug(
-        "rca_budget: org_id=%s per_invocation_cap=%.2f USD",
-        org_id,
-        cfg.rca_max_cost_usd_per_invocation,
-    )
-    return True
+
+    day = datetime.now(UTC).strftime("%Y%m%d")
+    key = f"aegis:rca_budget:{org_id}:{day}"
+    client = None
+    try:
+        client = aioredis.from_url(cfg.redis_url)
+        count = await client.incr(key)
+        if count == 1:
+            await client.expire(key, 2 * 86400)
+        if count > daily_max:
+            log.warning(
+                "rca_budget_exceeded org_id=%s count=%d daily_max=%d",
+                org_id,
+                count,
+                daily_max,
+            )
+            return False
+        log.debug("rca_budget org_id=%s count=%d/%d", org_id, count, daily_max)
+        return True
+    except Exception as exc:  # noqa: BLE001 — fail open, never block RCA on infra
+        log.warning("rca_budget_redis_failed org_id=%s err=%s — allowing", org_id, exc)
+        return True
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                pass

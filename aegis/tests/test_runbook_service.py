@@ -8,8 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from aegis.server.services.runbook import (
+    _executions,
     _runbooks,
+    approve_execution,
     execute_runbook,
+    get_execution,
     match_runbook,
 )
 
@@ -77,3 +80,42 @@ async def test_execute_dry_run() -> None:
     execution = await execute_runbook("restart-nginx", dry_run=True)
     assert execution.status == "awaiting_approval"
     assert execution.steps[0].status == "would_execute"
+
+
+# ── durable persistence (survives restart) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_loaded_runbook")
+async def test_execution_reloaded_from_disk_after_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """get_execution rehydrates from disk when the in-memory cache is gone."""
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    _executions.clear()
+    execution = await execute_runbook("restart-nginx", dry_run=True)
+    eid = execution.id
+
+    _executions.clear()  # simulate a process restart
+    reloaded = get_execution(eid)
+
+    assert reloaded is not None
+    assert reloaded.id == eid
+    assert reloaded.status == "awaiting_approval"
+    assert reloaded.steps[0].status == "would_execute"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_loaded_runbook")
+async def test_approve_works_after_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    _executions.clear()
+    eid = (await execute_runbook("restart-nginx", dry_run=True)).id
+
+    _executions.clear()  # simulate a process restart
+    approved = approve_execution(eid)
+
+    assert approved is not None
+    assert approved.status == "running"
