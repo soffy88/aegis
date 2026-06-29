@@ -44,6 +44,7 @@ from aegis.server.api.routers import store as store_router
 from aegis.server.api.routers import users as users_router
 from aegis.server.api.routers import webhook_subscriptions as webhook_subscriptions_router
 from aegis.server.middleware.rate_limit import AuthRateLimitMiddleware
+from aegis.server.middleware.request_id import RequestIDMiddleware
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -174,7 +175,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         settings: Optional pre-built settings (for testing).
     """
     cfg = settings or AegisSettings()
-    setup_logging(cfg.log_level)
+    setup_logging(cfg.log_level, cfg.log_format)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -286,6 +287,8 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Outermost: tag every request with a correlation id + emit an access line.
+    app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
     app.include_router(metrics_router.router)
     app.include_router(events.router)

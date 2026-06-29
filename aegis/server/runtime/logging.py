@@ -13,12 +13,18 @@ import logging
 import sys
 
 
-def setup_logging(level: str = "INFO") -> None:
+def setup_logging(level: str = "INFO", fmt: str = "text") -> None:
     """Configure root logger.
 
     All Python `logging` calls (including those from `BackgroundTasks`
-    via `log.exception(...)`) flow through here.
+    via `log.exception(...)`) flow through here. `fmt` selects human-readable
+    text (default) or single-line JSON for log aggregation (AEGIS_LOG_FORMAT).
     """
+    from aegis.server.middleware.request_id import (  # noqa: PLC0415
+        JsonLogFormatter,
+        RequestIdFilter,
+    )
+
     root = logging.getLogger()
     root.setLevel(level.upper())
 
@@ -28,12 +34,17 @@ def setup_logging(level: str = "INFO") -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level.upper())
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S",
+    if fmt == "json":
+        handler.setFormatter(JsonLogFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s [%(levelname)s] %(name)s [req:%(request_id)s]: %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
         )
-    )
+    # Filter stamps request_id onto every record (incl. startup/cron → "-").
+    handler.addFilter(RequestIdFilter())
     root.addHandler(handler)
 
     # Make sure the aegis.* hierarchy propagates

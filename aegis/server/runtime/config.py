@@ -100,6 +100,10 @@ class AegisSettings(BaseSettings):
 
     # === Logging ===
     log_level: str = "INFO"
+    log_format: str = Field(
+        default="text",
+        description="Log output format: 'text' (human) or 'json' (aggregation). env: AEGIS_LOG_FORMAT",
+    )
 
     # === JWT ===
     jwt_secret: str = Field(
