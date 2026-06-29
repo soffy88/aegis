@@ -38,8 +38,8 @@ dependencies = [
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
     "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@v0.4.3",
     # AutoHeal 引擎 (aegis/server/autoheal/engine.py) import 此 SDK 的基类/类型。
-    # 本仓库内的本地包，路径见 [tool.uv.sources]。
-    "aegis-autoheal-sdk",
+    # 独立姊妹仓，与 3O 同样 git+ssh 锁 tag (HELIOS_DEPLOY_KEY 覆盖 helios-plat/*)。
+    "aegis-autoheal-sdk @ git+ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git@v0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -113,11 +113,6 @@ override-dependencies = [
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
 ]
-
-# AutoHeal SDK 是本仓库内的本地包（非私有源 / 非 PyPI）。
-# 非 editable：构建成 wheel 装进 .venv，多阶段 Docker 运行时无需再 COPY 源码。
-[tool.uv.sources]
-aegis-autoheal-sdk = { path = "aegis-autoheal-sdk" }
 
 [tool.ruff]
 line-length = 100

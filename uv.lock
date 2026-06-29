@@ -79,7 +79,7 @@ test = [
 requires-dist = [
     { name = "aegis", extras = ["test"], marker = "extra == 'dev'" },
     { name = "aegis", extras = ["test"], marker = "extra == 'smoke'" },
-    { name = "aegis-autoheal-sdk", directory = "aegis-autoheal-sdk" },
+    { name = "aegis-autoheal-sdk", git = "ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git?rev=v0.1.0" },
     { name = "alembic", specifier = ">=1.13" },
     { name = "anthropic", specifier = ">=0.40" },
     { name = "asyncpg", specifier = ">=0.29" },
@@ -115,14 +115,7 @@ provides-extras = ["test", "dev", "smoke", "c3-e2e"]
 [[package]]
 name = "aegis-autoheal-sdk"
 version = "0.1.0"
-source = { directory = "aegis-autoheal-sdk" }
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23" },
-]
-provides-extras = ["test"]
+source = { git = "ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git?rev=v0.1.0#0b44770a6a38070b56ad1b36ecf467b180d12cfa" }
 
 [[package]]
 name = "aiohappyeyeballs"

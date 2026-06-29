@@ -12,7 +12,7 @@ license = {text = "Apache-2.0"}
 authors = [{name = "Aegis Project"}]
 keywords = ["aegis", "autoheal", "plugins", "aiops"]
 dependencies = [
-    "aegis-autoheal-sdk>=0.1.0",
+    "aegis-autoheal-sdk @ git+ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git@v0.1.0",
     "httpx>=0.27",
 ]
 
@@ -55,10 +55,6 @@ test = [
 "reset-rate-limit"    = "aegis_plugins.plugins.stubs:ResetRateLimitPlugin"
 "sync-replicas"       = "aegis_plugins.plugins.stubs:SyncReplicasPlugin"
 "healthcheck-external" = "aegis_plugins.plugins.stubs:HealthcheckExternalPlugin"
-
-# aegis-autoheal-sdk 是同仓库的本地包（非私有源 / 非 PyPI）。
-[tool.uv.sources]
-aegis-autoheal-sdk = { path = "../aegis-autoheal-sdk", editable = true }
 
 [tool.hatch.metadata]
 allow-direct-references = true
