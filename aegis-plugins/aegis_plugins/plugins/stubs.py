@@ -13,6 +13,9 @@ def _stub(cls_name: str, plugin_name: str, alert: str, desc: str) -> type:
         version = "0.0.1"
         matches_alert = alert
         description = desc
+        # Marks this as a not-yet-implemented placeholder so the registry can keep
+        # it out of the advertised catalog (see registry.list_plugins).
+        is_stub = True
 
         async def pre_check(self, ctx: AutoHealContext) -> bool:
             return False

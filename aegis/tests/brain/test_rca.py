@@ -11,6 +11,7 @@ from aegis.server.brain.rca import (
     _check_rca_budget,
     _make_react_llm_provider,
     _parse_react_response,
+    _rca_daily_max_invocations,
     build_rca_service,
     get_rca_service,
     init_rca_service,
@@ -70,7 +71,9 @@ async def test_investigate_skip_medium_severity() -> None:
 
 @pytest.mark.asyncio
 async def test_investigate_skip_budget_exceeded() -> None:
-    with patch("aegis.server.brain.rca._check_rca_budget", return_value=False):
+    with patch(
+        "aegis.server.brain.rca._check_rca_budget", new_callable=AsyncMock, return_value=False
+    ):
         result = await investigate_if_deep_needed(
             {"needs_deep_investigation": True, "severity": "critical"},
             _cfg(),
@@ -162,11 +165,56 @@ def test_parse_react_response_fallback_to_text() -> None:
     assert result["final_answer"] == "not json at all"
 
 
-# ── _check_rca_budget (stub) ──────────────────────────────────────────────────
+# ── _check_rca_budget (per-org daily Redis gate) ──────────────────────────────
 
 
-def test_check_rca_budget_stub_always_true() -> None:
-    assert _check_rca_budget("any_org", _cfg()) is True
+def test_rca_daily_max_invocations_derivation() -> None:
+    assert _rca_daily_max_invocations(_cfg()) == 5  # 25 / 5 default
+    assert (
+        _rca_daily_max_invocations(_cfg(rca_max_cost_usd_per_org_daily=0)) is None
+    )  # disabled
+    assert (
+        _rca_daily_max_invocations(_cfg(rca_max_cost_usd_per_invocation=0)) is None
+    )  # disabled
+    # ceiling is at least 1 even when daily < per-invocation
+    assert _rca_daily_max_invocations(_cfg(rca_max_cost_usd_per_org_daily=1)) == 1
+
+
+@pytest.mark.asyncio
+async def test_check_rca_budget_disabled_returns_true() -> None:
+    """Daily gate off → always allowed (Redis never touched)."""
+    assert await _check_rca_budget("org", _cfg(rca_max_cost_usd_per_org_daily=0)) is True
+
+
+@pytest.mark.asyncio
+async def test_check_rca_budget_allows_under_ceiling_then_blocks() -> None:
+    counter = {"n": 0}
+
+    class _FakeRedis:
+        async def incr(self, key: str) -> int:
+            counter["n"] += 1
+            return counter["n"]
+
+        async def expire(self, key: str, ttl: int) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            pass
+
+    with patch("aegis.server.brain.rca.aioredis.from_url", return_value=_FakeRedis()):
+        cfg = _cfg()  # daily_max = 5
+        results = [await _check_rca_budget("org", cfg) for _ in range(6)]
+    assert results[:5] == [True, True, True, True, True]
+    assert results[5] is False  # 6th call exceeds the ceiling
+
+
+@pytest.mark.asyncio
+async def test_check_rca_budget_fails_open_on_redis_error() -> None:
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise ConnectionError("redis down")
+
+    with patch("aegis.server.brain.rca.aioredis.from_url", side_effect=_boom):
+        assert await _check_rca_budget("org", _cfg()) is True
 
 
 def test_build_knowledge_retrieval_fn_returns_none_when_no_db() -> None:

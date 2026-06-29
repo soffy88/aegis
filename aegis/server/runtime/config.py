@@ -163,6 +163,10 @@ class AegisSettings(BaseSettings):
     rca_llm_model: str = "claude-sonnet-4-6"
     rca_max_steps: int = 10
     rca_max_cost_usd_per_invocation: float = 5.0
+    # Per-org daily RCA spend ceiling. Each deep investigation reserves one
+    # per-invocation slot against this budget (count = daily / per_invocation),
+    # giving a hard cap on Sonnet spend per org per day. 0 disables the daily gate.
+    rca_max_cost_usd_per_org_daily: float = 25.0
     planner_llm_model: str = "claude-sonnet-4-6"
     triage_llm_model: str = "claude-haiku-4-5"
     triage_max_tokens: int = 1024
@@ -202,6 +206,31 @@ class AegisSettings(BaseSettings):
     agent_token: str = Field(
         default="",
         description="Bearer token required from aegis-agent. Empty = no auth (dev).",
+    )
+    agent_metrics_retention_days: int = Field(
+        default=30,
+        ge=0,
+        description="Prune agent_metrics rows older than this many days. 0 disables pruning.",
+    )
+
+    # === Capacity forecaster (cron) ===
+    capacity_min_samples: int = Field(
+        default=4, ge=2, description="Minimum samples before a metric is forecast."
+    )
+    capacity_default_threshold: float = Field(
+        default=90.0, description="Breach threshold (%) for metrics without a specific override."
+    )
+    capacity_breach_days_warn: int = Field(
+        default=30, ge=1, description="Forecast horizon (steps/days) for breach warnings."
+    )
+    capacity_metric_thresholds: dict[str, float] = Field(
+        default_factory=lambda: {
+            "disk_usage_percent": 90.0,
+            "ram_usage_percent": 95.0,
+            "cpu_usage_percent": 95.0,
+            "db_connection_pool_used": 90.0,
+        },
+        description="Per-metric breach thresholds (%). JSON env override supported.",
     )
 
     # === AppStore (S2) ===

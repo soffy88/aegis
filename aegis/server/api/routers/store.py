@@ -19,35 +19,47 @@ router = APIRouter(prefix="/api/v1/orgs/{org_id}/store", tags=["store"])
 
 _apps_cache: list[dict[str, Any]] | None = None
 
+# Built-in seed catalog shipped inside the package — guarantees the store is never
+# empty out of the box. parents[2] == aegis/server.
+_BUILTIN_CATALOG = Path(__file__).resolve().parents[2] / "appstore" / "catalog"
+
+
+def _load_dir(store_dir: Path, apps_map: dict[str, dict[str, Any]]) -> None:
+    """Merge every *.json app definition in store_dir into apps_map, keyed by slug."""
+    for f in sorted(store_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+            items = data if isinstance(data, list) else [data]
+            for a in items:
+                if isinstance(a, dict) and "slug" in a:
+                    # Use slug as key for deduplication / override.
+                    apps_map[a["slug"]] = a
+        except Exception:
+            log.warning("Failed to parse app definition: %s", f)
+
 
 def _load_apps() -> list[dict[str, Any]]:
     global _apps_cache  # noqa: PLW0603
     if _apps_cache is not None:
         return _apps_cache
 
-    # 按优先级查找 apps 目录
-    candidates = [
-        Path("/data/aegis-appstore/apps"),  # 容器内挂载路径
-        Path(AegisSettings().data_dir).parent / "aegis-appstore" / "apps",  # data_dir 相对
+    # Lowest → highest priority. Built-in seed always loads first; any operator-managed
+    # external catalog dir overrides it by slug (last write wins).
+    sources = [
+        _BUILTIN_CATALOG,
         Path(__file__).resolve().parents[4] / "aegis-appstore" / "apps",  # 源码相对
+        Path(AegisSettings().data_dir).parent / "aegis-appstore" / "apps",  # data_dir 相对
+        Path("/data/aegis-appstore/apps"),  # 容器内挂载路径
     ]
 
-    store_dir = next((p for p in candidates if p.exists()), None)
-
     apps_map: dict[str, dict[str, Any]] = {}
-    if store_dir:
-        for f in sorted(store_dir.glob("*.json")):
-            try:
-                data = json.loads(f.read_text())
-                items = data if isinstance(data, list) else [data]
-                for a in items:
-                    if isinstance(a, dict) and "slug" in a:
-                        # Use slug as key for deduplication
-                        apps_map[a["slug"]] = a
-            except Exception:
-                log.warning("Failed to parse app definition: %s", f)
-    else:
-        log.warning("AppStore apps directory not found, tried: %s", candidates)
+    loaded_any = False
+    for store_dir in sources:
+        if store_dir.exists():
+            _load_dir(store_dir, apps_map)
+            loaded_any = True
+    if not loaded_any:
+        log.warning("AppStore catalog dirs not found, tried: %s", sources)
 
     apps = list(apps_map.values())
     _apps_cache = apps

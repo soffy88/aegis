@@ -103,6 +103,43 @@ class TestCheckCapacityMetrics:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_thresholds_and_min_samples_come_from_config(self) -> None:
+        conn = mock.AsyncMock()
+        conn.fetch.return_value = _metric_rows("disk_usage_percent", [10.0, 20.0, 30.0])  # 3 samples
+
+        cfg = mock.MagicMock()
+        cfg.capacity_min_samples = 3  # lowered so 3 samples are enough
+        cfg.capacity_default_threshold = 90.0
+        cfg.capacity_breach_days_warn = 14
+        cfg.capacity_metric_thresholds = {"disk_usage_percent": 75.0}
+
+        with (
+            mock.patch("aegis.server.orchestration.capacity.get_settings", return_value=cfg),
+            mock.patch(
+                "aegis.server.orchestration.capacity.compute_capacity_forecast"
+            ) as mock_forecast,
+        ):
+            from oskill import CapacityForecastResult
+
+            mock_forecast.return_value = CapacityForecastResult(
+                metric_name="disk_usage_percent",
+                current_value=30.0,
+                predicted_values=[],
+                trend_slope=1.0,
+                will_breach_threshold=False,
+                breach_at_offset=None,
+                recommendation="ok",
+                narrative=None,
+            )
+            await check_capacity_metrics(conn=conn)
+
+        # config min_samples=3 → forecast ran; threshold + horizon came from config
+        mock_forecast.assert_called_once()
+        kwargs = mock_forecast.call_args.kwargs
+        assert kwargs["threshold"] == 75.0
+        assert kwargs["forecast_steps"] == 14
+
+    @pytest.mark.asyncio
     async def test_calls_alerter_on_breach(self) -> None:
         conn = mock.AsyncMock()
         conn.fetch.return_value = _metric_rows("disk_usage_percent", _GROWING_SAMPLES)

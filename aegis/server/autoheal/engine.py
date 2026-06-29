@@ -186,8 +186,15 @@ class AutoHealEngine:
         project_id: uuid.UUID | None = None,
         requested_by: uuid.UUID | None = None,
         env: Severity = Severity.DEV,
+        dry_run: bool = False,
     ) -> AutoHealState:
-        """Run the AutoHeal 4-phase lifecycle. Returns terminal state."""
+        """Run the AutoHeal 4-phase lifecycle. Returns terminal state.
+
+        When dry_run=True, diagnosis, the circuit-breaker guard and the approval gate
+        still run (they are read-only / decision steps), but the plugin lifecycle and
+        any infra-level rollback are NOT executed — the engine logs what it *would* do
+        and returns. Callers should pass cfg.autoheal_dry_run here.
+        """
 
         # ── Phase 1: diagnosing ──────────────────────────────────────────────
         self.state = AutoHealState.diagnosing
@@ -259,6 +266,17 @@ class AutoHealEngine:
         if plugin_cls is None:
             self.state = AutoHealState.failed
             self._log("plugin_not_found", plugin=plugin_name)
+            return self.state
+
+        # ── Dry-run: stop before any side effects ────────────────────────────
+        if dry_run:
+            self.state = AutoHealState.succeeded
+            self._log(
+                "dry_run_skip_execute",
+                plugin=plugin_name,
+                action_kind=action_plan.get("action_kind", plugin_name),
+                instance=action_plan.get("instance_name", "unknown"),
+            )
             return self.state
 
         # Prepare context

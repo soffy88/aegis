@@ -70,9 +70,39 @@ class RunbookExecution(BaseModel):
     completed_at: datetime | None = None
 
 
-# In-memory stores
+# In-memory caches. _runbooks is a YAML-derived catalog (rebuilt at startup, fine to
+# keep in memory). _executions is a write-through cache over durable JSON files so
+# execution history survives restarts (see _persist / _load_execution).
 _runbooks: dict[str, Runbook] = {}
 _executions: dict[str, RunbookExecution] = {}
+
+
+def _exec_dir() -> Path:
+    d = Path(AegisSettings().data_dir) / "runbook_executions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _persist(execution: RunbookExecution) -> None:
+    """Write-through a full execution snapshot to disk. Best-effort (logs on failure)."""
+    try:
+        path = _exec_dir() / f"{execution.id}.json"
+        path.write_text(execution.model_dump_json())
+    except Exception:
+        log.warning("Failed to persist runbook execution %s", execution.id)
+
+
+def _load_execution(exec_id: str) -> RunbookExecution | None:
+    path = _exec_dir() / f"{exec_id}.json"
+    if not path.exists():
+        return None
+    try:
+        execution = RunbookExecution.model_validate_json(path.read_text())
+        _executions[exec_id] = execution  # warm the cache
+        return execution
+    except Exception:
+        log.warning("Failed to load persisted runbook execution %s", exec_id)
+        return None
 
 
 def load_runbooks() -> None:
@@ -100,7 +130,7 @@ def get_runbook(name: str) -> Runbook | None:
 
 
 def get_execution(exec_id: str) -> RunbookExecution | None:
-    return _executions.get(exec_id)
+    return _executions.get(exec_id) or _load_execution(exec_id)
 
 
 def match_runbook(root_cause: dict, min_score: float = 0.7) -> RunbookMatchResult:
@@ -126,6 +156,7 @@ async def execute_runbook(name: str, dry_run: bool = True) -> RunbookExecution:
         steps=[StepResult(step_name=s.name) for s in rb.steps],
     )
     _executions[execution.id] = execution
+    _persist(execution)
 
     if dry_run:
         for i, step in enumerate(rb.steps):
@@ -174,14 +205,16 @@ async def execute_runbook(name: str, dry_run: bool = True) -> RunbookExecution:
         execution.status = ExecutionStatus.completed if all_ok else ExecutionStatus.failed
         execution.completed_at = datetime.now(tz=UTC)
 
+    _persist(execution)
     return execution
 
 
 def approve_execution(exec_id: str) -> RunbookExecution | None:
     """Approve a pending execution, triggering live run."""
-    execution = _executions.get(exec_id)
+    execution = _executions.get(exec_id) or _load_execution(exec_id)
     if not execution or execution.status != ExecutionStatus.awaiting_approval:
         return None
     execution.approved_at = datetime.now(tz=UTC)
     execution.status = ExecutionStatus.running
+    _persist(execution)
     return execution

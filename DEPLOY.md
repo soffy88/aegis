@@ -22,6 +22,13 @@ nano .env.aegis
 - `POSTGRES_PASSWORD`
 - `AEGIS_JWT_SECRET`（`openssl rand -hex 32` 生成）
 - `CLOUDFLARED_TOKEN`
+- `AEGIS_DOCKER_GID`（后端以非 root 运行，需 docker.sock 的属组：`stat -c '%g' /var/run/docker.sock`）
+
+> 升级到非 root 镜像后，**已存在的 `aegis-data` volume 仍属 root**。一次性修正属主：
+> ```bash
+> docker run --rm -v aegis-data:/data alpine chown -R 10001:10001 /data
+> ```
+> 全新部署无需此步（fresh volume 会继承镜像内 `/data/aegis` 的 aegis 属主）。
 
 ### 2. 创建数据库
 

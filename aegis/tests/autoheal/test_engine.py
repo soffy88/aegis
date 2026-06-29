@@ -334,6 +334,46 @@ async def test_run_approval_granted_continues_to_succeeded() -> None:
     assert state == AutoHealState.succeeded
 
 
+# ── dry-run guard ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_plugin_execution() -> None:
+    """dry_run=True: diagnosis runs but the plugin lifecycle is never executed."""
+    engine = AutoHealEngine()
+    plugin_mock = _mock_plugin()
+    with (
+        patch(
+            "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_matched_result()
+        ),
+        patch(
+            "aegis.server.autoheal.engine.get_plugin_callable",
+            return_value=MagicMock(return_value=plugin_mock),
+        ),
+    ):
+        state = await engine.run(
+            signal=_SIGNAL, action_plan=_PLAN, plugin_name="test-plugin", dry_run=True
+        )
+    assert state == AutoHealState.succeeded
+    plugin_mock.pre_check.assert_not_called()
+    plugin_mock.execute.assert_not_called()
+    plugin_mock.post_verify.assert_not_called()
+    plugin_mock.rollback.assert_not_called()
+    events = [e["event"] for e in engine.history]
+    assert "dry_run_skip_execute" in events
+
+
+@pytest.mark.asyncio
+async def test_dry_run_still_fails_on_no_pattern_match() -> None:
+    """dry_run must not bypass the diagnosis gate."""
+    engine = AutoHealEngine()
+    with patch(
+        "aegis.server.autoheal.engine.diagnose_pattern_match", return_value=_no_match_result()
+    ):
+        state = await engine.run(signal=_SIGNAL, action_plan=_PLAN, dry_run=True)
+    assert state == AutoHealState.failed
+
+
 # ── history recording ─────────────────────────────────────────────────────────
 
 

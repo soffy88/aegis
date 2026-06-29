@@ -1,0 +1,221 @@
+[
+  {
+    "slug": "uptime-kuma",
+    "name": "Uptime Kuma",
+    "description": "Self-hosted uptime monitoring tool with status pages and notifications.",
+    "icon": "📈",
+    "version": "1.23.16",
+    "category": "Monitoring",
+    "image": "louislam/uptime-kuma:1.23.16",
+    "ports": [{"container_port": 3001, "protocol": "tcp", "label": "Web UI"}],
+    "env": [],
+    "mounts": [{"target": "/app/data", "volume_name": "uptime-kuma-data"}]
+  },
+  {
+    "slug": "gitea",
+    "name": "Gitea",
+    "description": "Lightweight self-hosted Git service with issues, pull requests and CI.",
+    "icon": "🍵",
+    "version": "1.22.3",
+    "category": "Development",
+    "image": "gitea/gitea:1.22.3",
+    "ports": [
+      {"container_port": 3000, "protocol": "tcp", "label": "Web UI"},
+      {"container_port": 22, "protocol": "tcp", "label": "SSH"}
+    ],
+    "env": [
+      {"key": "USER_UID", "default_value": "1000", "description": "UID the Gitea process runs as."},
+      {"key": "USER_GID", "default_value": "1000", "description": "GID the Gitea process runs as."}
+    ],
+    "mounts": [{"target": "/data", "volume_name": "gitea-data"}]
+  },
+  {
+    "slug": "vaultwarden",
+    "name": "Vaultwarden",
+    "description": "Unofficial Bitwarden-compatible password manager server written in Rust.",
+    "icon": "🔐",
+    "version": "1.32.5",
+    "category": "Security",
+    "image": "vaultwarden/server:1.32.5",
+    "ports": [{"container_port": 80, "protocol": "tcp", "label": "Web Vault"}],
+    "env": [
+      {"key": "ADMIN_TOKEN", "default_value": "", "description": "Argon2 hash enabling the /admin panel. Leave empty to disable."},
+      {"key": "SIGNUPS_ALLOWED", "default_value": "true", "description": "Allow new account registration."}
+    ],
+    "mounts": [{"target": "/data", "volume_name": "vaultwarden-data"}]
+  },
+  {
+    "slug": "nextcloud",
+    "name": "Nextcloud",
+    "description": "Self-hosted file sync, sharing and collaboration platform.",
+    "icon": "☁️",
+    "version": "30.0.2",
+    "category": "Productivity",
+    "image": "nextcloud:30.0.2-apache",
+    "ports": [{"container_port": 80, "protocol": "tcp", "label": "Web UI"}],
+    "env": [
+      {"key": "NEXTCLOUD_ADMIN_USER", "default_value": "admin", "description": "Initial admin username."},
+      {"key": "NEXTCLOUD_ADMIN_PASSWORD", "default_value": "", "description": "Initial admin password (set on first run)."}
+    ],
+    "mounts": [{"target": "/var/www/html", "volume_name": "nextcloud-data"}]
+  },
+  {
+    "slug": "n8n",
+    "name": "n8n",
+    "description": "Workflow automation tool with a fair-code license and 400+ integrations.",
+    "icon": "🔗",
+    "version": "1.68.0",
+    "category": "Automation",
+    "image": "n8nio/n8n:1.68.0",
+    "ports": [{"container_port": 5678, "protocol": "tcp", "label": "Editor UI"}],
+    "env": [
+      {"key": "GENERIC_TIMEZONE", "default_value": "UTC", "description": "Timezone used by the scheduler."}
+    ],
+    "mounts": [{"target": "/home/node/.n8n", "volume_name": "n8n-data"}]
+  },
+  {
+    "slug": "grafana",
+    "name": "Grafana",
+    "description": "Open-source analytics and interactive visualization dashboards.",
+    "icon": "📊",
+    "version": "11.3.0",
+    "category": "Monitoring",
+    "image": "grafana/grafana:11.3.0",
+    "ports": [{"container_port": 3000, "protocol": "tcp", "label": "Web UI"}],
+    "env": [
+      {"key": "GF_SECURITY_ADMIN_PASSWORD", "default_value": "admin", "description": "Initial admin password."}
+    ],
+    "mounts": [{"target": "/var/lib/grafana", "volume_name": "grafana-data"}]
+  },
+  {
+    "slug": "jellyfin",
+    "name": "Jellyfin",
+    "description": "Free software media system that streams your movies, shows and music.",
+    "icon": "🎬",
+    "version": "10.10.3",
+    "category": "Media",
+    "image": "jellyfin/jellyfin:10.10.3",
+    "ports": [{"container_port": 8096, "protocol": "tcp", "label": "Web UI"}],
+    "env": [],
+    "mounts": [
+      {"target": "/config", "volume_name": "jellyfin-config"},
+      {"target": "/media", "host_path": "/srv/media"}
+    ]
+  },
+  {
+    "slug": "immich",
+    "name": "Immich",
+    "description": "High-performance self-hosted photo and video backup solution.",
+    "icon": "📷",
+    "version": "1.119.1",
+    "category": "Media",
+    "image": "ghcr.io/immich-app/immich-server:v1.119.1",
+    "ports": [{"container_port": 2283, "protocol": "tcp", "label": "Web UI"}],
+    "env": [
+      {"key": "DB_PASSWORD", "default_value": "", "description": "Postgres password for the Immich database."},
+      {"key": "DB_HOSTNAME", "default_value": "immich-postgres", "description": "Postgres host."}
+    ],
+    "mounts": [{"target": "/usr/src/app/upload", "volume_name": "immich-uploads"}]
+  },
+  {
+    "slug": "paperless-ngx",
+    "name": "Paperless-ngx",
+    "description": "Scan, index and archive your physical documents with full-text search.",
+    "icon": "📄",
+    "version": "2.13.5",
+    "category": "Productivity",
+    "image": "ghcr.io/paperless-ngx/paperless-ngx:2.13.5",
+    "ports": [{"container_port": 8000, "protocol": "tcp", "label": "Web UI"}],
+    "env": [
+      {"key": "PAPERLESS_SECRET_KEY", "default_value": "", "description": "Django secret key; generate a random value."},
+      {"key": "PAPERLESS_REDIS", "default_value": "redis://paperless-redis:6379", "description": "Redis broker URL."}
+    ],
+    "mounts": [{"target": "/usr/src/paperless/data", "volume_name": "paperless-data"}]
+  },
+  {
+    "slug": "home-assistant",
+    "name": "Home Assistant",
+    "description": "Open-source home automation that puts local control and privacy first.",
+    "icon": "🏠",
+    "version": "2024.11.3",
+    "category": "Home",
+    "image": "ghcr.io/home-assistant/home-assistant:2024.11.3",
+    "ports": [{"container_port": 8123, "protocol": "tcp", "label": "Web UI"}],
+    "env": [
+      {"key": "TZ", "default_value": "UTC", "description": "Container timezone."}
+    ],
+    "mounts": [{"target": "/config", "volume_name": "homeassistant-config"}]
+  },
+  {
+    "slug": "adguard-home",
+    "name": "AdGuard Home",
+    "description": "Network-wide ad and tracker blocking DNS server.",
+    "icon": "🛡️",
+    "version": "0.107.55",
+    "category": "Network",
+    "image": "adguard/adguardhome:v0.107.55",
+    "ports": [
+      {"container_port": 3000, "protocol": "tcp", "label": "Setup / Web UI"},
+      {"container_port": 53, "protocol": "udp", "label": "DNS"}
+    ],
+    "env": [],
+    "mounts": [
+      {"target": "/opt/adguardhome/work", "volume_name": "adguard-work"},
+      {"target": "/opt/adguardhome/conf", "volume_name": "adguard-conf"}
+    ]
+  },
+  {
+    "slug": "portainer",
+    "name": "Portainer CE",
+    "description": "Lightweight management UI for Docker environments.",
+    "icon": "🐳",
+    "version": "2.21.4",
+    "category": "Management",
+    "image": "portainer/portainer-ce:2.21.4",
+    "ports": [{"container_port": 9443, "protocol": "tcp", "label": "Web UI (HTTPS)"}],
+    "env": [],
+    "mounts": [
+      {"target": "/data", "volume_name": "portainer-data"},
+      {"target": "/var/run/docker.sock", "host_path": "/var/run/docker.sock"}
+    ]
+  },
+  {
+    "slug": "minio",
+    "name": "MinIO",
+    "description": "High-performance S3-compatible object storage server.",
+    "icon": "🪣",
+    "version": "2024.11.07",
+    "category": "Storage",
+    "image": "minio/minio:RELEASE.2024-11-07T00-52-20Z",
+    "ports": [
+      {"container_port": 9000, "protocol": "tcp", "label": "S3 API"},
+      {"container_port": 9001, "protocol": "tcp", "label": "Console"}
+    ],
+    "env": [
+      {"key": "MINIO_ROOT_USER", "default_value": "minioadmin", "description": "Root access key."},
+      {"key": "MINIO_ROOT_PASSWORD", "default_value": "", "description": "Root secret key (set a strong value)."}
+    ],
+    "mounts": [{"target": "/data", "volume_name": "minio-data"}]
+  },
+  {
+    "slug": "pihole",
+    "name": "Pi-hole",
+    "description": "Network-wide DNS sinkhole that blocks ads and trackers.",
+    "icon": "🕳️",
+    "version": "2024.07.0",
+    "category": "Network",
+    "image": "pihole/pihole:2024.07.0",
+    "ports": [
+      {"container_port": 80, "protocol": "tcp", "label": "Web UI"},
+      {"container_port": 53, "protocol": "udp", "label": "DNS"}
+    ],
+    "env": [
+      {"key": "WEBPASSWORD", "default_value": "", "description": "Admin password for the web UI."},
+      {"key": "TZ", "default_value": "UTC", "description": "Container timezone."}
+    ],
+    "mounts": [
+      {"target": "/etc/pihole", "volume_name": "pihole-etc"},
+      {"target": "/etc/dnsmasq.d", "volume_name": "pihole-dnsmasq"}
+    ]
+  }
+]

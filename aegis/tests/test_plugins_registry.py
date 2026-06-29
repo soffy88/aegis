@@ -114,3 +114,33 @@ class TestListPlugins:
         with mock.patch("aegis.server.plugins.registry.entry_points", return_value=[ep]):
             result = list_plugins()
         assert result == []
+
+
+class TestStubFiltering:
+    @staticmethod
+    def _stub_class() -> type:
+        return type(
+            "FakeStub",
+            (),
+            {"name": "stubby", "description": "", "matches_alert": "x", "is_stub": True},
+        )
+
+    def test_stub_hidden_by_default(self) -> None:
+        ep = _make_ep("stubby", self._stub_class())
+        with mock.patch("aegis.server.plugins.registry.entry_points", return_value=[ep]):
+            result = list_plugins()
+        assert result == []
+
+    def test_stub_included_when_requested(self) -> None:
+        ep = _make_ep("stubby", self._stub_class())
+        with mock.patch("aegis.server.plugins.registry.entry_points", return_value=[ep]):
+            result = list_plugins(include_stubs=True)
+        assert len(result) == 1
+        assert result[0]["is_stub"] is True
+
+    def test_real_plugin_not_marked_stub(self) -> None:
+        cls = _make_plugin_class(name="real", description="", matches_alert="x")
+        ep = _make_ep("real", cls)
+        with mock.patch("aegis.server.plugins.registry.entry_points", return_value=[ep]):
+            result = list_plugins()
+        assert result[0]["is_stub"] is False

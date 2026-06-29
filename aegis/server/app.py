@@ -46,6 +46,7 @@ from aegis.server.api.routers import users as users_router
 from aegis.server.api.routers import webhook_subscriptions as webhook_subscriptions_router
 from aegis.server.middleware.rate_limit import AuthRateLimitMiddleware
 from aegis.server.middleware.request_id import RequestIDMiddleware
+from aegis.server.middleware.security_headers import SecurityHeadersMiddleware
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -299,14 +300,17 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         AuthRateLimitMiddleware,
         max_requests=cfg.rate_limit_auth_requests,
         window_sec=cfg.rate_limit_auth_window_sec,
+        redis_url=cfg.redis_url,
     )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+    # Hardening headers on every response (HSTS only in prod / over TLS).
+    app.add_middleware(SecurityHeadersMiddleware, hsts=_is_prod)
     # Outermost: tag every request with a correlation id + emit an access line.
     app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
