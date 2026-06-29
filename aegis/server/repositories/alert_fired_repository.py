@@ -73,6 +73,24 @@ class AlertFiredRepository:
         rows = await self.conn.fetch(query, *params)
         return [AlertFiredResponse.model_validate(dict(r)) for r in rows]
 
+    async def list_pending_escalation(
+        self,
+        *,
+        limit: int = 500,
+    ) -> list[AlertFiredResponse]:
+        """Warn-severity fires not yet escalated, oldest first (scheduler input).
+
+        The scheduler still applies the per-rule escalation_delay before acting;
+        this only narrows the candidate set cheaply.
+        """
+        rows = await self.conn.fetch(
+            "SELECT * FROM alert_fired_history"
+            " WHERE severity = 'warn' AND escalated_at IS NULL"
+            " ORDER BY fired_at ASC LIMIT $1",
+            limit,
+        )
+        return [AlertFiredResponse.model_validate(dict(r)) for r in rows]
+
     async def get_last_fired(
         self,
         *,

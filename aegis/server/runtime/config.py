@@ -207,6 +207,11 @@ class AegisSettings(BaseSettings):
         default="",
         description="Bearer token required from aegis-agent. Empty = no auth (dev).",
     )
+    agent_metrics_retention_days: int = Field(
+        default=30,
+        ge=0,
+        description="Prune agent_metrics rows older than this many days. 0 disables pruning.",
+    )
 
     # === AppStore (S2) ===
     appstore_catalog_url: str = ""
