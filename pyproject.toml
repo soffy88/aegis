@@ -19,13 +19,20 @@ dependencies = [
     "pydantic-settings>=2.5",
     "httpx>=0.27",
     "PyYAML>=6.0",
+    # Brain/RCA/Triage 默认 LLM provider. 必须显式声明: register_providers() 里
+    # `import anthropic` 之前是 try/except ImportError 静默跳过 → 镜像没装时整条
+    # Brain 链路静默降级为 stub (生产已观测到)。
+    "anthropic>=0.40",
 
     # 3O 主库依赖 — VCS specifiers pin to exact git tag SHA (dependency-confusion-safe)
     "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
+    # obase.migration 在 import 时 `from alembic import command`，但 obase 未声明该依赖。
+    # aegis 自身不用 alembic，但不显式声明会导致 `import obase` 直接失败（之前被陈旧
+    # uv.lock 掩盖）。这不是死依赖，勿删。
     "alembic>=1.13",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",

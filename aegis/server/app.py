@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from obase import ProviderRegistry
+
+from aegis.server.exceptions import AegisError, QuotaExceededError
 
 from aegis.server.api.routers import (
     alert_fired,
@@ -41,6 +45,7 @@ from aegis.server.api.routers import store as store_router
 from aegis.server.api.routers import users as users_router
 from aegis.server.api.routers import webhook_subscriptions as webhook_subscriptions_router
 from aegis.server.middleware.rate_limit import AuthRateLimitMiddleware
+from aegis.server.middleware.request_id import RequestIDMiddleware
 from aegis.server.persistence import (
     apply_migrations,
     close_pool,
@@ -99,9 +104,14 @@ def register_providers(cfg: AegisSettings) -> None:
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
+            system: str = "",
         ) -> dict:
-            client = anthropic.Anthropic()
+            # 30s/2-retry overrides the SDK default 10-min timeout: an RCA ReAct
+            # loop runs many sequential calls and must not wedge for minutes.
+            client = anthropic.Anthropic(timeout=30.0, max_retries=2)
             kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+            if system:
+                kwargs["system"] = system
             if tools:
                 kwargs["tools"] = tools
             if stop_sequences:
@@ -132,10 +142,14 @@ def register_providers(cfg: AegisSettings) -> None:
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
+            system: str = "",
         ) -> dict:
+            chat_messages = list(messages)
+            if system:
+                chat_messages = [{"role": "system", "content": system}, *chat_messages]
             resp = httpx.post(
                 f"{cfg.ollama_base_url}/api/chat",
-                json={"model": model, "messages": messages, "stream": False},
+                json={"model": model, "messages": chat_messages, "stream": False},
                 timeout=120.0,
             )
             resp.raise_for_status()
@@ -162,7 +176,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         settings: Optional pre-built settings (for testing).
     """
     cfg = settings or AegisSettings()
-    setup_logging(cfg.log_level)
+    setup_logging(cfg.log_level, cfg.log_format)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -187,53 +201,104 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             min_size=cfg.postgres_pool_min,
             max_size=cfg.postgres_pool_max,
         )
-        async with get_pool().acquire() as conn:
-            n = await apply_migrations(conn)
-            if n:
-                log.info("applied %d migrations", n)
 
-        register_providers(cfg)
+        # From here on the pool is open and a cron task may start. Wrap in
+        # try/finally so a partial-startup failure (migrations, vector index,
+        # service init) still tears down the pool + any started cron instead of
+        # leaking them.
+        cron_task: asyncio.Task[None] | None = None
+        try:
+            async with get_pool().acquire() as conn:
+                n = await apply_migrations(conn)
+                if n:
+                    log.info("applied %d migrations", n)
 
-        from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
-        from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
-        from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
-        from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
-        from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
-        from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
-        from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
-        from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
+            register_providers(cfg)
 
-        # 1. Load runbooks from YAML
-        load_runbooks()
+            from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
+            from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
+            from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
+            from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
+            from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
+            from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
+            from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
+            from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
 
-        # 2. Init LanceDB vector store
-        init_vector_store(cfg)
+            # 1. Load runbooks from YAML
+            load_runbooks()
 
-        # 3. Index runbooks into vector store (RAG)
-        index_runbooks(cfg)
+            # 2. Init LanceDB vector store
+            init_vector_store(cfg)
 
-        alerter = init_platform_alerter(cfg)
-        init_rca_service(cfg)
-        init_planner_service(cfg)
-        init_triage_service(cfg)
-        init_app_installer(cfg)
+            # 3. Index runbooks into vector store (RAG)
+            index_runbooks(cfg)
 
-        from aegis.server.orchestration.cron import start_orchestration_crons  # noqa: PLC0415
+            alerter = init_platform_alerter(cfg)
+            init_rca_service(cfg)
+            init_planner_service(cfg)
+            init_triage_service(cfg)
+            init_app_installer(cfg)
 
-        cron_task = start_orchestration_crons(alerter=alerter)
+            from aegis.server.orchestration.cron import start_orchestration_crons  # noqa: PLC0415
 
-        yield
+            cron_task = start_orchestration_crons(alerter=alerter)
 
-        cron_task.cancel()
+            yield
+        finally:
+            if cron_task is not None:
+                cron_task.cancel()
+                # Await cancellation so the loop isn't mid-iteration on the pool
+                # when we close it.
+                with suppress(asyncio.CancelledError):
+                    await cron_task
+            log.info("aegis_shutting_down")
+            # Don't let a close error mask the original startup exception.
+            with suppress(Exception):
+                await close_pool()
 
-        log.info("aegis_shutting_down")
-        await close_pool()
-
+    _is_prod = cfg.env == "prod"
     app = FastAPI(
         title="Aegis",
         version="0.1.0",
         description="AI-powered self-hosted PaaS",
         lifespan=lifespan,
+        # Defense-in-depth: hide interactive docs/schema in prod. (Not reachable
+        # through the /api-only edge proxy anyway, but closes the internal surface.)
+        docs_url=None if _is_prod else "/docs",
+        redoc_url=None if _is_prod else "/redoc",
+        openapi_url=None if _is_prod else "/openapi.json",
+    )
+
+    @app.exception_handler(AegisError)
+    async def _handle_aegis_error(request: Request, exc: AegisError) -> JSONResponse:
+        """Map domain errors to a uniform {"error": {...}} envelope + status.
+
+        Without this, a raised AegisError leaks as a bare Starlette 500 with no
+        structured body. HTTPExceptions keep FastAPI's default handling.
+        """
+        code = (
+            status.HTTP_402_PAYMENT_REQUIRED
+            if isinstance(exc, QuotaExceededError)
+            else status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        log.warning(
+            "aegis_error path=%s type=%s detail=%s",
+            request.url.path,
+            type(exc).__name__,
+            exc,
+        )
+        return JSONResponse(
+            status_code=code,
+            content={"error": {"type": type(exc).__name__, "detail": str(exc)}},
+        )
+
+    # Middleware order matters: Starlette wraps the LAST-added outermost. Add the
+    # rate limiter first so CORS wraps it — otherwise a 429 is emitted outside
+    # CORSMiddleware and the browser can't read it on the (CORS-governed) login form.
+    app.add_middleware(
+        AuthRateLimitMiddleware,
+        max_requests=cfg.rate_limit_auth_requests,
+        window_sec=cfg.rate_limit_auth_window_sec,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -242,11 +307,8 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(
-        AuthRateLimitMiddleware,
-        max_requests=cfg.rate_limit_auth_requests,
-        window_sec=cfg.rate_limit_auth_window_sec,
-    )
+    # Outermost: tag every request with a correlation id + emit an access line.
+    app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
     app.include_router(metrics_router.router)
     app.include_router(events.router)

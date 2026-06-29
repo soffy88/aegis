@@ -32,8 +32,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
+
+      # 私有 3O 依赖 (obase/oprim/oskill/omodul/oservice) 走 git+ssh，CI 必须
+      # 注入 deploy key 才能 pip install。在仓库 Settings → Secrets 配置
+      # HELIOS_DEPLOY_KEY (对 helios-plat/* 有读权限的私钥) 后此步生效。
+      - name: Set up SSH for private deps
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HELIOS_DEPLOY_KEY }}
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -90,8 +98,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
+
+      # 私有 3O 依赖 (obase/oprim/oskill/omodul/oservice) 走 git+ssh，CI 必须
+      # 注入 deploy key 才能 pip install。在仓库 Settings → Secrets 配置
+      # HELIOS_DEPLOY_KEY (对 helios-plat/* 有读权限的私钥) 后此步生效。
+      - name: Set up SSH for private deps
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HELIOS_DEPLOY_KEY }}
 
       - name: Install dependencies
         run: pip install -e ".[smoke]"

@@ -36,8 +36,10 @@ _AUTH_PATHS = {
 class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     """Token-bucket rate limiter for auth endpoints.
 
-    Keyed by X-Forwarded-For (first IP) falling back to client host.
-    Bucket refills at rate = max_requests / window_sec per second.
+    Keyed by CF-Connecting-IP (non-spoofable Cloudflare edge IP) falling back to
+    the direct peer. Bucket refills at rate = max_requests / window_sec per second.
+    NOTE: state is per-process; with uvicorn --workers N the effective limit is
+    N× the configured value. Move to shared Redis if strict global limits matter.
     """
 
     def __init__(
@@ -56,11 +58,18 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         self._lock = asyncio.Lock()
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract real client IP, respecting X-Forwarded-For from trusted proxies."""
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            # Take the first (leftmost) IP — that's the original client
-            return xff.split(",")[0].strip()
+        """Real client IP.
+
+        Cloudflare is the only ingress (caddy publishes no host ports), and it
+        sets CF-Connecting-IP from the real edge connection — a value clients
+        cannot forge. The leftmost X-Forwarded-For hop, by contrast, IS attacker-
+        controlled (Cloudflare appends the real IP after any client-supplied
+        value), so keying on it let an attacker mint unlimited fresh buckets.
+        Prefer CF-Connecting-IP; fall back to the direct peer.
+        """
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
         return request.client.host if request.client else "unknown"
 
     async def dispatch(self, request: Request, call_next: Callable[..., Any]) -> Response:

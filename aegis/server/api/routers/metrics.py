@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Any
 
 import asyncpg
@@ -43,7 +44,7 @@ def _verify_agent_token(
             detail="Missing or invalid Authorization header",
         )
     token = authorization.removeprefix("Bearer ").strip()
-    if token != cfg.agent_token:
+    if not secrets.compare_digest(token, cfg.agent_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid agent token",
