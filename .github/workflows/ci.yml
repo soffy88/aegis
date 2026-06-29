@@ -44,7 +44,12 @@ jobs:
           ssh-private-key: ${{ secrets.HELIOS_DEPLOY_KEY }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Install the in-repo AutoHeal SDK first so pip sees the requirement
+        # satisfied (it's a local package, not on any index — pip ignores
+        # [tool.uv.sources]).
+        run: |
+          pip install -e ./aegis-autoheal-sdk
+          pip install -e ".[dev]"
 
       - name: pre-commit
         run: pre-commit run --all-files
@@ -110,7 +115,9 @@ jobs:
           ssh-private-key: ${{ secrets.HELIOS_DEPLOY_KEY }}
 
       - name: Install dependencies
-        run: pip install -e ".[smoke]"
+        run: |
+          pip install -e ./aegis-autoheal-sdk
+          pip install -e ".[smoke]"
 
       - name: Smoke tests (real Postgres container)
         run: RUN_SMOKE=1 pytest aegis/tests/smoke/ -v --tb=short

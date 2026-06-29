@@ -23,6 +23,7 @@ name = "aegis"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aegis-autoheal-sdk" },
     { name = "alembic" },
     { name = "anthropic" },
     { name = "asyncpg" },
@@ -78,6 +79,7 @@ test = [
 requires-dist = [
     { name = "aegis", extras = ["test"], marker = "extra == 'dev'" },
     { name = "aegis", extras = ["test"], marker = "extra == 'smoke'" },
+    { name = "aegis-autoheal-sdk", directory = "aegis-autoheal-sdk" },
     { name = "alembic", specifier = ">=1.13" },
     { name = "anthropic", specifier = ">=0.40" },
     { name = "asyncpg", specifier = ">=0.29" },
@@ -109,6 +111,18 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 provides-extras = ["test", "dev", "smoke", "c3-e2e"]
+
+[[package]]
+name = "aegis-autoheal-sdk"
+version = "0.1.0"
+source = { directory = "aegis-autoheal-sdk" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "aiohappyeyeballs"
