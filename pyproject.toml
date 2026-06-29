@@ -29,7 +29,6 @@ dependencies = [
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
     "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.0",
-    "alembic>=1.13",
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",

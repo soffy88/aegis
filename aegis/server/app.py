@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -200,53 +201,72 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             min_size=cfg.postgres_pool_min,
             max_size=cfg.postgres_pool_max,
         )
-        async with get_pool().acquire() as conn:
-            n = await apply_migrations(conn)
-            if n:
-                log.info("applied %d migrations", n)
 
-        register_providers(cfg)
+        # From here on the pool is open and a cron task may start. Wrap in
+        # try/finally so a partial-startup failure (migrations, vector index,
+        # service init) still tears down the pool + any started cron instead of
+        # leaking them.
+        cron_task: asyncio.Task[None] | None = None
+        try:
+            async with get_pool().acquire() as conn:
+                n = await apply_migrations(conn)
+                if n:
+                    log.info("applied %d migrations", n)
 
-        from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
-        from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
-        from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
-        from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
-        from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
-        from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
-        from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
-        from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
+            register_providers(cfg)
 
-        # 1. Load runbooks from YAML
-        load_runbooks()
+            from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
+            from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
+            from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
+            from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
+            from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
+            from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
+            from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
+            from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
 
-        # 2. Init LanceDB vector store
-        init_vector_store(cfg)
+            # 1. Load runbooks from YAML
+            load_runbooks()
 
-        # 3. Index runbooks into vector store (RAG)
-        index_runbooks(cfg)
+            # 2. Init LanceDB vector store
+            init_vector_store(cfg)
 
-        alerter = init_platform_alerter(cfg)
-        init_rca_service(cfg)
-        init_planner_service(cfg)
-        init_triage_service(cfg)
-        init_app_installer(cfg)
+            # 3. Index runbooks into vector store (RAG)
+            index_runbooks(cfg)
 
-        from aegis.server.orchestration.cron import start_orchestration_crons  # noqa: PLC0415
+            alerter = init_platform_alerter(cfg)
+            init_rca_service(cfg)
+            init_planner_service(cfg)
+            init_triage_service(cfg)
+            init_app_installer(cfg)
 
-        cron_task = start_orchestration_crons(alerter=alerter)
+            from aegis.server.orchestration.cron import start_orchestration_crons  # noqa: PLC0415
 
-        yield
+            cron_task = start_orchestration_crons(alerter=alerter)
 
-        cron_task.cancel()
+            yield
+        finally:
+            if cron_task is not None:
+                cron_task.cancel()
+                # Await cancellation so the loop isn't mid-iteration on the pool
+                # when we close it.
+                with suppress(asyncio.CancelledError):
+                    await cron_task
+            log.info("aegis_shutting_down")
+            # Don't let a close error mask the original startup exception.
+            with suppress(Exception):
+                await close_pool()
 
-        log.info("aegis_shutting_down")
-        await close_pool()
-
+    _is_prod = cfg.env == "prod"
     app = FastAPI(
         title="Aegis",
         version="0.1.0",
         description="AI-powered self-hosted PaaS",
         lifespan=lifespan,
+        # Defense-in-depth: hide interactive docs/schema in prod. (Not reachable
+        # through the /api-only edge proxy anyway, but closes the internal surface.)
+        docs_url=None if _is_prod else "/docs",
+        redoc_url=None if _is_prod else "/redoc",
+        openapi_url=None if _is_prod else "/openapi.json",
     )
 
     @app.exception_handler(AegisError)
