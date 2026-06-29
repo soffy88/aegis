@@ -40,14 +40,22 @@ def list_plugin_ids() -> list[str]:
     return [ep.name for ep in entry_points(group=_ENTRY_POINTS_GROUP)]
 
 
-def list_plugins() -> list[dict[str, Any]]:
-    """Return runbook-compatible metadata dicts for all installed plugins."""
+def list_plugins(*, include_stubs: bool = False) -> list[dict[str, Any]]:
+    """Return runbook-compatible metadata dicts for installed plugins.
+
+    Not-yet-implemented stub plugins (is_stub=True) are excluded by default so the
+    catalog only advertises plugins that actually do something. Pass include_stubs=True
+    to surface them (e.g. for an admin/debug view).
+    """
     result = []
     for ep in entry_points(group=_ENTRY_POINTS_GROUP):
         try:
             cls = ep.load()
         except Exception as exc:
             log.warning("plugin_load_failed plugin_id=%s err=%s", ep.name, exc)
+            continue
+        is_stub = bool(getattr(cls, "is_stub", False))
+        if is_stub and not include_stubs:
             continue
         result.append(
             {
@@ -56,6 +64,7 @@ def list_plugins() -> list[dict[str, Any]]:
                 "trigger": getattr(cls, "matches_alert", ""),
                 "requires_approval": getattr(cls, "requires_approval_when", None) is not None,
                 "version": getattr(cls, "version", ""),
+                "is_stub": is_stub,
                 "steps": [],
                 "source": "plugin",
             }
