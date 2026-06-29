@@ -635,21 +635,32 @@ MIGRATIONS: list[tuple[str, str]] = [
 
 
 async def apply_migrations(conn: asyncpg.Connection) -> int:
-    """Apply all pending migrations. Returns count applied."""
-    await conn.execute(_MIGRATIONS_TABLE)
-    applied_rows = await conn.fetch("SELECT version FROM aegis_migrations")
-    applied = {row["version"] for row in applied_rows}
+    """Apply all pending migrations. Returns count applied.
 
-    count = 0
-    for version, sql in MIGRATIONS:
-        if version in applied:
-            continue
-        async with conn.transaction():
-            await conn.execute(sql)
-            await conn.execute(
-                "INSERT INTO aegis_migrations (version) VALUES ($1)",
-                version,
-            )
-        log.info("applied migration: %s", version)
-        count += 1
-    return count
+    Serialized with a session-level Postgres advisory lock: concurrent boots
+    (uvicorn --workers 2, multi-replica) would otherwise race on non-idempotent
+    migrations (e.g. the 006 column rename) and crash one worker / half-apply the
+    schema. The second runner blocks here until the first finishes, then sees all
+    versions already applied and does nothing.
+    """
+    await conn.execute("SELECT pg_advisory_lock(hashtext('aegis_migrations'))")
+    try:
+        await conn.execute(_MIGRATIONS_TABLE)
+        applied_rows = await conn.fetch("SELECT version FROM aegis_migrations")
+        applied = {row["version"] for row in applied_rows}
+
+        count = 0
+        for version, sql in MIGRATIONS:
+            if version in applied:
+                continue
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO aegis_migrations (version) VALUES ($1)",
+                    version,
+                )
+            log.info("applied migration: %s", version)
+            count += 1
+        return count
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock(hashtext('aegis_migrations'))")

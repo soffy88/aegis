@@ -35,7 +35,8 @@ from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
 from aegis.server.auth.dependencies import UserContext
-from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.auth.rbac import PERMISSIONS_BY_ROLE, Permission, require_permission
+from aegis.server.models import Role
 from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -264,15 +265,41 @@ async def container_terminal(
     token: str,
 ) -> None:
     """Interactive container terminal (WebSocket + docker exec)."""
-    # 1. Validate token (WS cannot carry Authorization header easily)
+    # 1. Validate token AND authorize. A WS cannot carry an Authorization header,
+    #    so we verify the token query-param manually — but must still enforce the
+    #    same authz as the REST exec endpoint, not just signature validity:
+    #    holder must present a valid *access* token, be a member of org_id, and
+    #    hold container-exec permission (TRIGGER_AUTOHEAL, mirrors exec_container).
+    #    NOTE: container_name is not yet scoped to org_id (containers are global in
+    #    this design); acceptable in self-hosted single-tenant, revisit for multi-tenant.
     try:
-        jwt_verify_hs256(
+        payload = jwt_verify_hs256(
             token=token,
             secret=get_settings().jwt_secret,
             check_exp=True,
         )
     except Exception:
         await websocket.close(code=1008)  # Policy Violation
+        return
+
+    if payload.get("type") != "access":
+        await websocket.close(code=1008)
+        return
+
+    membership = next(
+        (o for o in payload.get("orgs", []) if o.get("org_id") == str(org_id)),
+        None,
+    )
+    if membership is None:
+        await websocket.close(code=1008)  # not a member of this org
+        return
+    try:
+        role = Role(membership["role"])
+    except (KeyError, ValueError):
+        await websocket.close(code=1008)
+        return
+    if Permission.TRIGGER_AUTOHEAL not in PERMISSIONS_BY_ROLE[role]:
+        await websocket.close(code=1008)  # insufficient permission for container exec
         return
 
     await websocket.accept()

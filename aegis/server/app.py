@@ -99,9 +99,14 @@ def register_providers(cfg: AegisSettings) -> None:
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
+            system: str = "",
         ) -> dict:
-            client = anthropic.Anthropic()
+            # 30s/2-retry overrides the SDK default 10-min timeout: an RCA ReAct
+            # loop runs many sequential calls and must not wedge for minutes.
+            client = anthropic.Anthropic(timeout=30.0, max_retries=2)
             kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+            if system:
+                kwargs["system"] = system
             if tools:
                 kwargs["tools"] = tools
             if stop_sequences:
@@ -132,10 +137,14 @@ def register_providers(cfg: AegisSettings) -> None:
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
+            system: str = "",
         ) -> dict:
+            chat_messages = list(messages)
+            if system:
+                chat_messages = [{"role": "system", "content": system}, *chat_messages]
             resp = httpx.post(
                 f"{cfg.ollama_base_url}/api/chat",
-                json={"model": model, "messages": messages, "stream": False},
+                json={"model": model, "messages": chat_messages, "stream": False},
                 timeout=120.0,
             )
             resp.raise_for_status()
