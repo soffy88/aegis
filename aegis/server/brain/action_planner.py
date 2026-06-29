@@ -7,7 +7,9 @@ Interface gap requiring wrapper:
 - llm_provider protocol: ActionPlannerEngine calls llm_provider(symptom=, context=)
   → [{plugin_id, params, description}] but ProviderRegistry callers have a different
   signature. _make_planner_llm_provider bridges this.
-- rag: oskill.retrieve_runbook requires vector_encode_fn + vector_search_fn; deferred.
+- rag: reuses the RCA runbook-retrieval builder (vector_encode_fn + vector_search_fn
+  over LanceDB) so the planner grounds plans in matching runbooks when the vector
+  store is initialized (AEGIS-BACKLOG-073 resolved).
 
 AEGIS-BACKLOG-070: switched to assemble(manifest).
 AEGIS-BACKLOG-074: using public async invoke API.
@@ -24,6 +26,7 @@ from obase import ProviderRegistry
 from oservice.assembler import ServiceManifest, assemble
 from oservice.engines.action_planner import ActionPlannerEngine
 
+from aegis.server.brain.rca import _build_knowledge_retrieval_fn
 from aegis.server.plugins.registry import get_plugin_callable
 from aegis.server.runtime.config import AegisSettings
 
@@ -124,12 +127,16 @@ def build_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
     llm_provider = _make_planner_llm_provider(raw_caller, cfg.planner_llm_model)
     get_plugin_callable.__module__ = "layer4.aegis_bridge"
 
+    # Ground plans in matching runbooks when the vector store is ready; empty otherwise.
+    retrieve_fn = _build_knowledge_retrieval_fn(cfg)
+    rag = [retrieve_fn] if retrieve_fn is not None else []
+
     manifest = ServiceManifest(
         skeleton="action_planner",
         inject={
             "llm_provider": [llm_provider],
             "plugin_registry": [get_plugin_callable],
-            "rag": [],  # TODO(AEGIS-BACKLOG-073)
+            "rag": rag,
         },
         trigger={},
         config={

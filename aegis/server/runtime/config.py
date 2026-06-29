@@ -213,6 +213,26 @@ class AegisSettings(BaseSettings):
         description="Prune agent_metrics rows older than this many days. 0 disables pruning.",
     )
 
+    # === Capacity forecaster (cron) ===
+    capacity_min_samples: int = Field(
+        default=4, ge=2, description="Minimum samples before a metric is forecast."
+    )
+    capacity_default_threshold: float = Field(
+        default=90.0, description="Breach threshold (%) for metrics without a specific override."
+    )
+    capacity_breach_days_warn: int = Field(
+        default=30, ge=1, description="Forecast horizon (steps/days) for breach warnings."
+    )
+    capacity_metric_thresholds: dict[str, float] = Field(
+        default_factory=lambda: {
+            "disk_usage_percent": 90.0,
+            "ram_usage_percent": 95.0,
+            "cpu_usage_percent": 95.0,
+            "db_connection_pool_used": 90.0,
+        },
+        description="Per-metric breach thresholds (%). JSON env override supported.",
+    )
+
     # === AppStore (S2) ===
     appstore_catalog_url: str = ""
     appstore_health_retries: int = 5

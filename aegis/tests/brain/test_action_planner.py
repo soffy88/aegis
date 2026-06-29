@@ -38,6 +38,34 @@ def test_init_planner_service_sets_singleton() -> None:
     assert get_planner_service() is svc
 
 
+def test_build_planner_injects_rag_when_vector_store_ready() -> None:
+    """When the runbook retrieval fn is available, it is injected into the rag slot."""
+    sentinel = MagicMock(name="retrieve_fn")
+    with (
+        patch(
+            "aegis.server.brain.action_planner._build_knowledge_retrieval_fn",
+            return_value=sentinel,
+        ),
+        patch("aegis.server.brain.action_planner.assemble") as mock_assemble,
+    ):
+        build_planner_service(_cfg())
+    manifest = mock_assemble.call_args.args[0]
+    assert manifest.inject["rag"] == [sentinel]
+
+
+def test_build_planner_rag_empty_when_no_vector_store() -> None:
+    with (
+        patch(
+            "aegis.server.brain.action_planner._build_knowledge_retrieval_fn",
+            return_value=None,
+        ),
+        patch("aegis.server.brain.action_planner.assemble") as mock_assemble,
+    ):
+        build_planner_service(_cfg())
+    manifest = mock_assemble.call_args.args[0]
+    assert manifest.inject["rag"] == []
+
+
 # ── propose_action_plan ───────────────────────────────────────────────────────
 
 

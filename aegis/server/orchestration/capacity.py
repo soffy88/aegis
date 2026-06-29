@@ -13,17 +13,9 @@ from typing import Any
 import asyncpg
 from oskill import CapacityForecastResult, compute_capacity_forecast
 
-log = logging.getLogger(__name__)
+from aegis.server.runtime.config import get_settings
 
-_MIN_SAMPLES = 4
-_METRIC_THRESHOLDS: dict[str, float] = {
-    "disk_usage_percent": 90.0,
-    "ram_usage_percent": 95.0,
-    "cpu_usage_percent": 95.0,
-    "db_connection_pool_used": 90.0,
-}
-_DEFAULT_THRESHOLD = 90.0
-_BREACH_DAYS_WARN = 30
+log = logging.getLogger(__name__)
 
 
 async def check_capacity_metrics(
@@ -33,8 +25,16 @@ async def check_capacity_metrics(
 ) -> list[CapacityForecastResult]:
     """Forecast resource capacity; returns list of metrics predicted to breach.
 
+    Thresholds, minimum samples and the forecast horizon come from AegisSettings
+    (AEGIS_CAPACITY_*), so operators can tune them without a code change.
+
     alerter: optional object with a .fire(metric, result) method for alert delivery.
     """
+    cfg = get_settings()
+    min_samples = cfg.capacity_min_samples
+    thresholds = cfg.capacity_metric_thresholds
+    default_threshold = cfg.capacity_default_threshold
+    breach_days_warn = cfg.capacity_breach_days_warn
     rows = await conn.fetch(
         """
         SELECT metric_name, value, unit
@@ -55,10 +55,10 @@ async def check_capacity_metrics(
     breaching: list[CapacityForecastResult] = []
 
     for metric_name, samples in by_metric.items():
-        if len(samples) < _MIN_SAMPLES:
+        if len(samples) < min_samples:
             continue
 
-        threshold = _METRIC_THRESHOLDS.get(metric_name, _DEFAULT_THRESHOLD)
+        threshold = thresholds.get(metric_name, default_threshold)
 
         result: CapacityForecastResult = await loop.run_in_executor(
             None,
@@ -66,7 +66,7 @@ async def check_capacity_metrics(
                 metric_name=m,
                 samples=s,
                 threshold=t,
-                forecast_steps=_BREACH_DAYS_WARN,
+                forecast_steps=breach_days_warn,
             ),
         )
 
