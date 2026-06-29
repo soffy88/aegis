@@ -56,6 +56,10 @@ test = [
 "sync-replicas"       = "aegis_plugins.plugins.stubs:SyncReplicasPlugin"
 "healthcheck-external" = "aegis_plugins.plugins.stubs:HealthcheckExternalPlugin"
 
+# aegis-autoheal-sdk 是同仓库的本地包（非私有源 / 非 PyPI）。
+[tool.uv.sources]
+aegis-autoheal-sdk = { path = "../aegis-autoheal-sdk", editable = true }
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
