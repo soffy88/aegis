@@ -1,30 +1,29 @@
-# Aegis — helios-net 内部反代
-# cloudflared → aegis-caddy:80 → backend/console
-# Caddy Admin API 仅 helios-net 内可达 (aegis-backend 调用)
-
 {
-    # Admin API 监听所有接口（仅 helios-net 内可达，不对外暴露）
     admin 0.0.0.0:2019
-    # 不自动申请证书（TLS 由 Cloudflare 边缘终止）
     auto_https off
 }
 
-# 主域名入口（cloudflared 转发进来的流量）
+# Mneme API
+:8081 {
+    reverse_proxy mneme-api-1:8000
+}
+
+# Mneme 前端
+:8083 {
+    reverse_proxy mneme-web:3000
+}
+
+# Aegis 主入口
 :8080 {
-    # API 请求 → backend
     handle /api/* {
         reverse_proxy aegis-backend:8000
     }
-
-    # WebSocket 终端
     handle /api/v1/orgs/*/docker/containers/*/terminal {
         reverse_proxy aegis-backend:8000 {
             header_up Connection "Upgrade"
             header_up Upgrade "websocket"
         }
     }
-
-    # 其余 → Next.js console
     handle {
         reverse_proxy aegis-console:3000
     }

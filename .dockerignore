@@ -1,0 +1,49 @@
+# Aegis backend build context (Dockerfile.prod / Dockerfile.hotpatch)
+# Dockerfile 只 COPY: pyproject.toml uv.lock README.md aegis/
+# 其余一律排除，避免上下文膨胀 + 防止 .env 密钥进构建上下文
+
+# --- 密钥 / 环境文件 (绝不进上下文) ---
+.env
+.env.*
+*.pem
+*.key
+
+# --- VCS / IDE ---
+.git
+.gitignore
+.github
+.pre-commit-config.yaml
+**/.git
+.vscode
+.idea
+
+# --- Python 构建/缓存产物 ---
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+dist
+build
+*.egg-info
+
+# --- 测试 (运行时镜像不需要) ---
+aegis/tests
+
+# --- 姊妹仓 / 前端 (各自独立构建，不进后端上下文) ---
+aegis-console
+aegis-agent
+aegis-plugins
+aegis-appstore
+aegis-edge
+aegis-watch
+aegis-poc
+
+# --- 文档 / 杂项 ---
+docs
+*.md
+!README.md
+*.log
+**/*Zone.Identifier

@@ -13,7 +13,7 @@
 ### 1. 准备配置
 
 ```bash
-cp .env.aegis.example .env.aegis
+cp env.aegis.example .env.aegis
 # 编辑 .env.aegis，填入所有必填项
 nano .env.aegis
 ```

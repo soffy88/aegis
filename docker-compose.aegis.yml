@@ -87,15 +87,33 @@ services:
       - helios-net
 
     depends_on:
-      - aegis-caddy
+      aegis-caddy:
+        condition: service_healthy
 
     healthcheck:
       test: ["CMD", "python", "-c",
-        "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health').read()"]
+        "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       start_period: 20s
       retries: 3
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2.0"
+        reservations:
+          memory: 256M
 
   aegis-console:
     image: aegis-console:${AEGIS_VERSION:-latest}
@@ -108,16 +126,31 @@ services:
     networks:
       - helios-net
     depends_on:
-      - aegis-backend
+      aegis-backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 5s
       start_period: 15s
       retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
   aegis-caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.4-alpine
     container_name: aegis-caddy
     restart: unless-stopped
     volumes:
@@ -131,16 +164,44 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "1.0"
 
   aegis-cloudflared:
-    image: cloudflare/cloudflared:latest
+    # 锁定到在产已验证版本 (原为 :latest, 不可复现)
+    image: cloudflare/cloudflared:2026.6.0
     container_name: aegis-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN:?required}
     networks:
       - helios-net
     depends_on:
-      - aegis-caddy
+      aegis-caddy:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "1.0"
 
 volumes:
   aegis-caddy-data:

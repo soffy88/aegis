@@ -9,8 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv==0.5.0
 
 COPY pyproject.toml uv.lock README.md ./
-RUN mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
-RUN --mount=type=ssh uv sync --frozen --no-cache --no-dev
+RUN --mount=type=secret,id=ssh_key \
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
+    cp /run/secrets/ssh_key /root/.ssh/id_ed25519 && chmod 600 /root/.ssh/id_ed25519 && \
+    printf 'Host github.com\n  StrictHostKeyChecking no\n  IdentitiesOnly yes\n  IdentityFile /root/.ssh/id_ed25519\n' > /root/.ssh/config && chmod 600 /root/.ssh/config && \
+    uv sync --frozen --no-cache --no-dev && \
+    rm -rf /root/.ssh
 
 # Runtime stage
 FROM python:3.14-slim
@@ -33,6 +37,6 @@ ENV ENV=prod
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health').read()" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3).read()" || exit 1
 
 CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
