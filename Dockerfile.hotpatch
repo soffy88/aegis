@@ -23,6 +23,14 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV ENV=prod
 
+# Run as non-root (mirrors Dockerfile.prod). Docker socket access is granted at
+# runtime via compose `group_add` (AEGIS_DOCKER_GID).
+RUN groupadd -g 10001 aegis \
+    && useradd -u 10001 -g aegis -M -s /usr/sbin/nologin aegis \
+    && mkdir -p /data/aegis \
+    && chown -R aegis:aegis /app /data/aegis
+USER aegis
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

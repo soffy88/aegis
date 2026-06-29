@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import urllib.parse
 from datetime import datetime
 from typing import Any, Literal
@@ -48,6 +49,39 @@ _BLOCKED_NETWORK_CLASSES = (
 )
 
 
+# Must match webhook_dispatcher._WEBHOOK_SECRET_ENV_PREFIX (kept literal to avoid
+# importing the engine layer from schemas).
+_WEBHOOK_SECRET_ENV_PREFIX = "AEGIS_WEBHOOK_SECRET_"
+
+
+def _validate_secret_ref(v: str | None) -> str | None:
+    """Validate the secret reference scheme at write time (fail closed).
+
+    The dispatcher only understands two schemes; anything else silently disables
+    signing, so reject unknown schemes here. 'plain:' stores the key in the DB and is
+    refused outside dev — production must keep the key in an env var.
+    """
+    if v is None:
+        return v
+    if v.startswith("env:"):
+        if not v[4:].startswith(_WEBHOOK_SECRET_ENV_PREFIX):
+            raise ValueError(
+                f"env: secret refs must use the {_WEBHOOK_SECRET_ENV_PREFIX} prefix"
+            )
+        return v
+    if v.startswith("plain:"):
+        if os.environ.get("AEGIS_ENV", "dev") != "dev":
+            raise ValueError(
+                "plain: secrets are not allowed outside dev — store the key in an "
+                f"{_WEBHOOK_SECRET_ENV_PREFIX}<NAME> env var and reference it as "
+                f"'env:{_WEBHOOK_SECRET_ENV_PREFIX}<NAME>'"
+            )
+        return v
+    raise ValueError(
+        f"secret must be 'env:{_WEBHOOK_SECRET_ENV_PREFIX}<NAME>' or (dev only) 'plain:<secret>'"
+    )
+
+
 def _validate_webhook_url(v: str) -> str:
     if not (v.startswith("http://") or v.startswith("https://")):
         raise ValueError("url must start with http:// or https://")
@@ -85,6 +119,11 @@ class WebhookSubscriptionCreate(BaseModel):
     def validate_url(cls, v: str) -> str:
         return _validate_webhook_url(v)
 
+    @field_validator("secret_encrypted")
+    @classmethod
+    def validate_secret(cls, v: str | None) -> str | None:
+        return _validate_secret_ref(v)
+
 
 class WebhookSubscriptionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -111,6 +150,11 @@ class WebhookSubscriptionUpdate(BaseModel):
         if invalid:
             raise ValueError(f"unknown event_types: {invalid}")
         return v
+
+    @field_validator("secret_encrypted")
+    @classmethod
+    def validate_secret(cls, v: str | None) -> str | None:
+        return _validate_secret_ref(v)
 
 
 class WebhookSubscriptionResponse(BaseModel):

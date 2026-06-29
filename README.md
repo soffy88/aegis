@@ -8,7 +8,7 @@ AI-assisted runbooks — all on your own box, no SaaS lock-in.
 
 ## What's in
 
-- **AppStore**: 278 apps, one-click install via Docker
+- **AppStore**: built-in seed catalog of popular self-hosted apps (one-click install via Docker), extensible with your own catalog dir mounted at `/data/aegis-appstore/apps`
 - **Health monitoring**: container stats, healthchecks, event causal chain (`event_trail`)
 - **AutoHeal**: plugin system with dry-run + human approval — **not** an AI agent
 - **Caddy reverse proxy**: auto SSL, sane defaults

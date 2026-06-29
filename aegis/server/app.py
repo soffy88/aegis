@@ -299,6 +299,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
         AuthRateLimitMiddleware,
         max_requests=cfg.rate_limit_auth_requests,
         window_sec=cfg.rate_limit_auth_window_sec,
+        redis_url=cfg.redis_url,
     )
     app.add_middleware(
         CORSMiddleware,
