@@ -84,7 +84,12 @@ services:
       - /home/soffy/projects/aegis/aegis-appstore/apps:/data/aegis-appstore/apps:ro
 
     networks:
+      # Extra stack networks so the uptime prober can reach those stacks' health
+      # endpoints (read-only HTTP probing). Reversible: remove a network to stop
+      # probing that stack internally.
       - helios-net
+      - stratum-net
+      - hevi-cftunnel_default
 
     depends_on:
       aegis-caddy:
@@ -236,4 +241,8 @@ volumes:
 
 networks:
   helios-net:
+    external: true
+  stratum-net:
+    external: true
+  hevi-cftunnel_default:
     external: true
