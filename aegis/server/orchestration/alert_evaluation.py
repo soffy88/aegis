@@ -21,6 +21,7 @@ limitation of the current agent_metrics schema, not of this loop.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ import asyncpg
 from aegis.server.engines.alert_engine import AlertEngine
 from aegis.server.repositories.alert_fired_repository import AlertFiredRepository
 from aegis.server.repositories.alert_rule_repository import AlertRuleRepository
+from aegis.server.repositories.autoheal_event_repository import AutoHealEventRepository
 from aegis.server.schemas.alerting import AlertRuleResponse
 
 if TYPE_CHECKING:
@@ -84,6 +86,7 @@ async def run_alert_evaluation(
 
     rule_repo = AlertRuleRepository(conn)
     fired_repo = AlertFiredRepository(conn)
+    autoheal_repo = AutoHealEventRepository(conn)
     engine = AlertEngine(
         rule_repo=rule_repo,
         fired_repo=fired_repo,
@@ -102,6 +105,18 @@ async def run_alert_evaluation(
         stats["evaluated"] += 1
         if result.fired:
             stats["fired"] += 1
+            # Populate aegis_alert_events so the autoheal dashboard/stats reflect
+            # real activity (the table previously had no writer). This records the
+            # signal; automatic remediation against it is a separate, policy-gated
+            # step (see STATUS Needs-Human: autoheal policy model).
+            await autoheal_repo.insert(
+                org_id=rule.org_id,
+                cycle_id=uuid.uuid4(),
+                severity=result.severity,
+                source=f"alert_rule:{rule.name}",
+                reason=result.reason,
+                value=value,
+            )
 
     if stats["fired"]:
         log.info(

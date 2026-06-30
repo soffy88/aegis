@@ -65,7 +65,8 @@ async def test_picks_max_for_greater_operator():
     conn = _conn_with_values([40.0, 95.0, 60.0])
     with patch.object(ae.AlertRuleRepository, "list_all_enabled",
                       AsyncMock(return_value=[_rule(operator=">=")])), \
-         patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval):
+         patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval), \
+         patch.object(ae.AutoHealEventRepository, "insert", AsyncMock()):
         stats = await ae.run_alert_evaluation(conn=conn, now=_NOW)
 
     assert captured["value"] == 95.0
