@@ -746,6 +746,21 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON metric_anomalies (hostname, metric_name, detected_at DESC);
         """,
     ),
+    (
+        "029_llm_cost_ledger",
+        """
+        CREATE TABLE IF NOT EXISTS llm_cost_ledger (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            principal TEXT NOT NULL,          -- dispatcher user_id (org_id in the alert path)
+            omodul_name TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_cost_principal_time
+            ON llm_cost_ledger (principal, created_at DESC);
+        """,
+    ),
 ]
 
 

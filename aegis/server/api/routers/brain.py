@@ -6,9 +6,11 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.brain.action_planner import get_planner_service, propose_action_plan
@@ -101,3 +103,16 @@ async def brain_status(
         "rca": rca.health() if rca else {"status": "not_initialized"},
         "planner": planner.health() if planner else {"status": "not_initialized"},
     }
+
+
+@router.get("/spend")
+async def get_llm_spend(
+    org_id: uuid.UUID,
+    days: float = Query(default=30, gt=0, le=365),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
+) -> dict:
+    """Per-org LLM spend (total + per-model) over the last `days`. viewer+."""
+    from aegis.server.services.llm_cost import org_spend  # noqa: PLC0415
+
+    return await org_spend(conn, org_id=org_id, days=days)

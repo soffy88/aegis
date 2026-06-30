@@ -105,7 +105,18 @@ class OmodulDispatcher:
             await self.dedup_cache.set(fp, result)
 
         # 9. Budget deduct
-        await self.budget_tracker.deduct(user_id, result.get("cost_usd", 0.0))
+        cost_usd = result.get("cost_usd", 0.0)
+        await self.budget_tracker.deduct(user_id, cost_usd)
+
+        # 9b. Persist the charge to the per-org cost ledger (best-effort).
+        from aegis.server.services.llm_cost import record_cost  # noqa: PLC0415
+
+        await record_cost(
+            principal=user_id,
+            omodul_name=omodul_name,
+            model=result.get("model", ""),
+            cost_usd=cost_usd,
+        )
 
         return result
 
