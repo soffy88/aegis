@@ -653,6 +653,28 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON scrape_targets (enabled) WHERE enabled = TRUE;
         """,
     ),
+    (
+        "024_incident_clustering",
+        """
+        ALTER TABLE incidents ADD COLUMN IF NOT EXISTS dedup_key TEXT;
+        ALTER TABLE incidents ADD COLUMN IF NOT EXISTS event_count INT NOT NULL DEFAULT 0;
+        ALTER TABLE incidents ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ;
+        -- At most one OPEN incident per (org, dedup_key): new signals attach instead
+        -- of spawning duplicates.
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_open_dedup
+            ON incidents (org_id, dedup_key)
+            WHERE status = 'open' AND dedup_key IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS incident_events (
+            incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+            event_id    UUID NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (incident_id, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_incident_events_incident
+            ON incident_events (incident_id);
+        """,
+    ),
 ]
 
 

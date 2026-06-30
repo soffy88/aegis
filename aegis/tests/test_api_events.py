@@ -150,10 +150,17 @@ class TestEventsApi:
 
 class TestAlertsApi:
     def test_ingest_alert(self, client: TestClient) -> None:
-        with mock.patch(
-            "aegis.server.api.routers.alerts.run_brain_pipeline",
-            new_callable=mock.AsyncMock,
-            return_value={"stage": "triage_only", "triage": {}},
+        with (
+            mock.patch(
+                "aegis.server.api.routers.alerts.run_brain_pipeline",
+                new_callable=mock.AsyncMock,
+                return_value={"stage": "triage_only", "triage": {}},
+            ),
+            mock.patch(
+                "aegis.server.services.incident_correlation.cluster_signal",
+                new_callable=mock.AsyncMock,
+                return_value=(uuid.uuid4(), True),
+            ),
         ):
             r = client.post(
                 f"/api/v1/orgs/{_ORG}/alerts/ingest?project_id={_PROJ}",
@@ -167,3 +174,4 @@ class TestAlertsApi:
         assert "trace_id" in body
         assert body["trace_id"].startswith("trc_")
         assert "brain_pipeline" in body
+        assert "incident_id" in body and body["incident_is_new"] is True

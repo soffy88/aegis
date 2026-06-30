@@ -83,6 +83,7 @@ async def receive_envelope(
         org_id=project.org_id,
         project_id=project_id,
         envelope_bytes=body,
+        conn=conn,
     )
 
     # 6. Return Sentry-compatible response (SDK expects {"id": "<hex>"})
