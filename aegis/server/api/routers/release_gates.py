@@ -25,6 +25,23 @@ router = APIRouter(
 )
 
 
+def _build_webhook_dispatcher(conn: asyncpg.Connection):
+    """WebhookDispatcher bound to this request's conn, so gate decisions emit
+    release.approved/rejected events (delivered by the cron delivery loop)."""
+    from aegis.server.engines.webhook_dispatcher import WebhookDispatcher
+    from aegis.server.repositories.webhook_delivery_repository import (
+        WebhookDeliveryQueueRepository,
+    )
+    from aegis.server.repositories.webhook_subscription_repository import (
+        WebhookSubscriptionRepository,
+    )
+
+    return WebhookDispatcher(
+        sub_repo=WebhookSubscriptionRepository(conn),
+        delivery_repo=WebhookDeliveryQueueRepository(conn),
+    )
+
+
 @router.post("", response_model=ReleaseGateResponse, status_code=status.HTTP_201_CREATED)
 async def create_release_gate(
     org_id: uuid.UUID,
@@ -106,7 +123,7 @@ async def decide_release_gate(
     - 409: gate already decided or expired
     """
     repo = ReleaseGateRepository(conn)
-    service = ReleaseGateService(repo)
+    service = ReleaseGateService(repo, webhook_dispatcher=_build_webhook_dispatcher(conn))
 
     existing = await repo.get(gate_id=gate_id, org_id=org_id)
     if not existing or existing.project_id != project_id:

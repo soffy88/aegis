@@ -43,7 +43,7 @@
 ### P2 — 体验/完善
 | # | 条目 | 状态 | 验证方式 |
 |---|------|------|---------|
-| 16 | Release Gate 接入执行 | ⬜ todo | 单测: 部署/自愈前查 gate |
+| 16 | Release Gate 接入执行 | 🟡 done | decide 端点注入 webhook_dispatcher→发 release.approved/rejected;自愈门已在 engine 内 create_gate+wait |
 | 17 | 审计覆盖补全 | ✅ done | org.created/ownership_transferred、project.created/archived、invite.created/accepted 补写 audit_log |
 | 18 | 域名 DNS/TLS + 收敛双路径 | ⬜ todo | 单测/⚠️ |
 | 19 | 应用多级版本溯源 | ✅ done | migr 034 app_version_history 表+升级/回滚记录+GET /history 端点 |
@@ -54,6 +54,7 @@
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#16 Release Gate 事件接入** — decide 端点改为给 `ReleaseGateService` 注入 webhook_dispatcher(此前不注入→approve/reject 事件从不入队);现批准/拒绝会发 `release.approved`/`release.rejected`,配合 #1 投递闭环可通知。澄清:自愈对 gate 的"阻断执行"已在 `AutoHealEngine.run()` 内通过 create_gate+`_wait_for_decision` 实现;`get_active_gate_by_event` 是冗余检查。test_release_gate_webhook_wiring.py (1)
 - **#22 Secrets 金库密钥加固** — 未配置独立 `secrets_master_key` 时(密钥派生自 `sha256(jwt_secret)`,无域分离、强度受限于 jwt_secret),启动后首次使用大声告警一次,建议配置 32 字节专用 master key 并轮转。**未改派生算法**(会孤立已加密的密文行)。test_secrets_master_key_warning.py (2)
 - **#19 应用多级版本溯源** — migration 034 新增 `app_version_history` 表;升级/回滚时记录 from/to/action 转移行(此前只有单级 `previous_version`);新增 `GET /apps/{id}/history` 返回完整历史。test_app_lifecycle_exec.py (+1)
 - **#17 审计覆盖补全** — 给此前不写审计的敏感操作补 `record_audit`:`org.created`、`org.ownership_transferred`、`project.created`、`project.archived`、`invite.created`、`invite.accepted`(沿用既有 best-effort 模式,已被 member.* 测试覆盖)。全套绿、无回归。
