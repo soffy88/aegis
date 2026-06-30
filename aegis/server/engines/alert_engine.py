@@ -147,6 +147,16 @@ class AlertEngine:
         )
 
         if is_new and self.webhook_dispatcher is not None:
+            # Include who's on call so the very first notification can page them,
+            # not just the later escalation path. Best-effort: enrichment must never
+            # break the fire/notify path.
+            oncall = None
+            try:
+                from aegis.server.services.oncall import current_oncall  # noqa: PLC0415
+
+                oncall = await current_oncall(self.fired_repo.conn, org_id=rule.org_id, now=now)
+            except Exception:  # noqa: BLE001
+                pass
             await self.webhook_dispatcher.enqueue_event(
                 org_id=rule.org_id,
                 event_type="alert.fired",
@@ -158,6 +168,7 @@ class AlertEngine:
                     "dedup_key": dedup_key,
                     "fired_at": now.isoformat(),
                     "metric": rule.metric,
+                    "oncall_user_id": str(oncall) if oncall else None,
                 },
             )
 

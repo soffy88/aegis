@@ -67,8 +67,8 @@
 | domains edge URL 配置化 (A5) | ✅ done | 硬编码 http://localhost:8081 → settings.domain_edge_url |
 | login/logout 审计 (A3) | 🚨 design | audit_log 为 org-scoped NOT NULL,账号级事件不适配;需独立 auth-events 表,单列设计 |
 | installer.py 死代码 (A4) | 📝 noted | 真 compose 引擎 `AppInstallerEngine` 仍无 router 调用;收敛/删除是设计取舍,未擅动(启动已 init) |
-| metrics project 维度 (B2) | ⬜ todo | agent_metrics 无 project_id,#2 告警按全局 metric 名匹配;需 scrape 打标+评估过滤 |
-| 告警初次 fire 带 oncall (B3) | ⬜ todo | 仅升级路径带 oncall_user_id;初次 critical fire 不带 |
+| 告警初次 fire 带 oncall (B3) | ✅ done | evaluate_metric 初次 fire 的 webhook 也带 oncall_user_id(best-effort,不阻断 fire) |
+| metrics project 维度 (B2) | 🚨 design | scrape_targets 仅 org-scoped(无 project_id),agent_metrics 也无;与 project-scoped 规则存在建模错配,属数据模型决策 |
 | 前端 镜像/网络/卷 页 (C) | ⬜ todo | #11/#12 后端已就绪,console 缺页面 |
 
 ## ✅ Done
