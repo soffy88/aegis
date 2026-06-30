@@ -790,6 +790,15 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS previous_version TEXT;
         """,
     ),
+    (
+        "033_node_liveness",
+        """
+        ALTER TABLE aegis_nodes ADD COLUMN IF NOT EXISTS agent_token TEXT;
+        ALTER TABLE aegis_nodes ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
+        CREATE INDEX IF NOT EXISTS idx_aegis_nodes_agent_token
+            ON aegis_nodes(agent_token);
+        """,
+    ),
 ]
 
 

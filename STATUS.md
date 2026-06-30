@@ -31,7 +31,7 @@
 | # | 条目 | 状态 | 验证方式 |
 |---|------|------|---------|
 | 7 | causal-chain 跨租户泄露 (安全) | ✅ done | 查询锚点+递归均按 org_id 过滤;2 单测 |
-| 8 | 节点注册修复 + 心跳 + agent 通信 | ⬜ todo | 单测: 注册 SQL upsert;last_seen 列+heartbeat 端点 |
+| 8 | 节点注册修复 + 心跳 + agent 通信 | 🟡 done | 注册改真 SQL upsert+token;migr 033 加 last_seen/agent_token;heartbeat 端点+status 派生;⚠️edge agent 进程本体属独立二进制不在仓 |
 | 9 | 多主机容器控制 (透传 docker_host) | ⬜ todo | 单测: 容器操作带 node 目标 |
 | 10 | RBAC 撤权即时生效 (回查 DB) | ⬜ todo | 单测: 降权后立即 403 |
 | 11 | 镜像管理域 (list/pull/delete/prune) | ⬜ todo | 单测: 新 router;⚠️真 Docker 不可验 |
@@ -54,6 +54,8 @@
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#7 causal-chain 跨租户泄露** — `causal_chain` 锚点+递归步均加 `org_id` 过滤,端点传 org_id;堵住 A 组织读 B 组织事件链。test_event_trail.py (+1)
+- **#8 节点注册修复 + 心跳** — 注册端点从坏掉的 dispatcher 调用改为真实 SQL upsert(按 org_id+node_label),首次注册发 `agent_token`(仅返回一次),复注册保留旧 token;migration 033 给 `aegis_nodes` 加 `agent_token`/`last_seen`;新增 agent-token 鉴权的 `POST /nodes/{id}/heartbeat` 刷新 last_seen;`Node.to_dict` 派生 online/stale/offline 状态。⚠️ edge agent 进程本体(回连/poll 的独立二进制)不在本仓范围。test_nodes_register_heartbeat.py (6)
 - **#5 应用升级/回滚真实执行** — `_run_app_lifecycle` 从只打日志的桩改为真实执行:升级走 `OmodulDispatcher.invoke("upgrade_self_hosted_app")`(镜像 `_run_install` 模式),回滚直接调 `omodul.rollback_app.rollback_app`(镜像自愈引擎模式);按真实 `status` 标记 active/failed,不再永远报 active。⚠️ 真 Docker 不可在本环境验;upgrade 的 container_id/new_image 尚未在 installed_apps 追踪(见 #19),在补齐前 upgrade 可能如实报 failed(仍比旧桩诚实)。test_app_lifecycle_exec.py (4)
 - **#6 安装路径修正** — 安装请求无 image 时从 store catalog 按 slug 解析 `image`(`find_catalog_app`);`docker_host`/`caddy_admin_url` 改用 settings 而非硬编码;成功后把请求的 `domain` 真正写回(旧代码 domain 变量恒 None)。test_app_lifecycle_exec.py (1) + 既有 install 测试不回归
 - **#4 备份执行修复** — `_run_backup` 改为读 `result["findings"].storage_url/total_size_bytes`(旧代码读不存在的顶层键→backup_key 恒 NULL),并 honor `result["status"]`(执行器不抛异常也能报 failed);`_run_restore` 在无 backup_key 时快速失败而非让 boto3 报错。⚠️ 真实 S3 上传仍是 omodul `_stage_upload` 桩(外部库,不改),即 backup_key 会落库但未必指向真对象。test_backups.py (3 改/增)
