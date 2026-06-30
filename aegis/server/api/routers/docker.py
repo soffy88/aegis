@@ -27,10 +27,17 @@ from oprim import (
     docker_container_start,
     docker_container_stats,
     docker_container_stop,
+    docker_image_delete,
+    docker_image_list,
+    docker_image_pull,
     docker_network_create,
     docker_network_delete,
+    docker_network_list,
     docker_ps,
+    docker_system_prune,
     docker_volume_create,
+    docker_volume_delete,
+    docker_volume_list,
 )
 from oprim._exceptions import OprimError
 from pydantic import BaseModel
@@ -91,6 +98,11 @@ class ContainerExecRequest(BaseModel):
     env: dict[str, str] | None = None
     user: str | None = None
     timeout_sec: int = 30
+
+
+class ImagePullRequest(BaseModel):
+    image: str
+    tag: str = "latest"
 
 
 @router.get("/containers")
@@ -289,6 +301,133 @@ async def create_volume(
             driver_opts=req.driver_opts,
         )
         return result.model_dump()
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+# ── images (audit #11) ─────────────────────────────────────────────────────────
+
+
+@router.get("/images")
+async def list_images(
+    org_id: UUID,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """List images on the target daemon. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        return await asyncio.to_thread(docker_image_list, docker_host=docker_host)
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/images/pull", status_code=status.HTTP_200_OK)
+async def pull_image(
+    org_id: UUID,
+    req: ImagePullRequest,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Pull an image onto the target daemon. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        result = await asyncio.to_thread(
+            docker_image_pull, image=req.image, tag=req.tag, docker_host=docker_host
+        )
+        return result.model_dump() if hasattr(result, "model_dump") else result
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.delete("/images/{image:path}", status_code=status.HTTP_200_OK)
+async def delete_image(
+    org_id: UUID,
+    image: str,
+    force: bool = Query(default=False),
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Delete an image from the target daemon. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        return await asyncio.to_thread(
+            docker_image_delete, image=image, force=force, docker_host=docker_host
+        )
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/system/prune", status_code=status.HTTP_200_OK)
+async def system_prune(
+    org_id: UUID,
+    volumes: bool = Query(default=False, description="Also prune unused volumes"),
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Reclaim space (dangling images, stopped containers, optionally volumes)."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        result = await asyncio.to_thread(
+            docker_system_prune, volumes=volumes, docker_host=docker_host
+        )
+        return result.model_dump() if hasattr(result, "model_dump") else result
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+# ── network / volume listing + deletion (audit #12) ──────────────────────────────
+
+
+@router.get("/networks")
+async def list_networks(
+    org_id: UUID,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """List docker networks on the target daemon. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        return await asyncio.to_thread(docker_network_list, docker_host=docker_host)
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.get("/volumes")
+async def list_volumes(
+    org_id: UUID,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """List docker volumes on the target daemon. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        return await asyncio.to_thread(docker_volume_list, docker_host=docker_host)
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.delete("/volumes/{name}", status_code=status.HTTP_200_OK)
+async def delete_volume(
+    org_id: UUID,
+    name: str,
+    force: bool = Query(default=False),
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Delete a docker volume from the target daemon. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    try:
+        return await asyncio.to_thread(
+            docker_volume_delete, name=name, force=force, docker_host=docker_host
+        )
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
