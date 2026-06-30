@@ -136,4 +136,15 @@ async def decide_release_gate(
         )
         raise HTTPException(status.HTTP_409_CONFLICT, detail)
 
+    from aegis.server.persistence.audit import record_audit  # noqa: PLC0415
+
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action=f"release_gate.{data.decision}",
+        target_type="release_gate",
+        target_id=str(gate_id),
+        metadata={"reason": data.decision_reason, "action_kind": getattr(result, "action_kind", None)},
+    )
     return result

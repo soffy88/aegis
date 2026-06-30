@@ -24,6 +24,7 @@ from aegis.server.api.routers import (
     health,
 )
 from aegis.server.api.routers import apps as apps_router
+from aegis.server.api.routers import audit as audit_router
 from aegis.server.api.routers import auth as auth_router
 from aegis.server.api.routers import autoheal as autoheal_router
 from aegis.server.api.routers import backups as backups_router
@@ -318,6 +319,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(metrics_router.router)
     app.include_router(scrape_targets_router.router)
     app.include_router(events.router)
+    app.include_router(audit_router.router)
     app.include_router(alerts.router)
     app.include_router(alert_rules.router)
     app.include_router(alert_fired.router)

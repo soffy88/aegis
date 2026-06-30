@@ -12,6 +12,7 @@ from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext, get_current_user
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.models import Role
+from aegis.server.persistence.audit import record_audit
 from aegis.server.repositories import MembershipRepository, OrgRepository, UserRepository
 
 router = APIRouter(prefix="/api/v1/orgs", tags=["orgs"])
@@ -220,6 +221,15 @@ async def invite_member(
         raise HTTPException(status.HTTP_409_CONFLICT, "user already in this org")
 
     await membership_repo.add(user_id=target.id, org_id=org_id, role=role)
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="member.added",
+        target_type="user",
+        target_id=str(target.id),
+        metadata={"email": req.email, "role": req.role},
+    )
     return {"message": "user invited", "user_id": str(target.id), "role": req.role}
 
 
@@ -250,6 +260,15 @@ async def remove_member(
             )
 
     await membership_repo.remove(user_id=member_user_id, org_id=org_id)
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="member.removed",
+        target_type="user",
+        target_id=str(member_user_id),
+        metadata={"prev_role": target.role.value},
+    )
 
 
 @router.patch("/{org_id}/members/{member_user_id}", response_model=MemberResponse)
@@ -289,6 +308,15 @@ async def change_member_role(
 
     updated = await membership_repo.update_role(
         user_id=member_user_id, org_id=org_id, new_role=new_role
+    )
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="member.role_changed",
+        target_type="user",
+        target_id=str(member_user_id),
+        metadata={"from": target.role.value, "to": new_role.value},
     )
 
     user_repo = UserRepository(conn)
