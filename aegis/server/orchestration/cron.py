@@ -7,6 +7,7 @@ Runs background loops:
 - Metrics scrape:     every 15 s (per-target interval gates actual scrapes)
 - Anomaly scan:       every 60 s (EWMA)
 - Webhook delivery:   every 5 s (drains the delivery queue)
+- Alert evaluation:   every 30 s (threshold rules vs fresh metrics)
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ _SCRAPE_INTERVAL_SEC = 15  # tick; each target's own interval gates actual scrap
 _ANOMALY_INTERVAL_SEC = 60  # EWMA anomaly scan
 _DELIVERY_INTERVAL_SEC = 5  # tick; drains the webhook delivery queue (next_attempt_at gates)
 _DELIVERY_DRAIN_BATCHES = 20  # max batches per tick so one org's backlog can't wedge the loop
+_ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
 
 
 def _jittered(interval: float) -> float:
@@ -124,6 +126,33 @@ async def _scrape_loop() -> None:
         await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
 
 
+async def _alert_eval_loop() -> None:
+    """Evaluate enabled threshold rules against fresh metrics every ~30s.
+
+    Without this loop, AlertEngine.evaluate_metric had no periodic caller and
+    user-configured rules never auto-fired. Shares the webhook dispatcher so a
+    newly-fired alert enqueues its `alert.fired` notification.
+    """
+    from aegis.server.orchestration.alert_evaluation import (
+        run_alert_evaluation,  # noqa: PLC0415
+    )
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(15, 30))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await run_alert_evaluation(
+                    conn=conn,
+                    webhook_dispatcher=_build_webhook_dispatcher(conn),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("alert_eval_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_ALERT_EVAL_INTERVAL_SEC))
+
+
 async def _delivery_loop() -> None:
     """Drain the webhook delivery queue.
 
@@ -175,6 +204,7 @@ async def _cron_main(alerter: Any | None) -> None:
         _scrape_loop(),
         _anomaly_loop(),
         _delivery_loop(),
+        _alert_eval_loop(),
         return_exceptions=True,
     )
 
