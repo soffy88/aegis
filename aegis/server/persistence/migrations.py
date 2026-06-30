@@ -711,6 +711,23 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON remediation_outcomes (org_id, symptom_key, created_at DESC);
         """,
     ),
+    (
+        "027_oncall_schedules",
+        """
+        CREATE TABLE IF NOT EXISTS oncall_schedules (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            rotation UUID[] NOT NULL DEFAULT '{}',
+            shift_length_seconds BIGINT NOT NULL DEFAULT 604800,  -- 1 week
+            anchor_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_oncall_org ON oncall_schedules (org_id);
+        """,
+    ),
 ]
 
 

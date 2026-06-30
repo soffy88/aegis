@@ -38,6 +38,7 @@ from aegis.server.api.routers import incidents as incidents_router
 from aegis.server.api.routers import invite as invite_router
 from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import nodes as nodes_router
+from aegis.server.api.routers import oncall as oncall_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import remediation as remediation_router
@@ -320,6 +321,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(metrics_router.router)
     app.include_router(scrape_targets_router.router)
     app.include_router(remediation_router.router)
+    app.include_router(oncall_router.router)
     app.include_router(events.router)
     app.include_router(audit_router.router)
     app.include_router(alerts.router)

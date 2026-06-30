@@ -16,6 +16,13 @@ _PROJECT = uuid.uuid4()
 _RULE = uuid.uuid4()
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 
+def _oncall_conn():
+    """AsyncMock conn whose oncall lookup returns no schedule."""
+    c = AsyncMock()
+    c.fetchrow = AsyncMock(return_value=None)
+    return c
+
+
 
 def _fired(*, severity: str = "warn", escalated: bool = False, age_sec: int = 3600) -> AlertFiredResponse:
     return AlertFiredResponse(
@@ -74,7 +81,7 @@ async def test_escalates_due_warn_alert_and_enqueues_webhook() -> None:
     dispatcher.enqueue_event = AsyncMock(return_value=1)
     with p_fired, p_rule:
         escalated = await run_alert_escalation(
-            conn=MagicMock(), webhook_dispatcher=dispatcher, now=_NOW
+            conn=_oncall_conn(), webhook_dispatcher=dispatcher, now=_NOW
         )
     assert len(escalated) == 1
     fired_repo.mark_escalated.assert_awaited_once()
@@ -92,7 +99,7 @@ async def test_skips_when_not_yet_past_delay() -> None:
     dispatcher.enqueue_event = AsyncMock()
     with p_fired, p_rule:
         escalated = await run_alert_escalation(
-            conn=MagicMock(), webhook_dispatcher=dispatcher, now=_NOW
+            conn=_oncall_conn(), webhook_dispatcher=dispatcher, now=_NOW
         )
     assert escalated == []
     fired_repo.mark_escalated.assert_not_called()
@@ -103,7 +110,7 @@ async def test_skips_when_not_yet_past_delay() -> None:
 async def test_skips_when_rule_deleted() -> None:
     p_fired, p_rule, fired_repo, _ = _patch_repos([_fired()], None)
     with p_fired, p_rule:
-        escalated = await run_alert_escalation(conn=MagicMock(), now=_NOW)
+        escalated = await run_alert_escalation(conn=_oncall_conn(), now=_NOW)
     assert escalated == []
     fired_repo.mark_escalated.assert_not_called()
 
@@ -116,7 +123,7 @@ async def test_no_double_fire_when_mark_loses_race() -> None:
     dispatcher.enqueue_event = AsyncMock()
     with p_fired, p_rule:
         escalated = await run_alert_escalation(
-            conn=MagicMock(), webhook_dispatcher=dispatcher, now=_NOW
+            conn=_oncall_conn(), webhook_dispatcher=dispatcher, now=_NOW
         )
     assert escalated == []
     dispatcher.enqueue_event.assert_not_called()
