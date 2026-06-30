@@ -175,6 +175,27 @@ def register_providers(cfg: AegisSettings) -> None:
     else:
         log.debug("ollama provider not configured (set AEGIS_OLLAMA_BASE_URL to enable)")
 
+    _warn_if_embeddings_stubbed(cfg)
+
+
+def _warn_if_embeddings_stubbed(cfg: AegisSettings) -> None:
+    """Surface the silent RAG-embedding degradation (audit #13).
+
+    oprim.vector_encode falls back to a low-dimensional STUB encoder when its
+    embedding provider isn't registered, so RAG runbook retrieval silently runs on
+    meaningless vectors (false confidence, not an error). register_providers only
+    wires LLM providers, never an embedding one. Make that visible at startup so an
+    operator knows to register a real embedding model; choosing/validating that
+    model is deploy config (Ollama nomic-embed-text, Voyage, local bge-m3, ...).
+    """
+    if not ProviderRegistry.has("embedding", cfg.embedding_provider):
+        log.warning(
+            "rag_embeddings_stubbed: no embedding provider '%s' registered — RAG "
+            "runbook retrieval will use oprim's STUB encoder (degraded relevance). "
+            "Register a real embedding provider to enable knowledge retrieval.",
+            cfg.embedding_provider,
+        )
+
 
 def create_app(settings: AegisSettings | None = None) -> FastAPI:
     """Application factory.

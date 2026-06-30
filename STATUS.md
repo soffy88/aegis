@@ -36,9 +36,9 @@
 | 10 | RBAC 撤权即时生效 (回查 DB) | 🚨 human | 需 auth 核心改造(token_epoch 或每请求回查),风险高,见 Needs Human |
 | 11 | 镜像管理域 (list/pull/delete/prune) | 🟡 done | 4 端点接 oprim+node 路由+RBAC;⚠️真 Docker 不可验;前端页待补 |
 | 12 | 网络/卷管理补全 (list/delete) | 🟡 done | networks/volumes list + volume delete 端点;⚠️真 Docker 不可验;前端页待补 |
-| 13 | RAG embedding provider 注册 | ⬜ todo | 单测: 启动注册 provider |
+| 13 | RAG embedding provider 注册 | 🟡 done | 启动时对未注册 provider 大声告警(原静默用 stub);注册真模型属 deploy 配置 |
 | 14 | LLM 成本闸改按实际花费 + 可配置 fail-open | ✅ done | 改为按 llm_cost_ledger 真实美元;fail-open 可配置(默认 True,见下说明) |
-| 15 | On-call 真寻呼 | ⬜ todo | 单测: 升级时按 current_oncall 通知 |
+| 15 | On-call 真寻呼 | ✅ done(已有) | 升级 loop 已查 current_oncall 并写入 alert.fired webhook payload;配合 #1 投递闭环可达 |
 
 ### P2 — 体验/完善
 | # | 条目 | 状态 | 验证方式 |
@@ -54,6 +54,8 @@
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#13 RAG embedding 降级可见化** — `_warn_if_embeddings_stubbed` 启动时检测 embedding provider 未注册→大声 WARNING(此前 oprim 静默回退 128 维 stub,RAG 跑在无意义向量上)。注册真实 embedding 模型(Ollama nomic-embed-text/Voyage/本地 bge-m3)属 deploy 配置 + 需验证,未在此环境硬接。test_embedding_provider_warning.py (2)
+- **#15 On-call 寻呼(已有)** — 复核现码:升级 loop(alert_escalation.py:60-77)已查 `current_oncall` 并把 `oncall_user_id` 写进 `alert.fired` webhook;审计"无人被寻呼"对当前代码不准确。配合 #1 投递闭环,运营方把 webhook 指向 PagerDuty/Slack 即端到端可达。未改码。
 - **#11 镜像管理** — 新增 `GET /images`、`POST /images/pull`、`DELETE /images/{image}`、`POST /system/prune`,接 oprim 同名函数,node_id 路由,读 viewer+/写 operator+。⚠️ 真 Docker 不可在此环境验;前端镜像页未做。test_docker_images_volumes.py
 - **#12 网络/卷补全** — 新增 `GET /networks`、`GET /volumes`、`DELETE /volumes/{name}`(此前只有 create + network delete)。⚠️ 前端页未做。test_docker_images_volumes.py
 - **#14 LLM 成本闸** — `_check_rca_budget` 从"调用次数代理(Redis INCR)"改为按 `llm_cost_ledger` 真实美元 spend(`org_spend` 滚动 1 天)与日预算比较,更准确。**对审计"改 fail-closed"的建议做了有依据的反驳**:对事件响应工具,Redis/DB 抖动时一律拦截 RCA 会在最需要时致盲;故保留默认 fail-open,但新增 `rca_budget_fail_open` 设置(默认 True),成本优先的运营方可设 False 走 fail-closed。移除无用的 aioredis/datetime/计数推导。test_rca.py (3 重写)
