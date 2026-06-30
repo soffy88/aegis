@@ -49,16 +49,21 @@ async def _current_value_for_rule(
     *,
     since: datetime,
 ) -> float | None:
-    """Latest per-host value of the rule's metric, reduced to one worst-case value.
+    """Latest value of each distinct series for the rule's metric, reduced to one
+    worst-case value.
 
-    Returns None when no recent reading exists (rule is un-evaluable this tick).
+    A "series" is (hostname, tags): for agent-push metrics that's one row per host;
+    for Prometheus-style metrics (e.g. cAdvisor, where every container shares
+    hostname and is distinguished by its label set in `tags`) it's one row per
+    container. Aggregating per-series — not per-host — lets "any container over
+    threshold" rules fire correctly. Returns None when no recent reading exists.
     """
     rows = await conn.fetch(
         """
-        SELECT DISTINCT ON (hostname) value
+        SELECT DISTINCT ON (hostname, tags) value
         FROM agent_metrics
         WHERE metric_name = $1 AND ts >= $2
-        ORDER BY hostname, ts DESC
+        ORDER BY hostname, tags, ts DESC
         """,
         rule.metric,
         since,

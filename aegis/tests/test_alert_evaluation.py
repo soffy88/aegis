@@ -51,6 +51,17 @@ def _conn_with_values(values: list[float]) -> MagicMock:
 
 
 @pytest.mark.asyncio
+async def test_aggregates_per_series_not_per_host():
+    """The metric query must dedup per (hostname, tags) so multi-container
+    Prometheus metrics (all under one hostname, e.g. cAdvisor) are each counted."""
+    conn = _conn_with_values([1.0, 2.0])
+    await ae._current_value_for_rule(conn, _rule(operator=">="), since=_NOW)
+    sql = conn.fetch.await_args.args[0]
+    assert "DISTINCT ON (hostname, tags)" in sql
+    assert "ORDER BY hostname, tags, ts DESC" in sql
+
+
+@pytest.mark.asyncio
 async def test_picks_max_for_greater_operator():
     """For >=, the worst (max) per-host value drives the decision."""
     captured = {}
