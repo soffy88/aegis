@@ -814,6 +814,12 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON app_version_history(install_id, created_at DESC);
         """,
     ),
+    (
+        "035_installed_apps_image",
+        """
+        ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS image TEXT;
+        """,
+    ),
 ]
 
 

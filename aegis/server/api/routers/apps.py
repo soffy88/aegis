@@ -34,6 +34,7 @@ class InstallRequest(BaseModel):
     domain: str | None = None
     domain_target_url: str | None = None
     register_domain: bool = False
+    node_id: uuid.UUID | None = None  # target node; omit to install on the platform host
 
     @field_validator("install_dir")
     @classmethod
@@ -54,6 +55,8 @@ class InstallAppRequest(BaseModel):
     domain: str | None = None
     domain_target_url: str | None = None
     register_domain: bool = False
+    target_host: str = "localhost"
+    docker_host: str = "unix:///var/run/docker.sock"
 
 
 async def _run_install(
@@ -101,8 +104,8 @@ async def _run_install(
                     "image_to_pull": body.image_to_pull,
                     "project_dir": body.project_dir,
                 },
-                "target_host": "localhost",
-                "docker_host": cfg.docker_host,
+                "target_host": body.target_host,
+                "docker_host": body.docker_host,
                 "caddy_admin_url": cfg.caddy_admin_url,
             },
             user_id=str(org_id),
@@ -255,10 +258,11 @@ async def install_app_endpoint(
 
     install_id = await conn.fetchval(
         """
-        INSERT INTO installed_apps (org_id, project_id, app_name, app_version, install_dir, status)
-        VALUES ($1, $2, $3, $4, $5, 'installing')
+        INSERT INTO installed_apps
+            (org_id, project_id, app_name, app_version, install_dir, status, image)
+        VALUES ($1, $2, $3, $4, $5, 'installing', $6)
         ON CONFLICT (org_id, project_id, app_name)
-            DO UPDATE SET status = 'installing', installed_at = now()
+            DO UPDATE SET status = 'installing', installed_at = now(), image = EXCLUDED.image
         RETURNING id
         """,
         org_id,
@@ -266,7 +270,23 @@ async def install_app_endpoint(
         req.app_name,
         req.app_version,
         install_dir,
+        image_to_pull,
     )
+
+    # Resolve the install target. Default: the platform's own daemon. With a
+    # node_id, install onto that node's host/daemon instead of hardcoded localhost.
+    target_host = "localhost"
+    docker_host = get_settings().docker_host
+    if req.node_id is not None:
+        node = await conn.fetchrow(
+            "SELECT host, docker_host_url FROM aegis_nodes WHERE org_id = $1 AND node_id = $2",
+            org_id,
+            req.node_id,
+        )
+        if not node:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="node not found")
+        target_host = node["host"]
+        docker_host = node["docker_host_url"] or docker_host
 
     body = InstallAppRequest(
         app_name=req.app_name,
@@ -277,6 +297,8 @@ async def install_app_endpoint(
         domain=req.domain,
         domain_target_url=req.domain_target_url,
         register_domain=req.register_domain,
+        target_host=target_host,
+        docker_host=docker_host,
     )
     task_trace_id = f"trc_{uuid.uuid4().hex[:8]}"
     background_tasks.add_task(
@@ -293,14 +315,37 @@ async def uninstall_app(
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
 ) -> None:
-    """Uninstall an app. member+ required."""
-    result = await conn.execute(
+    """Uninstall an app. member+ required.
+
+    Best-effort stops the running container before dropping the row so uninstall
+    doesn't leave it running (the old code only deleted the DB record). The
+    container is named after the app instance. Full removal (docker rm + volume +
+    Caddy route cleanup) needs an uninstall primitive the 3O libs don't expose yet.
+    """
+    row = await conn.fetchrow(
+        "SELECT app_name FROM installed_apps WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+    try:
+        from oprim import docker_container_stop  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            docker_container_stop,
+            container_id=row["app_name"],
+            docker_host=get_settings().docker_host,
+        )
+    except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+        log.warning("uninstall_stop_failed app=%s err=%s", row["app_name"], exc)
+
+    await conn.execute(
         "DELETE FROM installed_apps WHERE id = $1 AND org_id = $2",
         install_id,
         org_id,
     )
-    if result == "DELETE 0":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
 
 
 class UpgradeRequest(BaseModel):

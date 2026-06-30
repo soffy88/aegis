@@ -58,6 +58,19 @@
 | 21 | 链路追踪 | 🚨 design | 需 OTel collector + 埋点 + trace 视图,多日基建,单独排期 |
 | 22 | Secrets KDF 加固 | ✅ done | 未设独立 master key 时大声告警(派生自 jwt_secret 无域分离);改派生会孤立已存密文,故走告警+建议轮转 |
 
+## 🔧 审计外补强 (follow-up round — 实现中发现/延伸)
+| 项 | 状态 | 说明 |
+|----|------|------|
+| 卸载销毁容器 (A1) | 🟡 done | uninstall 先 best-effort stop 容器(按 app_name)再删行;⚠️无 rm 原语(3O 库未暴露),容器/卷/Caddy 路由完整清理待补 |
+| 安装目标节点 (A2) | ✅ done | InstallRequest 加 node_id→解析节点 host/docker_host_url 传 target_host/docker_host;未知 node 404 |
+| 应用 image 追踪 (B1) | ✅ done | migr 035 installed_apps.image;安装时落库(解析自 catalog) |
+| domains edge URL 配置化 (A5) | ✅ done | 硬编码 http://localhost:8081 → settings.domain_edge_url |
+| login/logout 审计 (A3) | 🚨 design | audit_log 为 org-scoped NOT NULL,账号级事件不适配;需独立 auth-events 表,单列设计 |
+| installer.py 死代码 (A4) | 📝 noted | 真 compose 引擎 `AppInstallerEngine` 仍无 router 调用;收敛/删除是设计取舍,未擅动(启动已 init) |
+| metrics project 维度 (B2) | ⬜ todo | agent_metrics 无 project_id,#2 告警按全局 metric 名匹配;需 scrape 打标+评估过滤 |
+| 告警初次 fire 带 oncall (B3) | ⬜ todo | 仅升级路径带 oncall_user_id;初次 critical fire 不带 |
+| 前端 镜像/网络/卷 页 (C) | ⬜ todo | #11/#12 后端已就绪,console 缺页面 |
+
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
