@@ -14,7 +14,7 @@ resolution-markers = [
 overrides = [
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.22.0" },
-    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
+    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.1" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
 ]
 
@@ -91,7 +91,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.11.0" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.22.0" },
-    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0" },
+    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.1" },
     { name = "oservice", git = "ssh://git@github.com/helios-plat/oservice.git?rev=v0.4.3" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v2.15.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
@@ -1760,8 +1760,8 @@ wheels = [
 
 [[package]]
 name = "oprim"
-version = "2.31.0"
-source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.0#3300469d91d8344b1a527c776d54b36320c74236" }
+version = "2.35.1"
+source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=v2.35.1#9706979f7fc7951bf737a3adf1b67b264b740ce7" }
 dependencies = [
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
