@@ -820,6 +820,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS image TEXT;
         """,
     ),
+    (
+        "036_uptime_targets",
+        """
+        CREATE TABLE IF NOT EXISTS uptime_targets (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            interval_seconds INT NOT NULL DEFAULT 60,
+            expected_status INT NOT NULL DEFAULT 200,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            last_up BOOLEAN,
+            last_latency_ms INT,
+            last_checked_at TIMESTAMPTZ,
+            last_error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_uptime_targets_enabled
+            ON uptime_targets (enabled) WHERE enabled = TRUE;
+        """,
+    ),
 ]
 
 
