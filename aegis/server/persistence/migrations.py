@@ -631,6 +631,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_backups_org_app ON aegis_backups (org_id, app_slug);
         """,
     ),
+    (
+        "023_scrape_targets",
+        """
+        CREATE TABLE IF NOT EXISTS scrape_targets (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            interval_seconds INT NOT NULL DEFAULT 30,
+            labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            last_scrape_at TIMESTAMPTZ,
+            last_status TEXT,
+            last_error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrape_targets_org ON scrape_targets (org_id);
+        CREATE INDEX IF NOT EXISTS idx_scrape_targets_enabled
+            ON scrape_targets (enabled) WHERE enabled = TRUE;
+        """,
+    ),
 ]
 
 

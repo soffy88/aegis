@@ -39,6 +39,7 @@ from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import nodes as nodes_router
 from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
+from aegis.server.api.routers import scrape_targets as scrape_targets_router
 from aegis.server.api.routers import release_gates as release_gates_router
 from aegis.server.api.routers import runbooks as runbooks_router
 from aegis.server.api.routers import store as store_router
@@ -315,6 +316,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
     app.include_router(metrics_router.router)
+    app.include_router(scrape_targets_router.router)
     app.include_router(events.router)
     app.include_router(alerts.router)
     app.include_router(alert_rules.router)
