@@ -125,6 +125,17 @@ class AegisSettings(BaseSettings):
     # === Password policy (M1 relaxed, M2 tighten) ===
     password_min_length: int = 12
 
+    # === Secrets vault ===
+    secrets_master_key: str = Field(
+        default="",
+        description=(
+            "Hex-encoded 32-byte master key for the encrypted secrets vault. If empty, "
+            "derived from jwt_secret (dev convenience). Set a dedicated "
+            "AEGIS_SECRETS_MASTER_KEY in prod so rotating the JWT secret doesn't orphan "
+            "stored secrets."
+        ),
+    )
+
     # === CORS ===
     cors_allowed_origins: Any = Field(
         default_factory=lambda: ["http://localhost:3010"],

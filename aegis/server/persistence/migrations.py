@@ -768,6 +768,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by UUID;
         """,
     ),
+    (
+        "031_secrets_vault",
+        """
+        CREATE TABLE IF NOT EXISTS org_secrets (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            ciphertext TEXT NOT NULL,
+            version INT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            rotated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_secrets_org ON org_secrets (org_id);
+        """,
+    ),
 ]
 
 
