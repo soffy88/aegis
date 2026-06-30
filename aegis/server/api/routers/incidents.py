@@ -128,6 +128,30 @@ async def create_incident(
     return dict(row)
 
 
+@router.post("/{incident_id}/ack")
+async def acknowledge_incident(
+    org_id: uuid.UUID,
+    incident_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Acknowledge an incident (records first responder + enables MTTA). operator+."""
+    row = await conn.fetchrow(
+        "UPDATE incidents SET acknowledged_at = COALESCE(acknowledged_at, now()),"
+        " acknowledged_by = COALESCE(acknowledged_by, $3)"
+        " WHERE id = $1 AND org_id = $2"
+        " RETURNING id, acknowledged_at, acknowledged_by",
+        incident_id,
+        org_id,
+        user.user_id,
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+    d = dict(row)
+    d["acknowledged_by"] = str(d["acknowledged_by"]) if d["acknowledged_by"] else None
+    return d
+
+
 @router.post("/{incident_id}/resolve")
 async def resolve_incident(
     org_id: uuid.UUID,

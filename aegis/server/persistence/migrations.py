@@ -761,6 +761,13 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON llm_cost_ledger (principal, created_at DESC);
         """,
     ),
+    (
+        "030_incident_acknowledged",
+        """
+        ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+        ALTER TABLE incidents ADD COLUMN IF NOT EXISTS acknowledged_by UUID;
+        """,
+    ),
 ]
 
 
