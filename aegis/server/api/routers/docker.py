@@ -57,16 +57,16 @@ _502 = status.HTTP_502_BAD_GATEWAY
 
 async def _resolve_docker_host(
     conn: asyncpg.Connection, org_id: UUID, node_id: UUID | None
-) -> str:
+) -> str | None:
     """Resolve the target Docker daemon for a request.
 
-    node_id=None → the platform's own daemon (settings.docker_host). The REST
-    container endpoints previously ignored settings.docker_host AND the node, so
-    every action hit oprim's hardcoded local socket; this routes them to the
-    selected node's docker_host_url so multi-host control actually works.
+    node_id=None → return None so the oprim call OMITS docker_host and uses its own
+    default exactly as it did before multi-host routing existed (avoids overriding a
+    deployment whose working daemon isn't settings.docker_host). A node_id routes to
+    that node's docker_host_url so multi-host control works.
     """
     if node_id is None:
-        return get_settings().docker_host
+        return None
     row = await conn.fetchrow(
         "SELECT docker_host_url FROM aegis_nodes WHERE org_id = $1 AND node_id = $2",
         org_id,
@@ -75,6 +75,12 @@ async def _resolve_docker_host(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="node not found")
     return row["docker_host_url"] or get_settings().docker_host
+
+
+def _hostkw(docker_host: str | None) -> dict[str, str]:
+    """Pass docker_host to oprim only when a specific host was resolved; otherwise
+    omit it so oprim uses its own default (pre-multi-host behavior)."""
+    return {"docker_host": docker_host} if docker_host else {}
 
 
 class NetworkCreateRequest(BaseModel):
@@ -116,7 +122,7 @@ async def list_containers(
     """List containers via oprim docker_ps. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        items = await asyncio.to_thread(docker_ps, all=all, docker_host=docker_host)
+        items = await asyncio.to_thread(docker_ps, all=all, **_hostkw(docker_host))
         return [c.model_dump() if hasattr(c, "model_dump") else c for c in items]
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -134,7 +140,7 @@ async def inspect_container(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_container_inspect, container_id=container, docker_host=docker_host
+            docker_container_inspect, container_id=container, **_hostkw(docker_host)
         )
         return result.model_dump()
     except OprimError as exc:
@@ -153,7 +159,7 @@ async def start_container(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_container_start, container_id=container, docker_host=docker_host
+            docker_container_start, container_id=container, **_hostkw(docker_host)
         )
         return result.model_dump()
     except OprimError as exc:
@@ -172,7 +178,7 @@ async def stop_container(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_container_stop, container_id=container, docker_host=docker_host
+            docker_container_stop, container_id=container, **_hostkw(docker_host)
         )
         return result.model_dump()
     except OprimError as exc:
@@ -191,7 +197,7 @@ async def restart_container(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_container_restart, container_id=container, docker_host=docker_host
+            docker_container_restart, container_id=container, **_hostkw(docker_host)
         )
         return result.model_dump()
     except OprimError as exc:
@@ -217,7 +223,7 @@ async def container_logs(
             container_id=container,
             lines=tail,
             since=since,
-            docker_host=docker_host,
+            **_hostkw(docker_host),
         )
         return {"container": container, "lines": [line.model_dump() for line in result]}
     except OprimError as exc:
@@ -236,7 +242,7 @@ async def container_stats(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_container_stats, container_id=container, docker_host=docker_host
+            docker_container_stats, container_id=container, **_hostkw(docker_host)
         )
         s = result.model_dump()
         return {
@@ -318,7 +324,7 @@ async def list_images(
     """List images on the target daemon. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        return await asyncio.to_thread(docker_image_list, docker_host=docker_host)
+        return await asyncio.to_thread(docker_image_list, **_hostkw(docker_host))
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -335,7 +341,7 @@ async def pull_image(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_image_pull, image=req.image, tag=req.tag, docker_host=docker_host
+            docker_image_pull, image=req.image, tag=req.tag, **_hostkw(docker_host)
         )
         return result.model_dump() if hasattr(result, "model_dump") else result
     except OprimError as exc:
@@ -355,7 +361,7 @@ async def delete_image(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         return await asyncio.to_thread(
-            docker_image_delete, image=image, force=force, docker_host=docker_host
+            docker_image_delete, image=image, force=force, **_hostkw(docker_host)
         )
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -373,7 +379,7 @@ async def system_prune(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
-            docker_system_prune, volumes=volumes, docker_host=docker_host
+            docker_system_prune, volumes=volumes, **_hostkw(docker_host)
         )
         return result.model_dump() if hasattr(result, "model_dump") else result
     except OprimError as exc:
@@ -393,7 +399,7 @@ async def list_networks(
     """List docker networks on the target daemon. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        return await asyncio.to_thread(docker_network_list, docker_host=docker_host)
+        return await asyncio.to_thread(docker_network_list, **_hostkw(docker_host))
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -408,7 +414,7 @@ async def list_volumes(
     """List docker volumes on the target daemon. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        return await asyncio.to_thread(docker_volume_list, docker_host=docker_host)
+        return await asyncio.to_thread(docker_volume_list, **_hostkw(docker_host))
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -426,7 +432,7 @@ async def delete_volume(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         return await asyncio.to_thread(
-            docker_volume_delete, name=name, force=force, docker_host=docker_host
+            docker_volume_delete, name=name, force=force, **_hostkw(docker_host)
         )
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -452,7 +458,7 @@ async def exec_container(
             env=req.env,
             user=req.user,
             timeout_sec=req.timeout_sec,
-            docker_host=docker_host,
+            **_hostkw(docker_host),
         )
         return result.model_dump()
     except OprimError as exc:

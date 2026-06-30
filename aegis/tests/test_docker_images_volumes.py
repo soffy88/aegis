@@ -45,7 +45,8 @@ def test_list_images_calls_oprim():
     ) as m:
         r = c.get(f"/api/v1/orgs/{_ORG}/docker/images")
     assert r.status_code == 200 and r.json() == [{"id": "sha256:x"}]
-    assert "docker_host" in m.call_args.kwargs
+    # no node_id → docker_host omitted so oprim uses its own default
+    assert "docker_host" not in m.call_args.kwargs
 
 
 def test_pull_image_calls_oprim():

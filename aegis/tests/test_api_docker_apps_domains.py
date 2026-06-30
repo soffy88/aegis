@@ -187,9 +187,10 @@ class TestDockerRouter:
         ) as mock_list:
             # Router query param is `all` (the console also sends ?all=true).
             docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers?all=true")
-        # node_id omitted → targets the platform's own daemon (settings.docker_host).
+        # node_id omitted → docker_host is NOT passed, so oprim uses its own default
+        # (preserves pre-multi-host behavior for deployments with a custom daemon).
         assert mock_list.call_args.kwargs["all"] is True
-        assert "docker_host" in mock_list.call_args.kwargs
+        assert "docker_host" not in mock_list.call_args.kwargs
 
     def test_list_containers_oprim_error_502(self, docker_client: TestClient) -> None:
         from oprim._exceptions import OprimError
