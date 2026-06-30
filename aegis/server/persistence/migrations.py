@@ -842,6 +842,31 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON uptime_targets (enabled) WHERE enabled = TRUE;
         """,
     ),
+    (
+        "037_autoheal_policies",
+        """
+        CREATE TABLE IF NOT EXISTS autoheal_policies (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            target_container TEXT NOT NULL,
+            trigger_metric TEXT NOT NULL,
+            trigger_operator TEXT NOT NULL DEFAULT '<'
+                CHECK (trigger_operator IN ('>=', '>', '<', '<=', '==')),
+            trigger_threshold DOUBLE PRECISION NOT NULL,
+            action TEXT NOT NULL DEFAULT 'restart' CHECK (action IN ('restart')),
+            dry_run BOOLEAN NOT NULL DEFAULT TRUE,
+            cooldown_seconds INT NOT NULL DEFAULT 300,
+            docker_host TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            last_triggered_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_policies_enabled
+            ON autoheal_policies (enabled) WHERE enabled = TRUE;
+        """,
+    ),
 ]
 
 

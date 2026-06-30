@@ -9,6 +9,7 @@ Runs background loops:
 - Webhook delivery:   every 5 s (drains the delivery queue)
 - Recording:          every 30 s (derive rate gauges, e.g. container_cpu_percent)
 - Uptime probe:       every 20 s (HTTP probes; per-target interval gates)
+- Autoheal policies:  every 30 s (policy-driven; cooldown + dry_run gate actions)
 - Alert evaluation:   every 30 s (threshold rules vs fresh metrics)
 """
 
@@ -31,6 +32,7 @@ _DELIVERY_DRAIN_BATCHES = 20  # max batches per tick so one org's backlog can't 
 _ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
 _RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
 _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probes
+_AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
 
 
 def _jittered(interval: float) -> float:
@@ -128,6 +130,24 @@ async def _scrape_loop() -> None:
         except Exception as exc:
             log.warning("scrape_cron_error err=%s", exc)
         await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
+
+
+async def _autoheal_policy_loop() -> None:
+    """Evaluate policy-driven closed-loop autoheal. Per-policy cooldown + dry_run
+    default mean real container restarts only happen for explicitly-enabled policies."""
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services.autoheal_policy import run_autoheal_policies  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(25, 45))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await run_autoheal_policies(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("autoheal_policy_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_AUTOHEAL_INTERVAL_SEC))
 
 
 async def _uptime_loop() -> None:
@@ -248,6 +268,7 @@ async def _cron_main(alerter: Any | None) -> None:
         _delivery_loop(),
         _recording_loop(),
         _uptime_loop(),
+        _autoheal_policy_loop(),
         _alert_eval_loop(),
         return_exceptions=True,
     )
