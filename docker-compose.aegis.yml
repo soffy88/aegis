@@ -207,6 +207,28 @@ services:
           memory: 256M
           cpus: "1.0"
 
+  # Container metrics source for Aegis monitoring. Exposes Prometheus /metrics with
+  # per-container CPU/mem/net/disk for ALL host containers; Aegis scrapes it (scrape
+  # target "cadvisor") so every stack on the host gets time-series metrics without
+  # per-app instrumentation. Read-only.
+  aegis-cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: aegis-cadvisor
+    restart: unless-stopped
+    privileged: true
+    networks:
+      - helios-net
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   aegis-caddy-data:
   aegis-caddy-config:
