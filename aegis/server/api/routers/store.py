@@ -66,6 +66,15 @@ def _load_apps() -> list[dict[str, Any]]:
     return apps
 
 
+def find_catalog_app(slug: str) -> dict[str, Any] | None:
+    """Return the catalog entry for *slug*, or None. Used by the install path to
+    resolve the container image when the request doesn't carry one."""
+    for app in _load_apps():
+        if app.get("slug") == slug:
+            return app
+    return None
+
+
 @router.get("")
 async def list_catalog(
     org_id: UUID,

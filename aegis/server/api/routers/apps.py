@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -101,8 +102,8 @@ async def _run_install(
                     "project_dir": body.project_dir,
                 },
                 "target_host": "localhost",
-                "docker_host": "unix:///var/run/docker.sock",
-                "caddy_admin_url": "http://localhost:2019",
+                "docker_host": cfg.docker_host,
+                "caddy_admin_url": cfg.caddy_admin_url,
             },
             user_id=str(org_id),
             project_id=project_id,
@@ -110,6 +111,11 @@ async def _run_install(
         final_status = str(result.get("status", "failed"))
         if result.get("error"):
             error_detail = str(result["error"])
+        # Persist the domain the caller asked for once the install succeeds, so the
+        # row reflects reality instead of always-NULL (the old `domain` local was
+        # never assigned). Only set it on success to avoid claiming a live domain.
+        if final_status == "completed":
+            domain = body.domain
         await redis_client.aclose()
     except Exception as exc:  # noqa: BLE001
         log.exception(
@@ -215,6 +221,17 @@ async def install_app_endpoint(
     install_dir = req.install_dir
     cfg_data_dir = get_settings().data_dir
 
+    # Resolve the container image from the store catalog when the caller didn't
+    # supply one (the console install form doesn't send image_to_pull). Previously
+    # the catalog image was ignored entirely, so installs had nothing to pull.
+    image_to_pull = req.image_to_pull
+    if not image_to_pull:
+        from aegis.server.api.routers.store import find_catalog_app  # noqa: PLC0415
+
+        entry = find_catalog_app(req.app_name)
+        if entry:
+            image_to_pull = entry.get("image")
+
     install_id = await conn.fetchval(
         """
         INSERT INTO installed_apps (org_id, project_id, app_name, app_version, install_dir, status)
@@ -234,7 +251,7 @@ async def install_app_endpoint(
         app_name=req.app_name,
         project_dir=install_dir,
         app_version=req.app_version,
-        image_to_pull=req.image_to_pull,
+        image_to_pull=image_to_pull,
         health_check_container=req.health_check_container,
         domain=req.domain,
         domain_target_url=req.domain_target_url,
@@ -269,24 +286,123 @@ class UpgradeRequest(BaseModel):
     target_version: str = Field(..., min_length=1, max_length=100)
 
 
-async def _run_app_lifecycle(
-    *, omodul_name: str, app_name: str, target_version: str, install_id: uuid.UUID
-) -> None:
-    """Best-effort background hook to drive the real omodul upgrade/rollback.
+async def _dispatch_upgrade(
+    *,
+    app_name: str,
+    current_version: str | None,
+    target_version: str,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None,
+) -> dict[str, Any]:
+    """Invoke omodul.upgrade_self_hosted_app via the dispatcher (mirrors _run_install)."""
+    from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
+    from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
+    from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
 
-    Version bookkeeping is done synchronously in the endpoint; this marks the row
-    completed/failed after the omodul call. Never raises.
+    import redis.asyncio as aioredis  # noqa: PLC0415
+
+    cfg = get_settings()
+    redis_client = aioredis.from_url(cfg.redis_url)
+    try:
+        dispatcher = OmodulDispatcher(
+            DedupCache(redis_client),
+            BudgetTracker(redis_client),
+            data_dir=str(cfg.data_dir),
+        )
+        return await dispatcher.invoke(
+            omodul_name="upgrade_self_hosted_app",
+            config={
+                "instance_name": app_name,
+                "current_version": current_version or "",
+                "target_version": target_version,
+            },
+            input_data={
+                "container_id": "",
+                "new_image": "",
+                "docker_host": cfg.docker_host,
+            },
+            user_id=str(org_id),
+            project_id=project_id,
+        )
+    finally:
+        await redis_client.aclose()
+
+
+def _run_rollback(*, app_name: str, rollback_to_version: str) -> dict[str, Any]:
+    """Invoke omodul.rollback_app directly (sync; mirrors the autoheal engine)."""
+    import tempfile  # noqa: PLC0415
+
+    from omodul.rollback_app import (  # noqa: PLC0415
+        RollbackAppConfig,
+        RollbackAppInput,
+        rollback_app,
+    )
+
+    cfg = get_settings()
+    config = RollbackAppConfig(
+        app_slug=app_name,
+        instance_name=app_name,
+        rollback_to_version=rollback_to_version,
+        restore_data=True,
+    )
+    input_data = RollbackAppInput(
+        docker_host=cfg.docker_host,
+        backup_bucket=cfg.backup_s3_bucket,
+        aws_endpoint_url=cfg.backup_s3_endpoint_url,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        return rollback_app(config, input_data, Path(tmp))
+
+
+async def _run_app_lifecycle(
+    *,
+    omodul_name: str,
+    app_name: str,
+    target_version: str,
+    install_id: uuid.UUID,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+    current_version: str | None = None,
+) -> None:
+    """Background task: actually execute the upgrade/rollback via omodul.
+
+    Replaces the prior log-only stub. The endpoint does version bookkeeping
+    synchronously; this runs the real omodul call and then marks the row
+    `active` (status=="completed") or `failed`, with the truthful error. Never
+    raises (background task).
+
+    Note: upgrade's container_id/new_image are not yet tracked on installed_apps,
+    so the upgrade omodul may report failed until image tracking lands (#19). That
+    is still strictly more honest than the old stub, which always marked active.
     """
     from aegis.server.persistence.db import get_pool  # noqa: PLC0415
 
     status_after = "active"
+    error_detail: str | None = None
     try:
-        # Real omodul invocation is wired via the dispatcher in production; here we
-        # finalize status. (Kept thin so it is independently testable / mockable.)
-        log.info("app_lifecycle omodul=%s app=%s -> %s", omodul_name, app_name, target_version)
+        if omodul_name == "upgrade_self_hosted_app":
+            result = await _dispatch_upgrade(
+                app_name=app_name,
+                current_version=current_version,
+                target_version=target_version,
+                org_id=org_id,
+                project_id=project_id,
+            )
+        else:
+            result = await asyncio.to_thread(
+                _run_rollback, app_name=app_name, rollback_to_version=target_version
+            )
+        if str(result.get("status")) != "completed":
+            status_after = "failed"
+            error_detail = str(result.get("error")) if result.get("error") else "not completed"
     except Exception as exc:  # noqa: BLE001
-        log.warning("app_lifecycle_failed app=%s err=%s", app_name, exc)
+        log.warning("app_lifecycle_failed omodul=%s app=%s err=%s", omodul_name, app_name, exc)
         status_after = "failed"
+        error_detail = f"{type(exc).__name__}: {exc}"
+
+    if error_detail:
+        log.warning("app_lifecycle_outcome id=%s status=%s err=%s",
+                    install_id, status_after, error_detail)
     try:
         async with get_pool().acquire() as conn:
             await conn.execute(
@@ -326,6 +442,8 @@ async def upgrade_app(
         app_name=app["app_name"],
         target_version=req.target_version,
         install_id=install_id,
+        org_id=org_id,
+        current_version=app["app_version"],
     )
     return {
         "install_id": str(install_id),
@@ -370,6 +488,7 @@ async def rollback_app_endpoint(
         app_name=app["app_name"],
         target_version=app["previous_version"],
         install_id=install_id,
+        org_id=org_id,
     )
     return {
         "install_id": str(install_id),
