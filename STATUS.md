@@ -30,7 +30,7 @@
 ### P1 — 核心能力缺失
 | # | 条目 | 状态 | 验证方式 |
 |---|------|------|---------|
-| 7 | causal-chain 跨租户泄露 (安全) | ⬜ todo | 单测: 加 org_id 过滤,跨租户 404 |
+| 7 | causal-chain 跨租户泄露 (安全) | ✅ done | 查询锚点+递归均按 org_id 过滤;2 单测 |
 | 8 | 节点注册修复 + 心跳 + agent 通信 | ⬜ todo | 单测: 注册 SQL upsert;last_seen 列+heartbeat 端点 |
 | 9 | 多主机容器控制 (透传 docker_host) | ⬜ todo | 单测: 容器操作带 node 目标 |
 | 10 | RBAC 撤权即时生效 (回查 DB) | ⬜ todo | 单测: 降权后立即 403 |
