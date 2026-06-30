@@ -70,29 +70,11 @@ ClearDnsCachePlugin = _stub(
     "dns_resolution_slow",
     "Flush the local DNS cache.",
 )
-ReloadConfigPlugin = _stub(
-    "ReloadConfigPlugin",
-    "reload-config",
-    "config_outdated",
-    "Send SIGHUP / reload endpoint to pick up new config.",
-)
 EvacuatePodPlugin = _stub(
     "EvacuatePodPlugin",
     "evacuate-pod",
     "pod_eviction_needed",
     "Cordon + drain a K8s node to evacuate pods.",
-)
-ResetCircuitBreakerPlugin = _stub(
-    "ResetCircuitBreakerPlugin",
-    "reset-circuit-breaker",
-    "circuit_breaker_stuck",
-    "Reset an open circuit breaker via management API.",
-)
-ThrottleTrafficPlugin = _stub(
-    "ThrottleTrafficPlugin",
-    "throttle-traffic",
-    "traffic_spike",
-    "Apply rate limiting rules to shed excess traffic.",
 )
 UpgradeContainerPlugin = _stub(
     "UpgradeContainerPlugin",
@@ -118,18 +100,6 @@ RotateSslCertPlugin = _stub(
     "ssl_cert_expiry_warning",
     "Renew and reload a TLS certificate via ACME.",
 )
-FlushSessionsPlugin = _stub(
-    "FlushSessionsPlugin",
-    "flush-sessions",
-    "session_overflow",
-    "Flush all active sessions from the session store.",
-)
-ReindexSearchPlugin = _stub(
-    "ReindexSearchPlugin",
-    "reindex-search",
-    "search_index_stale",
-    "Trigger a full reindex of the search index.",
-)
 CompactQueuePlugin = _stub(
     "CompactQueuePlugin",
     "compact-queue",
@@ -147,10 +117,4 @@ SyncReplicasPlugin = _stub(
     "sync-replicas",
     "replica_lag_high",
     "Force a replica sync / catch-up when lag is too high.",
-)
-HealthcheckExternalPlugin = _stub(
-    "HealthcheckExternalPlugin",
-    "healthcheck-external",
-    "external_service_degraded",
-    "Probe an external dependency and report status.",
 )

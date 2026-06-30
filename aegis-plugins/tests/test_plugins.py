@@ -16,8 +16,8 @@ from aegis_plugins.plugins.rotate_credentials import RotateCredentialsPlugin
 from aegis_plugins.plugins.scale_down import ScaleDownPlugin
 from aegis_plugins.plugins.stubs import (
     CompactDbPlugin,
-    HealthcheckExternalPlugin,
     KillProcessPlugin,
+    RotateLogsPlugin,
 )
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ def test_real_plugins_pass_validate_config() -> None:
 
 
 def test_stub_plugins_pass_validate_config() -> None:
-    for cls in [KillProcessPlugin, CompactDbPlugin, HealthcheckExternalPlugin]:
+    for cls in [KillProcessPlugin, CompactDbPlugin, RotateLogsPlugin]:
         cls.validate_config()
 
 
@@ -172,7 +172,7 @@ async def test_notify_oncall_rollback_skips() -> None:
 @pytest.mark.asyncio
 async def test_stub_pre_check_always_false() -> None:
     ctx = _make_ctx()
-    for cls in [KillProcessPlugin, CompactDbPlugin, HealthcheckExternalPlugin]:
+    for cls in [KillProcessPlugin, CompactDbPlugin, RotateLogsPlugin]:
         assert await cls().pre_check(ctx) is False
 
 
