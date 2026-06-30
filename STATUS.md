@@ -49,11 +49,12 @@
 | 19 | 应用多级版本溯源 | ✅ done | migr 034 app_version_history 表+升级/回滚记录+GET /history 端点 |
 | 20 | 日志聚合 | ⬜ todo | ⚠️ 设计为主 |
 | 21 | 链路追踪 | ⬜ todo | ⚠️ 设计为主 |
-| 22 | Secrets KDF 加固 | ⬜ todo | 单测: 慢 KDF / 独立 master key |
+| 22 | Secrets KDF 加固 | ✅ done | 未设独立 master key 时大声告警(派生自 jwt_secret 无域分离);改派生会孤立已存密文,故走告警+建议轮转 |
 
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#22 Secrets 金库密钥加固** — 未配置独立 `secrets_master_key` 时(密钥派生自 `sha256(jwt_secret)`,无域分离、强度受限于 jwt_secret),启动后首次使用大声告警一次,建议配置 32 字节专用 master key 并轮转。**未改派生算法**(会孤立已加密的密文行)。test_secrets_master_key_warning.py (2)
 - **#19 应用多级版本溯源** — migration 034 新增 `app_version_history` 表;升级/回滚时记录 from/to/action 转移行(此前只有单级 `previous_version`);新增 `GET /apps/{id}/history` 返回完整历史。test_app_lifecycle_exec.py (+1)
 - **#17 审计覆盖补全** — 给此前不写审计的敏感操作补 `record_audit`:`org.created`、`org.ownership_transferred`、`project.created`、`project.archived`、`invite.created`、`invite.accepted`(沿用既有 best-effort 模式,已被 member.* 测试覆盖)。全套绿、无回归。
 - **#13 RAG embedding 降级可见化** — `_warn_if_embeddings_stubbed` 启动时检测 embedding provider 未注册→大声 WARNING(此前 oprim 静默回退 128 维 stub,RAG 跑在无意义向量上)。注册真实 embedding 模型(Ollama nomic-embed-text/Voyage/本地 bge-m3)属 deploy 配置 + 需验证,未在此环境硬接。test_embedding_provider_warning.py (2)
