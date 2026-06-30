@@ -45,6 +45,7 @@ async def approve(
     org_id: UUID,
     exec_id: str,
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+    conn: asyncpg.Connection = Depends(get_db_conn),
 ) -> dict[str, Any]:
     """Approve a pending execution. operator+ required."""
     execution = approve_execution(exec_id)
@@ -54,7 +55,27 @@ async def approve(
             detail="Execution not found or not awaiting approval",
         )
     result = await execute_runbook(execution.runbook_name, dry_run=False)
+    await _record_runbook_outcome(conn, org_id, execution.runbook_name, result)
     return result.model_dump()
+
+
+async def _record_runbook_outcome(
+    conn: asyncpg.Connection, org_id: UUID, name: str, result: Any
+) -> None:
+    """Feed a live runbook outcome into the learning loop (symptom = its trigger)."""
+    from aegis.server.services.remediation_learning import record_outcome  # noqa: PLC0415
+
+    rb = get_runbook(name)
+    symptom = rb.trigger if rb else name
+    await record_outcome(
+        conn,
+        org_id=org_id,
+        symptom=symptom,
+        remediation=name,
+        success=str(result.status) == "completed",
+        source="runbook",
+        metadata={"execution_id": result.id},
+    )
 
 
 @router.get("/executions/{exec_id}")
@@ -104,6 +125,8 @@ async def execute(
 
     try:
         execution = await execute_runbook(name, dry_run=body.dry_run)
-        return execution.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not body.dry_run:
+        await _record_runbook_outcome(conn, org_id, name, execution)
+    return execution.model_dump()
