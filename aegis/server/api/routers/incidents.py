@@ -147,6 +147,17 @@ async def resolve_incident(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "open incident not found"
         )
+
+    from aegis.server.persistence.audit import record_audit  # noqa: PLC0415
+
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="incident.resolved",
+        target_type="incident",
+        target_id=str(incident_id),
+    )
     return dict(row)
 
 

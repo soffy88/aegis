@@ -675,6 +675,25 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON incident_events (incident_id);
         """,
     ),
+    (
+        "025_audit_log",
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            actor_user_id UUID,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_log_org_time
+            ON audit_log (org_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_action
+            ON audit_log (org_id, action, created_at DESC);
+        """,
+    ),
 ]
 
 
