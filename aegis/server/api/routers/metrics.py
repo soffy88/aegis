@@ -182,3 +182,61 @@ async def query_metrics(
         "agg": agg,
         "points": points,
     }
+
+
+@router.get("/anomaly")
+async def evaluate_anomaly(
+    metric_name: str = Query(..., min_length=1, max_length=200),
+    hostname: str | None = Query(default=None, max_length=255),
+    hours: float = Query(default=6, gt=0, le=24 * 30),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(get_current_user),
+) -> dict[str, Any]:
+    """On-demand EWMA anomaly check on a metric's recent series."""
+    from aegis.server.services.anomaly import ewma_anomaly  # noqa: PLC0415
+
+    params: list[object] = [metric_name, float(hours)]
+    host_clause = ""
+    if hostname:
+        params.append(hostname)
+        host_clause = f" AND hostname = ${len(params)}"
+    rows = await conn.fetch(
+        "SELECT value FROM agent_metrics WHERE metric_name = $1"
+        f" AND ts >= now() - ($2::double precision * interval '1 hour'){host_clause}"
+        " ORDER BY ts ASC",
+        *params,
+    )
+    result = ewma_anomaly([float(r["value"]) for r in rows])
+    if result is None:
+        return {"metric_name": metric_name, "hostname": hostname, "evaluated": False,
+                "reason": "not enough samples"}
+    return {
+        "metric_name": metric_name,
+        "hostname": hostname,
+        "evaluated": True,
+        "is_anomaly": result.is_anomaly,
+        "score": result.score,
+        "value": result.value,
+        "baseline": result.baseline,
+        "std": result.std,
+        "samples": result.n,
+    }
+
+
+@router.get("/anomalies")
+async def list_anomalies(
+    hours: float = Query(default=24, gt=0, le=24 * 30),
+    limit: int = Query(default=100, ge=1, le=1000),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Recently detected anomalies (by the background scan)."""
+    rows = await conn.fetch(
+        "SELECT hostname, metric_name, value, baseline, score, detected_at"
+        " FROM metric_anomalies"
+        " WHERE detected_at >= now() - ($1::double precision * interval '1 hour')"
+        " ORDER BY detected_at DESC LIMIT $2",
+        float(hours),
+        limit,
+    )
+    return [dict(r) for r in rows]

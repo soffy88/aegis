@@ -19,6 +19,7 @@ _CORRELATOR_INTERVAL_SEC = 300  # 5 min
 _CAPACITY_INTERVAL_SEC = 3600  # 60 min
 _ESCALATION_INTERVAL_SEC = 120  # 2 min
 _SCRAPE_INTERVAL_SEC = 15  # tick; each target's own interval gates actual scrapes
+_ANOMALY_INTERVAL_SEC = 60  # EWMA anomaly scan
 
 
 def _jittered(interval: float) -> float:
@@ -118,12 +119,29 @@ async def _scrape_loop() -> None:
         await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
 
 
+async def _anomaly_loop() -> None:
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services.anomaly_scan import scan_anomalies  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(40, 70))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await scan_anomalies(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("anomaly_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_ANOMALY_INTERVAL_SEC))
+
+
 async def _cron_main(alerter: Any | None) -> None:
     await asyncio.gather(
         _correlator_loop(),
         _capacity_loop(alerter),
         _escalation_loop(),
         _scrape_loop(),
+        _anomaly_loop(),
         return_exceptions=True,
     )
 
