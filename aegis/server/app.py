@@ -43,6 +43,7 @@ from aegis.server.api.routers import orgs as orgs_router
 from aegis.server.api.routers import projects as projects_router
 from aegis.server.api.routers import remediation as remediation_router
 from aegis.server.api.routers import scrape_targets as scrape_targets_router
+from aegis.server.api.routers import secrets as secrets_router
 from aegis.server.api.routers import status_page as status_page_router
 from aegis.server.api.routers import release_gates as release_gates_router
 from aegis.server.api.routers import runbooks as runbooks_router
@@ -322,6 +323,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(metrics_router.router)
     app.include_router(scrape_targets_router.router)
     app.include_router(status_page_router.router)
+    app.include_router(secrets_router.router)
     app.include_router(remediation_router.router)
     app.include_router(oncall_router.router)
     app.include_router(events.router)
