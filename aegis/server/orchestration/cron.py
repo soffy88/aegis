@@ -7,6 +7,7 @@ Runs background loops:
 - Metrics scrape:     every 15 s (per-target interval gates actual scrapes)
 - Anomaly scan:       every 60 s (EWMA)
 - Webhook delivery:   every 5 s (drains the delivery queue)
+- Recording:          every 30 s (derive rate gauges, e.g. container_cpu_percent)
 - Alert evaluation:   every 30 s (threshold rules vs fresh metrics)
 """
 
@@ -27,6 +28,7 @@ _ANOMALY_INTERVAL_SEC = 60  # EWMA anomaly scan
 _DELIVERY_INTERVAL_SEC = 5  # tick; drains the webhook delivery queue (next_attempt_at gates)
 _DELIVERY_DRAIN_BATCHES = 20  # max batches per tick so one org's backlog can't wedge the loop
 _ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
+_RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
 
 
 def _jittered(interval: float) -> float:
@@ -126,6 +128,26 @@ async def _scrape_loop() -> None:
         await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
 
 
+async def _recording_loop() -> None:
+    """Derive rate-based gauges (container_cpu_percent) from scraped counters so
+    threshold rules can alert on CPU. Runs just behind the scrape cadence."""
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services.metric_recording import (
+        record_container_cpu_percent,  # noqa: PLC0415
+    )
+
+    await asyncio.sleep(random.uniform(20, 35))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await record_container_cpu_percent(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("recording_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_RECORDING_INTERVAL_SEC))
+
+
 async def _alert_eval_loop() -> None:
     """Evaluate enabled threshold rules against fresh metrics every ~30s.
 
@@ -204,6 +226,7 @@ async def _cron_main(alerter: Any | None) -> None:
         _scrape_loop(),
         _anomaly_loop(),
         _delivery_loop(),
+        _recording_loop(),
         _alert_eval_loop(),
         return_exceptions=True,
     )
