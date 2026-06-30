@@ -58,6 +58,9 @@ async def run_alert_escalation(
         escalated.append(str(fired.fired_id))
 
         if webhook_dispatcher is not None:
+            from aegis.server.services.oncall import current_oncall  # noqa: PLC0415
+
+            oncall = await current_oncall(conn, org_id=fired.org_id, now=now)
             await webhook_dispatcher.enqueue_event(
                 org_id=fired.org_id,
                 event_type="alert.fired",
@@ -69,6 +72,7 @@ async def run_alert_escalation(
                     "escalated": True,
                     "metric": rule.metric,
                     "escalated_from": "warn",
+                    "oncall_user_id": str(oncall) if oncall else None,
                 },
             )
 
