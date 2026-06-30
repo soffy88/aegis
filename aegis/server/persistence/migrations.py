@@ -694,6 +694,23 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON audit_log (org_id, action, created_at DESC);
         """,
     ),
+    (
+        "026_remediation_outcomes",
+        """
+        CREATE TABLE IF NOT EXISTS remediation_outcomes (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            symptom_key TEXT NOT NULL,
+            remediation TEXT NOT NULL,
+            success BOOLEAN NOT NULL,
+            source TEXT NOT NULL DEFAULT 'runbook',
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_remediation_outcomes_lookup
+            ON remediation_outcomes (org_id, symptom_key, created_at DESC);
+        """,
+    ),
 ]
 
 

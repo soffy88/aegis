@@ -69,6 +69,12 @@ async def ingest_alert(
         event_id=alert_event_id,
     )
 
+    # Learning-loop recall: surface what worked before for this symptom to the planner.
+    from aegis.server.services.remediation_learning import success_stats  # noqa: PLC0415
+
+    learned = await success_stats(conn, org_id=org_id, symptom=body.alert_name)
+    enriched_context = {**body.payload, "historical_remediations": learned}
+
     settings = AegisSettings()
     redis_client = aioredis.from_url(settings.redis_url)
     dispatcher = OmodulDispatcher(
@@ -84,7 +90,7 @@ async def ingest_alert(
             "severity": body.severity,
             **body.payload,
         },
-        context=body.payload,
+        context=enriched_context,
         user_id=str(org_id),
     )
 
