@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.persistence.audit import record_audit
 from aegis.server.repositories.project_repo import ProjectRepository
 
 try:
@@ -112,6 +113,15 @@ async def create_project(
         environment=req.environment,
         docker_labels=req.docker_labels,
         config=req.config,
+    )
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="project.created",
+        target_type="project",
+        target_id=str(project.id),
+        metadata={"slug": project.slug, "environment": req.environment},
     )
     return _project_to_dict(project)
 
@@ -244,3 +254,12 @@ async def archive_project(
     ok = await project_repo.archive(project_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="project already archived")
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="project.archived",
+        target_type="project",
+        target_id=str(project_id),
+        metadata={"slug": project.slug},
+    )
