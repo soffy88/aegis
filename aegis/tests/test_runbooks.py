@@ -122,8 +122,12 @@ def test_list_runbooks_endpoint(client: TestClient) -> None:
     _register_sample()
     resp = client.get(f"/api/v1/orgs/{_ORG}/runbooks")
     assert resp.status_code == 200
-    assert len(resp.json()) == 1
-    assert resp.json()[0]["name"] == "restart-app"
+    # Robust to whether the aegis-plugins pack is installed (it merges in entry-point
+    # plugins): assert the YAML runbook is present rather than an exact count.
+    names = [r["name"] for r in resp.json()]
+    assert "restart-app" in names
+    yaml_entry = next(r for r in resp.json() if r["name"] == "restart-app")
+    assert yaml_entry["source"] == "yaml"
 
 
 def test_execute_dry_run_endpoint(client: TestClient) -> None:
