@@ -17,6 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+import asyncpg
 from obase.auth import jwt_verify_hs256
 from oprim import (
     docker_container_exec,
@@ -34,6 +35,7 @@ from oprim import (
 from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import PERMISSIONS_BY_ROLE, Permission, require_permission
 from aegis.server.models import Role
@@ -44,6 +46,28 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/docker", tags=["docker"])
 
 _502 = status.HTTP_502_BAD_GATEWAY
+
+
+async def _resolve_docker_host(
+    conn: asyncpg.Connection, org_id: UUID, node_id: UUID | None
+) -> str:
+    """Resolve the target Docker daemon for a request.
+
+    node_id=None → the platform's own daemon (settings.docker_host). The REST
+    container endpoints previously ignored settings.docker_host AND the node, so
+    every action hit oprim's hardcoded local socket; this routes them to the
+    selected node's docker_host_url so multi-host control actually works.
+    """
+    if node_id is None:
+        return get_settings().docker_host
+    row = await conn.fetchrow(
+        "SELECT docker_host_url FROM aegis_nodes WHERE org_id = $1 AND node_id = $2",
+        org_id,
+        node_id,
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="node not found")
+    return row["docker_host_url"] or get_settings().docker_host
 
 
 class NetworkCreateRequest(BaseModel):
@@ -73,11 +97,14 @@ class ContainerExecRequest(BaseModel):
 async def list_containers(
     org_id: UUID,
     all: bool = Query(default=False, description="Include stopped containers"),
+    node_id: UUID | None = Query(default=None, description="Target node; omit for platform host"),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> list[dict[str, Any]]:
     """List containers via oprim docker_ps. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        items = await asyncio.to_thread(docker_ps, all=all)
+        items = await asyncio.to_thread(docker_ps, all=all, docker_host=docker_host)
         return [c.model_dump() if hasattr(c, "model_dump") else c for c in items]
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -87,11 +114,16 @@ async def list_containers(
 async def inspect_container(
     org_id: UUID,
     container: str,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> dict[str, Any]:
     """Inspect a container. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(docker_container_inspect, container_id=container)
+        result = await asyncio.to_thread(
+            docker_container_inspect, container_id=container, docker_host=docker_host
+        )
         return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -101,11 +133,16 @@ async def inspect_container(
 async def start_container(
     org_id: UUID,
     container: str,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
 ) -> dict[str, Any]:
     """Start a container. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(docker_container_start, container_id=container)
+        result = await asyncio.to_thread(
+            docker_container_start, container_id=container, docker_host=docker_host
+        )
         return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -115,11 +152,16 @@ async def start_container(
 async def stop_container(
     org_id: UUID,
     container: str,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
 ) -> dict[str, Any]:
     """Stop a container. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(docker_container_stop, container_id=container)
+        result = await asyncio.to_thread(
+            docker_container_stop, container_id=container, docker_host=docker_host
+        )
         return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -129,11 +171,16 @@ async def stop_container(
 async def restart_container(
     org_id: UUID,
     container: str,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
 ) -> dict[str, Any]:
     """Restart a container. operator+ required."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(docker_container_restart, container_id=container)
+        result = await asyncio.to_thread(
+            docker_container_restart, container_id=container, docker_host=docker_host
+        )
         return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -145,13 +192,20 @@ async def container_logs(
     container: str,
     tail: int = Query(default=100, ge=1, le=2000),
     since_seconds: int | None = Query(default=None, ge=1),
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> dict[str, Any]:
     """Get container logs. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         since = f"{since_seconds}s" if since_seconds else None
         result = await asyncio.to_thread(
-            docker_container_logs, container_id=container, lines=tail, since=since
+            docker_container_logs,
+            container_id=container,
+            lines=tail,
+            since=since,
+            docker_host=docker_host,
         )
         return {"container": container, "lines": [line.model_dump() for line in result]}
     except OprimError as exc:
@@ -162,11 +216,16 @@ async def container_logs(
 async def container_stats(
     org_id: UUID,
     container: str,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> dict[str, Any]:
     """Single-shot container stats via oprim. viewer+ can read."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(docker_container_stats, container_id=container)
+        result = await asyncio.to_thread(
+            docker_container_stats, container_id=container, docker_host=docker_host
+        )
         s = result.model_dump()
         return {
             "container": container,
@@ -239,9 +298,12 @@ async def exec_container(
     org_id: UUID,
     container: str,
     req: ContainerExecRequest,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
 ) -> dict[str, Any]:
     """Execute a command in a container."""
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
             docker_container_exec,
@@ -251,6 +313,7 @@ async def exec_container(
             env=req.env,
             user=req.user,
             timeout_sec=req.timeout_sec,
+            docker_host=docker_host,
         )
         return result.model_dump()
     except OprimError as exc:
