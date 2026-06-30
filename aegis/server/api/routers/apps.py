@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -33,6 +34,7 @@ class InstallRequest(BaseModel):
     domain: str | None = None
     domain_target_url: str | None = None
     register_domain: bool = False
+    node_id: uuid.UUID | None = None  # target node; omit to install on the platform host
 
     @field_validator("install_dir")
     @classmethod
@@ -53,6 +55,8 @@ class InstallAppRequest(BaseModel):
     domain: str | None = None
     domain_target_url: str | None = None
     register_domain: bool = False
+    target_host: str = "localhost"
+    docker_host: str = "unix:///var/run/docker.sock"
 
 
 async def _run_install(
@@ -100,9 +104,9 @@ async def _run_install(
                     "image_to_pull": body.image_to_pull,
                     "project_dir": body.project_dir,
                 },
-                "target_host": "localhost",
-                "docker_host": "unix:///var/run/docker.sock",
-                "caddy_admin_url": "http://localhost:2019",
+                "target_host": body.target_host,
+                "docker_host": body.docker_host,
+                "caddy_admin_url": cfg.caddy_admin_url,
             },
             user_id=str(org_id),
             project_id=project_id,
@@ -110,6 +114,11 @@ async def _run_install(
         final_status = str(result.get("status", "failed"))
         if result.get("error"):
             error_detail = str(result["error"])
+        # Persist the domain the caller asked for once the install succeeds, so the
+        # row reflects reality instead of always-NULL (the old `domain` local was
+        # never assigned). Only set it on success to avoid claiming a live domain.
+        if final_status == "completed":
+            domain = body.domain
         await redis_client.aclose()
     except Exception as exc:  # noqa: BLE001
         log.exception(
@@ -195,6 +204,27 @@ async def get_app(
     return dict(row)
 
 
+@router.get("/{install_id}/history")
+async def app_version_history(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """Full upgrade/rollback history for an app (newest first). viewer+ can read."""
+    owns = await conn.fetchval(
+        "SELECT 1 FROM installed_apps WHERE id = $1 AND org_id = $2", install_id, org_id
+    )
+    if not owns:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    rows = await conn.fetch(
+        "SELECT from_version, to_version, action, created_at"
+        " FROM app_version_history WHERE install_id = $1 ORDER BY created_at DESC",
+        install_id,
+    )
+    return [dict(r) for r in rows]
+
+
 @router.post("/install", status_code=status.HTTP_202_ACCEPTED)
 async def install_app_endpoint(
     org_id: uuid.UUID,
@@ -215,12 +245,24 @@ async def install_app_endpoint(
     install_dir = req.install_dir
     cfg_data_dir = get_settings().data_dir
 
+    # Resolve the container image from the store catalog when the caller didn't
+    # supply one (the console install form doesn't send image_to_pull). Previously
+    # the catalog image was ignored entirely, so installs had nothing to pull.
+    image_to_pull = req.image_to_pull
+    if not image_to_pull:
+        from aegis.server.api.routers.store import find_catalog_app  # noqa: PLC0415
+
+        entry = find_catalog_app(req.app_name)
+        if entry:
+            image_to_pull = entry.get("image")
+
     install_id = await conn.fetchval(
         """
-        INSERT INTO installed_apps (org_id, project_id, app_name, app_version, install_dir, status)
-        VALUES ($1, $2, $3, $4, $5, 'installing')
+        INSERT INTO installed_apps
+            (org_id, project_id, app_name, app_version, install_dir, status, image)
+        VALUES ($1, $2, $3, $4, $5, 'installing', $6)
         ON CONFLICT (org_id, project_id, app_name)
-            DO UPDATE SET status = 'installing', installed_at = now()
+            DO UPDATE SET status = 'installing', installed_at = now(), image = EXCLUDED.image
         RETURNING id
         """,
         org_id,
@@ -228,17 +270,35 @@ async def install_app_endpoint(
         req.app_name,
         req.app_version,
         install_dir,
+        image_to_pull,
     )
+
+    # Resolve the install target. Default: the platform's own daemon. With a
+    # node_id, install onto that node's host/daemon instead of hardcoded localhost.
+    target_host = "localhost"
+    docker_host = get_settings().docker_host
+    if req.node_id is not None:
+        node = await conn.fetchrow(
+            "SELECT host, docker_host_url FROM aegis_nodes WHERE org_id = $1 AND node_id = $2",
+            org_id,
+            req.node_id,
+        )
+        if not node:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="node not found")
+        target_host = node["host"]
+        docker_host = node["docker_host_url"] or docker_host
 
     body = InstallAppRequest(
         app_name=req.app_name,
         project_dir=install_dir,
         app_version=req.app_version,
-        image_to_pull=req.image_to_pull,
+        image_to_pull=image_to_pull,
         health_check_container=req.health_check_container,
         domain=req.domain,
         domain_target_url=req.domain_target_url,
         register_domain=req.register_domain,
+        target_host=target_host,
+        docker_host=docker_host,
     )
     task_trace_id = f"trc_{uuid.uuid4().hex[:8]}"
     background_tasks.add_task(
@@ -255,38 +315,183 @@ async def uninstall_app(
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
 ) -> None:
-    """Uninstall an app. member+ required."""
-    result = await conn.execute(
+    """Uninstall an app. member+ required.
+
+    Best-effort stops the running container before dropping the row so uninstall
+    doesn't leave it running (the old code only deleted the DB record). The
+    container is named after the app instance. Full removal (docker rm + volume +
+    Caddy route cleanup) needs an uninstall primitive the 3O libs don't expose yet.
+    """
+    row = await conn.fetchrow(
+        "SELECT app_name FROM installed_apps WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+    try:
+        from oprim import docker_container_stop  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            docker_container_stop,
+            container_id=row["app_name"],
+            docker_host=get_settings().docker_host,
+        )
+    except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+        log.warning("uninstall_stop_failed app=%s err=%s", row["app_name"], exc)
+
+    await conn.execute(
         "DELETE FROM installed_apps WHERE id = $1 AND org_id = $2",
         install_id,
         org_id,
     )
-    if result == "DELETE 0":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
 
 
 class UpgradeRequest(BaseModel):
     target_version: str = Field(..., min_length=1, max_length=100)
 
 
-async def _run_app_lifecycle(
-    *, omodul_name: str, app_name: str, target_version: str, install_id: uuid.UUID
+async def _record_version_transition(
+    conn: asyncpg.Connection,
+    *,
+    install_id: uuid.UUID,
+    from_version: str | None,
+    to_version: str | None,
+    action: str,
 ) -> None:
-    """Best-effort background hook to drive the real omodul upgrade/rollback.
+    """Append an immutable version-transition row (audit #19).
 
-    Version bookkeeping is done synchronously in the endpoint; this marks the row
-    completed/failed after the omodul call. Never raises.
+    `installed_apps.previous_version` only remembers one level; this table keeps the
+    full upgrade/rollback history so provenance survives repeated transitions.
+    """
+    await conn.execute(
+        "INSERT INTO app_version_history (install_id, from_version, to_version, action)"
+        " VALUES ($1, $2, $3, $4)",
+        install_id,
+        from_version,
+        to_version or "",
+        action,
+    )
+
+
+async def _dispatch_upgrade(
+    *,
+    app_name: str,
+    current_version: str | None,
+    target_version: str,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None,
+) -> dict[str, Any]:
+    """Invoke omodul.upgrade_self_hosted_app via the dispatcher (mirrors _run_install)."""
+    from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
+    from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
+    from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
+
+    import redis.asyncio as aioredis  # noqa: PLC0415
+
+    cfg = get_settings()
+    redis_client = aioredis.from_url(cfg.redis_url)
+    try:
+        dispatcher = OmodulDispatcher(
+            DedupCache(redis_client),
+            BudgetTracker(redis_client),
+            data_dir=str(cfg.data_dir),
+        )
+        return await dispatcher.invoke(
+            omodul_name="upgrade_self_hosted_app",
+            config={
+                "instance_name": app_name,
+                "current_version": current_version or "",
+                "target_version": target_version,
+            },
+            input_data={
+                "container_id": "",
+                "new_image": "",
+                "docker_host": cfg.docker_host,
+            },
+            user_id=str(org_id),
+            project_id=project_id,
+        )
+    finally:
+        await redis_client.aclose()
+
+
+def _run_rollback(*, app_name: str, rollback_to_version: str) -> dict[str, Any]:
+    """Invoke omodul.rollback_app directly (sync; mirrors the autoheal engine)."""
+    import tempfile  # noqa: PLC0415
+
+    from omodul.rollback_app import (  # noqa: PLC0415
+        RollbackAppConfig,
+        RollbackAppInput,
+        rollback_app,
+    )
+
+    cfg = get_settings()
+    config = RollbackAppConfig(
+        app_slug=app_name,
+        instance_name=app_name,
+        rollback_to_version=rollback_to_version,
+        restore_data=True,
+    )
+    input_data = RollbackAppInput(
+        docker_host=cfg.docker_host,
+        backup_bucket=cfg.backup_s3_bucket,
+        aws_endpoint_url=cfg.backup_s3_endpoint_url,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        return rollback_app(config, input_data, Path(tmp))
+
+
+async def _run_app_lifecycle(
+    *,
+    omodul_name: str,
+    app_name: str,
+    target_version: str,
+    install_id: uuid.UUID,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+    current_version: str | None = None,
+) -> None:
+    """Background task: actually execute the upgrade/rollback via omodul.
+
+    Replaces the prior log-only stub. The endpoint does version bookkeeping
+    synchronously; this runs the real omodul call and then marks the row
+    `active` (status=="completed") or `failed`, with the truthful error. Never
+    raises (background task).
+
+    Note: upgrade's container_id/new_image are not yet tracked on installed_apps,
+    so the upgrade omodul may report failed until image tracking lands (#19). That
+    is still strictly more honest than the old stub, which always marked active.
     """
     from aegis.server.persistence.db import get_pool  # noqa: PLC0415
 
     status_after = "active"
+    error_detail: str | None = None
     try:
-        # Real omodul invocation is wired via the dispatcher in production; here we
-        # finalize status. (Kept thin so it is independently testable / mockable.)
-        log.info("app_lifecycle omodul=%s app=%s -> %s", omodul_name, app_name, target_version)
+        if omodul_name == "upgrade_self_hosted_app":
+            result = await _dispatch_upgrade(
+                app_name=app_name,
+                current_version=current_version,
+                target_version=target_version,
+                org_id=org_id,
+                project_id=project_id,
+            )
+        else:
+            result = await asyncio.to_thread(
+                _run_rollback, app_name=app_name, rollback_to_version=target_version
+            )
+        if str(result.get("status")) != "completed":
+            status_after = "failed"
+            error_detail = str(result.get("error")) if result.get("error") else "not completed"
     except Exception as exc:  # noqa: BLE001
-        log.warning("app_lifecycle_failed app=%s err=%s", app_name, exc)
+        log.warning("app_lifecycle_failed omodul=%s app=%s err=%s", omodul_name, app_name, exc)
         status_after = "failed"
+        error_detail = f"{type(exc).__name__}: {exc}"
+
+    if error_detail:
+        log.warning("app_lifecycle_outcome id=%s status=%s err=%s",
+                    install_id, status_after, error_detail)
     try:
         async with get_pool().acquire() as conn:
             await conn.execute(
@@ -320,12 +525,21 @@ async def upgrade_app(
         org_id,
         req.target_version,
     )
+    await _record_version_transition(
+        conn,
+        install_id=install_id,
+        from_version=app["app_version"],
+        to_version=req.target_version,
+        action="upgrade",
+    )
     background_tasks.add_task(
         _run_app_lifecycle,
         omodul_name="upgrade_self_hosted_app",
         app_name=app["app_name"],
         target_version=req.target_version,
         install_id=install_id,
+        org_id=org_id,
+        current_version=app["app_version"],
     )
     return {
         "install_id": str(install_id),
@@ -364,12 +578,20 @@ async def rollback_app_endpoint(
         install_id,
         org_id,
     )
+    await _record_version_transition(
+        conn,
+        install_id=install_id,
+        from_version=app["app_version"],
+        to_version=app["previous_version"],
+        action="rollback",
+    )
     background_tasks.add_task(
         _run_app_lifecycle,
         omodul_name="rollback_app",
         app_name=app["app_name"],
         target_version=app["previous_version"],
         install_id=install_id,
+        org_id=org_id,
     )
     return {
         "install_id": str(install_id),

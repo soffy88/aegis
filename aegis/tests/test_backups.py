@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator, Generator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -121,10 +122,45 @@ def _pool_yielding(conn: mock.AsyncMock) -> mock.MagicMock:
     return pool_cm
 
 
+def _backup_result(status: str = "completed", *, with_findings: bool = True) -> dict:
+    """Shape that omodul.backup_app_data actually returns (findings nested)."""
+    findings = (
+        SimpleNamespace(storage_url="s3://b/k", total_size_bytes=42, checksum_sha256="abc")
+        if with_findings
+        else None
+    )
+    return {
+        "status": status,
+        "findings": findings,
+        "fingerprint": "fp",
+        "error": None if status == "completed" else {"error_message": "disk full"},
+    }
+
+
 @pytest.mark.asyncio
-async def test_run_backup_marks_completed_on_success() -> None:
+async def test_run_backup_persists_real_findings_on_success() -> None:
     conn = mock.AsyncMock()
-    fake_backup = mock.MagicMock(return_value={"storage_url": "s3://b/k", "total_size_bytes": 42})
+    fake_backup = mock.MagicMock(return_value=_backup_result("completed"))
+    with (
+        mock.patch("aegis.server.api.routers.backups.get_pool", return_value=_pool_yielding(conn)),
+        mock.patch("omodul.backup_app_data.backup_app_data", fake_backup),
+    ):
+        await _run_backup(
+            _BACKUP, _ORG, BackupRequest(app_slug="a", instance_name="i", target_volume="v")
+        )
+
+    completed_call = next(
+        c for c in conn.execute.await_args_list if "completed" in c.args[0]
+    )
+    # backup_key + size_bytes must come from findings, not be NULL/0
+    assert completed_call.args[1] == "s3://b/k"
+    assert completed_call.args[2] == 42
+
+
+@pytest.mark.asyncio
+async def test_run_backup_marks_failed_when_executor_reports_failed() -> None:
+    conn = mock.AsyncMock()
+    fake_backup = mock.MagicMock(return_value=_backup_result("failed", with_findings=False))
     with (
         mock.patch("aegis.server.api.routers.backups.get_pool", return_value=_pool_yielding(conn)),
         mock.patch("omodul.backup_app_data.backup_app_data", fake_backup),
@@ -134,7 +170,28 @@ async def test_run_backup_marks_completed_on_success() -> None:
         )
 
     sql = " ".join(call.args[0] for call in conn.execute.await_args_list)
-    assert "completed" in sql
+    assert "failed" in sql and "completed" not in sql
+
+
+@pytest.mark.asyncio
+async def test_run_restore_fails_fast_without_backup_key() -> None:
+    conn = mock.AsyncMock()
+    row = _backup_row()
+    row["backup_key"] = None  # backup never uploaded
+    called = {"restore": False}
+
+    def _restore(*_a: object, **_k: object) -> None:
+        called["restore"] = True
+
+    with (
+        mock.patch("aegis.server.api.routers.backups.get_pool", return_value=_pool_yielding(conn)),
+        mock.patch("oskill.restore_from_backup.restore_from_backup", _restore),
+    ):
+        await _run_restore(_BACKUP, _ORG, RestoreRequest(target_volume="v"), row)
+
+    assert called["restore"] is False  # never attempted boto3 download
+    sql = " ".join(call.args[0] for call in conn.execute.await_args_list)
+    assert "failed" in sql
 
 
 @pytest.mark.asyncio

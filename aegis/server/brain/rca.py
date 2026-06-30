@@ -16,10 +16,8 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
-import redis.asyncio as aioredis
 from obase import ProviderRegistry
 from oprim import (
     docker_inspect,
@@ -274,62 +272,37 @@ async def investigate_if_deep_needed(
     return await service.invoke(task)
 
 
-def _rca_daily_max_invocations(cfg: AegisSettings) -> int | None:
-    """Max deep investigations per org per day, or None if the daily gate is off.
-
-    Each investigation reserves one per-invocation slot, so the daily ceiling is
-    daily_budget / per_invocation_cap (at least 1 when both are positive).
-    """
-    per_inv = cfg.rca_max_cost_usd_per_invocation
-    daily = cfg.rca_max_cost_usd_per_org_daily
-    if per_inv <= 0 or daily <= 0:
-        return None
-    return max(1, int(daily // per_inv))
-
-
 async def _check_rca_budget(org_id: str, cfg: AegisSettings) -> bool:
-    """Per-org daily RCA budget gate (Redis-shared across workers).
+    """Per-org daily RCA budget gate, by actual USD spend from llm_cost_ledger.
 
-    Reserves one slot per call via an atomic INCR on a per-org per-day key. Returns
-    False once the day's investigation count exceeds the derived ceiling. Fails OPEN
-    on any Redis error or when the gate is disabled — incident response must never be
-    blocked by a budget-infra outage; the per-invocation cap (OmodulDispatcher) still
-    bounds single-call cost.
+    Returns False once the org's trailing 1-day LLM spend reaches the configured
+    daily cap. This is dollar-accurate, replacing the prior invocation-count proxy
+    (count = daily / per_invocation). On a DB/infra error the result is
+    cfg.rca_budget_fail_open (default True — never block incident response on a
+    budget-infra outage; the per-invocation cap still bounds single-call cost).
     """
-    daily_max = _rca_daily_max_invocations(cfg)
-    if daily_max is None:
-        log.warning(
-            "rca_budget: daily gate disabled (per_invocation=%.2f daily=%.2f) — "
-            "set positive values to cap per-org daily spend",
-            cfg.rca_max_cost_usd_per_invocation,
-            cfg.rca_max_cost_usd_per_org_daily,
-        )
+    daily = cfg.rca_max_cost_usd_per_org_daily
+    if daily <= 0:
+        log.warning("rca_budget: daily gate disabled (rca_max_cost_usd_per_org_daily<=0)")
         return True
 
-    day = datetime.now(UTC).strftime("%Y%m%d")
-    key = f"aegis:rca_budget:{org_id}:{day}"
-    client = None
     try:
-        client = aioredis.from_url(cfg.redis_url)
-        count = await client.incr(key)
-        if count == 1:
-            await client.expire(key, 2 * 86400)
-        if count > daily_max:
-            log.warning(
-                "rca_budget_exceeded org_id=%s count=%d daily_max=%d",
-                org_id,
-                count,
-                daily_max,
-            )
+        from aegis.server.persistence import get_pool  # noqa: PLC0415
+        from aegis.server.services.llm_cost import org_spend  # noqa: PLC0415
+
+        async with get_pool().acquire() as conn:
+            spend = await org_spend(conn, org_id=org_id, days=1.0)
+        total = float(spend["total_usd"])
+        if total >= daily:
+            log.warning("rca_budget_exceeded org_id=%s spend=%.4f daily=%.2f", org_id, total, daily)
             return False
-        log.debug("rca_budget org_id=%s count=%d/%d", org_id, count, daily_max)
+        log.debug("rca_budget org_id=%s spend=%.4f/%.2f", org_id, total, daily)
         return True
-    except Exception as exc:  # noqa: BLE001 — fail open, never block RCA on infra
-        log.warning("rca_budget_redis_failed org_id=%s err=%s — allowing", org_id, exc)
-        return True
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "rca_budget_check_failed org_id=%s err=%s — fail_open=%s",
+            org_id,
+            exc,
+            cfg.rca_budget_fail_open,
+        )
+        return cfg.rca_budget_fail_open

@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
+
+# Liveness thresholds (seconds since last heartbeat).
+_STALE_AFTER_SEC = 90
+_OFFLINE_AFTER_SEC = 300
+
+
+def derive_node_status(last_seen: datetime | None, *, now: datetime | None = None) -> str:
+    """online (<90s) / stale (<300s) / offline (older or never seen)."""
+    if last_seen is None:
+        return "offline"
+    now = now or datetime.now(UTC)
+    age = (now - last_seen).total_seconds()
+    if age < _STALE_AFTER_SEC:
+        return "online"
+    if age < _OFFLINE_AFTER_SEC:
+        return "stale"
+    return "offline"
 
 
 @dataclass
@@ -22,6 +39,7 @@ class Node:
     cpus: int | None
     memory_bytes: int | None
     registered_at: datetime
+    last_seen: datetime | None = None
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> Node:
@@ -38,6 +56,7 @@ class Node:
             cpus=row["cpus"],
             memory_bytes=row["memory_bytes"],
             registered_at=row["registered_at"],
+            last_seen=row["last_seen"] if "last_seen" in row else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,4 +73,6 @@ class Node:
             "cpus": self.cpus,
             "memory_bytes": self.memory_bytes,
             "registered_at": self.registered_at.isoformat(),
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+            "status": derive_node_status(self.last_seen),
         }

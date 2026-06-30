@@ -80,6 +80,15 @@ async def create_org(
 
     org = await org_repo.create(slug=req.slug, name=req.name, plan=req.plan)
     await membership_repo.add(user_id=user.user_id, org_id=org.id, role=Role.OWNER)
+    await record_audit(
+        conn,
+        org_id=org.id,
+        actor_user_id=user.user_id,
+        action="org.created",
+        target_type="org",
+        target_id=str(org.id),
+        metadata={"slug": org.slug, "name": org.name},
+    )
 
     return OrgResponse(
         id=org.id,
@@ -352,3 +361,12 @@ async def transfer_ownership(
         await membership_repo.update_role(
             user_id=req.new_owner_user_id, org_id=org_id, new_role=Role.OWNER
         )
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="org.ownership_transferred",
+        target_type="user",
+        target_id=str(req.new_owner_user_id),
+        metadata={"previous_owner": str(user.user_id)},
+    )

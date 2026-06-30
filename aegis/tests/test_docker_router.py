@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 
@@ -31,6 +32,11 @@ def client() -> Generator[TestClient, None, None]:
     fa = FastAPI()
     fa.include_router(docker_router.router)
     fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn() -> Generator[mock.AsyncMock, None, None]:
+        yield mock.AsyncMock()
+
+    fa.dependency_overrides[get_db_conn] = _conn
     with TestClient(fa, raise_server_exceptions=False) as c:
         yield c
 
@@ -135,6 +141,46 @@ def test_list_containers_uses_oprim(client: TestClient) -> None:
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     assert resp.json()[0]["container_id"] == "c1"
+
+
+def test_list_containers_routes_to_node_docker_host() -> None:
+    """With ?node_id=, oprim must target that node's docker_host_url (#9)."""
+    node_id = uuid.uuid4()
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = {"docker_host_url": "tcp://10.0.0.9:2375"}
+
+    fa = FastAPI()
+    fa.include_router(docker_router.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn() -> Generator[mock.AsyncMock, None, None]:
+        yield conn
+
+    fa.dependency_overrides[get_db_conn] = _conn
+    c = TestClient(fa, raise_server_exceptions=False)
+
+    ps = mock.MagicMock(return_value=[])
+    with mock.patch("aegis.server.api.routers.docker.docker_ps", ps):
+        resp = c.get(f"/api/v1/orgs/{_ORG}/docker/containers?node_id={node_id}")
+    assert resp.status_code == 200
+    assert ps.call_args.kwargs["docker_host"] == "tcp://10.0.0.9:2375"
+
+
+def test_list_containers_unknown_node_404() -> None:
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = None  # node not found
+
+    fa = FastAPI()
+    fa.include_router(docker_router.router)
+    fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn() -> Generator[mock.AsyncMock, None, None]:
+        yield conn
+
+    fa.dependency_overrides[get_db_conn] = _conn
+    c = TestClient(fa, raise_server_exceptions=False)
+    resp = c.get(f"/api/v1/orgs/{_ORG}/docker/containers?node_id={uuid.uuid4()}")
+    assert resp.status_code == 404
 
 
 def test_list_containers_empty(client: TestClient) -> None:

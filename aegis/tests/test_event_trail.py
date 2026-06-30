@@ -113,8 +113,22 @@ async def test_recent_events_filtered_by_service(
 @pytest.mark.asyncio
 async def test_causal_chain(mock_db_conn: mock.AsyncMock) -> None:
     eid = uuid.uuid4()
+    org_id = uuid.uuid4()
     mock_db_conn.fetch.return_value = [
         {"id": eid, "parent_id": None, "event_type": "x", "payload": {}, "ts": "t", "depth": 0},
     ]
-    result = await causal_chain(conn=mock_db_conn, event_id=eid)
+    result = await causal_chain(conn=mock_db_conn, event_id=eid, org_id=org_id)
     assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_causal_chain_is_org_scoped(mock_db_conn: mock.AsyncMock) -> None:
+    """The query must filter by org_id (both anchor + recursive step) to avoid a
+    cross-tenant event-chain leak."""
+    eid = uuid.uuid4()
+    org_id = uuid.uuid4()
+    mock_db_conn.fetch.return_value = []
+    await causal_chain(conn=mock_db_conn, event_id=eid, org_id=org_id)
+    sql, *params = mock_db_conn.fetch.await_args.args
+    assert sql.count("org_id = $3") == 2  # anchor + recursive
+    assert org_id in params

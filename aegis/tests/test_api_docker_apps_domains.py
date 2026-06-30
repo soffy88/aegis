@@ -187,7 +187,9 @@ class TestDockerRouter:
         ) as mock_list:
             # Router query param is `all` (the console also sends ?all=true).
             docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers?all=true")
-        mock_list.assert_called_once_with(all=True)
+        # node_id omitted → targets the platform's own daemon (settings.docker_host).
+        assert mock_list.call_args.kwargs["all"] is True
+        assert "docker_host" in mock_list.call_args.kwargs
 
     def test_list_containers_oprim_error_502(self, docker_client: TestClient) -> None:
         from oprim._exceptions import OprimError
@@ -359,12 +361,14 @@ class TestAppsRouter:
             )
         assert r.status_code == 202
 
-    def test_uninstall_ok(self, apps_client: TestClient) -> None:
+    def test_uninstall_ok(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
+        # uninstall now looks up the app (app_name) before best-effort teardown.
+        apps_conn.fetchrow.return_value = {"app_name": "homeassistant"}
         r = apps_client.delete(f"/api/v1/orgs/{_ORG}/apps/{_APP_ID}")
         assert r.status_code == 204
 
     def test_uninstall_not_found(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
-        apps_conn.execute.return_value = "DELETE 0"
+        apps_conn.fetchrow.return_value = None  # app row absent → 404
         r = apps_client.delete(f"/api/v1/orgs/{_ORG}/apps/{_APP_ID}")
         assert r.status_code == 404
 

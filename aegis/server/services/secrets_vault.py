@@ -9,6 +9,7 @@ new value and bumps the version.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from typing import Any
 
@@ -17,11 +18,31 @@ from obase import decrypt_token, encrypt_token
 
 from aegis.server.runtime.config import AegisSettings
 
+log = logging.getLogger(__name__)
+
+_warned_derived_key = False
+
 
 def master_key(cfg: AegisSettings) -> bytes:
-    """32-byte master key: explicit hex if configured, else derived from jwt_secret."""
+    """32-byte master key: explicit hex if configured, else derived from jwt_secret.
+
+    The derived fallback (sha256 of jwt_secret) couples secret-at-rest encryption to
+    the auth signing secret — no domain separation, and only as strong as jwt_secret's
+    entropy. Production should set a dedicated 32-byte secrets_master_key. We warn
+    once rather than change the derivation, which would orphan already-encrypted rows
+    (rotate secrets after setting a dedicated key).
+    """
     if cfg.secrets_master_key:
         return bytes.fromhex(cfg.secrets_master_key)
+    global _warned_derived_key  # noqa: PLW0603
+    if not _warned_derived_key:
+        _warned_derived_key = True
+        log.warning(
+            "secrets_master_key_derived: no dedicated secrets_master_key set — the "
+            "vault key is derived from jwt_secret (no domain separation, only as "
+            "strong as jwt_secret). Set a 32-byte hex secrets_master_key and rotate "
+            "secrets for production-grade at-rest encryption."
+        )
     return hashlib.sha256(cfg.jwt_secret.encode()).digest()
 
 

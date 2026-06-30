@@ -125,7 +125,7 @@ async def get_causal_chain(
     user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> list[dict[str, Any]]:
     """Walk causal chain from event_id. viewer+ can read."""
-    chain = await causal_chain(conn=conn, event_id=event_id)
+    chain = await causal_chain(conn=conn, event_id=event_id, org_id=org_id)
     if not chain:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -73,6 +73,16 @@ class AlertRuleRepository:
         rows = await self.conn.fetch(query, org_id, project_id)
         return [AlertRuleResponse.model_validate(dict(r)) for r in rows]
 
+    async def list_all_enabled(self) -> list[AlertRuleResponse]:
+        """Every enabled rule across all orgs/projects.
+
+        Used by the alert-evaluation cron loop, which must sweep all tenants.
+        """
+        rows = await self.conn.fetch(
+            "SELECT * FROM alert_rules WHERE enabled = TRUE ORDER BY org_id, project_id"
+        )
+        return [AlertRuleResponse.model_validate(dict(r)) for r in rows]
+
     async def update(
         self,
         *,

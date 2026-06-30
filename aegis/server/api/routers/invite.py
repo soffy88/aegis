@@ -15,6 +15,7 @@ from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.models.membership import Role
+from aegis.server.persistence.audit import record_audit
 from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -148,6 +149,15 @@ async def create_invite(
     )
 
     await _maybe_send_invite_email(conn=conn, org_id=org_id, to=body.email, token=token)
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="invite.created",
+        target_type="invite",
+        target_id=str(invite_row["id"]),
+        metadata={"email": body.email, "role": body.role},
+    )
 
     # M2-E: token returned so admin can share invite link manually (no email configured).
     # M2-F+ risk: an admin could claim the token themselves to create an account for
@@ -248,6 +258,15 @@ async def accept_invite(
     await conn.execute(
         "UPDATE org_invites SET accepted_at = now() WHERE id = $1",
         invite_id,
+    )
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user_id,
+        action="invite.accepted",
+        target_type="invite",
+        target_id=str(invite_id),
+        metadata={"email": email, "role": role},
     )
 
     return AcceptInviteResponse(user_id=user_id)

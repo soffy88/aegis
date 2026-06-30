@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
+from aegis.server.runtime.config import get_settings
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.repositories.project_repo import ProjectRepository
 
@@ -20,7 +21,6 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/domains", tags=["domains"])
 
-_EDGE_URL = "http://localhost:8081"
 _EDGE_TIMEOUT = 10.0
 
 
@@ -73,7 +73,7 @@ async def register_domain(
     try:
         async with httpx.AsyncClient(timeout=_EDGE_TIMEOUT) as client:
             r = await client.post(
-                f"{_EDGE_URL}/api/v1/domains",
+                f"{get_settings().domain_edge_url}/api/v1/domains",
                 json={
                     "domain": req.domain,
                     "target_url": req.target_url,

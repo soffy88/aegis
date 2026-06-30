@@ -185,24 +185,32 @@ async def causal_chain(
     *,
     conn: asyncpg.Connection,
     event_id: uuid.UUID,
+    org_id: uuid.UUID,
     max_depth: int = 20,
 ) -> list[dict[str, Any]]:
-    """Walk parent_id chain from event_id upward."""
+    """Walk parent_id chain from event_id upward, scoped to one org.
+
+    org_id is mandatory: without it the anchor row could belong to any tenant,
+    leaking another org's event chain (the endpoint only checks the *path* org).
+    The recursive step also re-filters org_id so a cross-org parent_id can't be
+    followed.
+    """
     rows = await conn.fetch(
         """
         WITH RECURSIVE chain AS (
             SELECT id, parent_id, event_type, payload, ts, 0 AS depth
             FROM event_trail
-            WHERE id = $1
+            WHERE id = $1 AND org_id = $3
             UNION ALL
             SELECT e.id, e.parent_id, e.event_type, e.payload, e.ts, c.depth + 1
             FROM event_trail e
             INNER JOIN chain c ON e.id = c.parent_id
-            WHERE c.depth < $2
+            WHERE c.depth < $2 AND e.org_id = $3
         )
         SELECT * FROM chain ORDER BY depth ASC
         """,
         event_id,
         max_depth,
+        org_id,
     )
     return [dict(r) for r in rows]

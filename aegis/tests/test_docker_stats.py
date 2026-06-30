@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 
@@ -31,6 +32,11 @@ def client() -> Generator[TestClient, None, None]:
     fa = FastAPI()
     fa.include_router(docker_router.router)
     fa.dependency_overrides[get_current_user] = _fake_user
+
+    async def _conn() -> Generator[mock.AsyncMock, None, None]:
+        yield mock.AsyncMock()
+
+    fa.dependency_overrides[get_db_conn] = _conn
     with TestClient(fa, raise_server_exceptions=False) as c:
         yield c
 
