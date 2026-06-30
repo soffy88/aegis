@@ -151,6 +151,15 @@ async def _run_backup(backup_id: uuid.UUID, org_id: uuid.UUID, body: BackupReque
             backup_app_data, config, input_data, output_dir=cfg.backup_local_dir / str(org_id)
         )
 
+        # backup_app_data returns {"status", "findings", "error", ...}; the backup
+        # key / size live on the nested `findings` object, NOT at the top level
+        # (the old code read result.get("storage_url") which was always None →
+        # backup_key=NULL). It also reports failures via status without raising.
+        findings = result.get("findings")
+        if result.get("status") != "completed" or findings is None:
+            err = (result.get("error") or {}).get("error_message") or "backup did not complete"
+            raise RuntimeError(err)
+
         async with get_pool().acquire() as conn:
             await conn.execute(
                 """
@@ -161,8 +170,8 @@ async def _run_backup(backup_id: uuid.UUID, org_id: uuid.UUID, body: BackupReque
                        completed_at = $3
                  WHERE id = $4
                 """,
-                result.get("storage_url"),
-                result.get("total_size_bytes", 0),
+                getattr(findings, "storage_url", None),
+                getattr(findings, "total_size_bytes", 0) or 0,
                 datetime.now(UTC),
                 backup_id,
             )
@@ -183,6 +192,11 @@ async def _run_restore(
 
     cfg = get_settings()
     try:
+        if not backup_row.get("backup_key"):
+            raise RuntimeError(
+                "backup has no backup_key (backup never completed an upload) — "
+                "cannot restore"
+            )
         await asyncio.to_thread(
             restore_from_backup,
             app_slug=backup_row["app_slug"],

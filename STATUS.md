@@ -23,7 +23,7 @@
 | 1 | Webhook 投递循环 (cron 接 deliver_batch) | ✅ done | 3 单测绿;cron 注册 `_delivery_loop` |
 | 2 | 告警规则评估 loop | ✅ done | 4 单测绿;`_alert_eval_loop` + `run_alert_evaluation` |
 | 3 | 闭环自愈接线 (AutoHealEngine + aegis_alert_events) | 🟡 partial | 写入器+repo+retry 已实;**自动执行策略→Needs Human** |
-| 4 | 备份执行修复 (result key + 上传) | ⬜ todo | 单测: router 读对键;⚠️真 S3 不可验 |
+| 4 | 备份执行修复 (result key + 上传) | 🟡 done | router 读对 findings 键+honor status;⚠️真 S3 上传仍是 omodul 桩 |
 | 5 | 应用升级/回滚真实执行 | ⬜ todo | 单测: 接 AppInstallerEngine;⚠️真 compose 不可验 |
 | 6 | 安装路径修正 (catalog image/target_host/domain) | ⬜ todo | 单测: 从目录读 image、回写 domain |
 
@@ -54,6 +54,7 @@
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#4 备份执行修复** — `_run_backup` 改为读 `result["findings"].storage_url/total_size_bytes`(旧代码读不存在的顶层键→backup_key 恒 NULL),并 honor `result["status"]`(执行器不抛异常也能报 failed);`_run_restore` 在无 backup_key 时快速失败而非让 boto3 报错。⚠️ 真实 S3 上传仍是 omodul `_stage_upload` 桩(外部库,不改),即 backup_key 会落库但未必指向真对象。test_backups.py (3 改/增)
 - **#3 自愈写入器 (partial)** — `AutoHealEventRepository` 给孤儿表 `aegis_alert_events` 加真实写入器;告警 fire 时写事件(severity/source/reason/value),autoheal 看板/stats 从此有数据;retry 端点去掉 TODO 桩,改为真实 `mark_handled`。**自动 signal→remediation 执行未做**:需先有 autoheal 策略模型(无表/无 pattern/无已装插件)+ 是否允许无人值守真实动作的安全决策 → 见 Needs Human。test_autoheal_event_repository.py (4)
 
 ## 🚨 Needs Human
