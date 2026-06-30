@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 _CORRELATOR_INTERVAL_SEC = 300  # 5 min
 _CAPACITY_INTERVAL_SEC = 3600  # 60 min
 _ESCALATION_INTERVAL_SEC = 120  # 2 min
+_SCRAPE_INTERVAL_SEC = 15  # tick; each target's own interval gates actual scrapes
 
 
 def _jittered(interval: float) -> float:
@@ -101,11 +102,28 @@ async def _escalation_loop() -> None:
         await asyncio.sleep(_jittered(_ESCALATION_INTERVAL_SEC))
 
 
+async def _scrape_loop() -> None:
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services.metrics_scraper import scrape_due_targets  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(5, 15))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await scrape_due_targets(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("scrape_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
+
+
 async def _cron_main(alerter: Any | None) -> None:
     await asyncio.gather(
         _correlator_loop(),
         _capacity_loop(alerter),
         _escalation_loop(),
+        _scrape_loop(),
         return_exceptions=True,
     )
 
