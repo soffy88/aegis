@@ -46,7 +46,7 @@
 | 16 | Release Gate 接入执行 | ⬜ todo | 单测: 部署/自愈前查 gate |
 | 17 | 审计覆盖补全 | ✅ done | org.created/ownership_transferred、project.created/archived、invite.created/accepted 补写 audit_log |
 | 18 | 域名 DNS/TLS + 收敛双路径 | ⬜ todo | 单测/⚠️ |
-| 19 | 应用多级版本溯源 | ⬜ todo | 迁移+单测 |
+| 19 | 应用多级版本溯源 | ✅ done | migr 034 app_version_history 表+升级/回滚记录+GET /history 端点 |
 | 20 | 日志聚合 | ⬜ todo | ⚠️ 设计为主 |
 | 21 | 链路追踪 | ⬜ todo | ⚠️ 设计为主 |
 | 22 | Secrets KDF 加固 | ⬜ todo | 单测: 慢 KDF / 独立 master key |
@@ -54,6 +54,7 @@
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
 - **#2 告警规则评估 loop** — `_alert_eval_loop` + `orchestration/alert_evaluation.py`,每 30s 对所有 enabled 规则按 metric 取最近各主机值(>/>= 取 max,</<= 取 min)喂 `evaluate_metric`,命中即写 history+enqueue webhook。新增 `list_all_enabled()`。test_alert_evaluation.py (4)
+- **#19 应用多级版本溯源** — migration 034 新增 `app_version_history` 表;升级/回滚时记录 from/to/action 转移行(此前只有单级 `previous_version`);新增 `GET /apps/{id}/history` 返回完整历史。test_app_lifecycle_exec.py (+1)
 - **#17 审计覆盖补全** — 给此前不写审计的敏感操作补 `record_audit`:`org.created`、`org.ownership_transferred`、`project.created`、`project.archived`、`invite.created`、`invite.accepted`(沿用既有 best-effort 模式,已被 member.* 测试覆盖)。全套绿、无回归。
 - **#13 RAG embedding 降级可见化** — `_warn_if_embeddings_stubbed` 启动时检测 embedding provider 未注册→大声 WARNING(此前 oprim 静默回退 128 维 stub,RAG 跑在无意义向量上)。注册真实 embedding 模型(Ollama nomic-embed-text/Voyage/本地 bge-m3)属 deploy 配置 + 需验证,未在此环境硬接。test_embedding_provider_warning.py (2)
 - **#15 On-call 寻呼(已有)** — 复核现码:升级 loop(alert_escalation.py:60-77)已查 `current_oncall` 并把 `oncall_user_id` 写进 `alert.fired` webhook;审计"无人被寻呼"对当前代码不准确。配合 #1 投递闭环,运营方把 webhook 指向 PagerDuty/Slack 即端到端可达。未改码。

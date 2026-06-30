@@ -201,6 +201,27 @@ async def get_app(
     return dict(row)
 
 
+@router.get("/{install_id}/history")
+async def app_version_history(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """Full upgrade/rollback history for an app (newest first). viewer+ can read."""
+    owns = await conn.fetchval(
+        "SELECT 1 FROM installed_apps WHERE id = $1 AND org_id = $2", install_id, org_id
+    )
+    if not owns:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    rows = await conn.fetch(
+        "SELECT from_version, to_version, action, created_at"
+        " FROM app_version_history WHERE install_id = $1 ORDER BY created_at DESC",
+        install_id,
+    )
+    return [dict(r) for r in rows]
+
+
 @router.post("/install", status_code=status.HTTP_202_ACCEPTED)
 async def install_app_endpoint(
     org_id: uuid.UUID,
@@ -284,6 +305,29 @@ async def uninstall_app(
 
 class UpgradeRequest(BaseModel):
     target_version: str = Field(..., min_length=1, max_length=100)
+
+
+async def _record_version_transition(
+    conn: asyncpg.Connection,
+    *,
+    install_id: uuid.UUID,
+    from_version: str | None,
+    to_version: str | None,
+    action: str,
+) -> None:
+    """Append an immutable version-transition row (audit #19).
+
+    `installed_apps.previous_version` only remembers one level; this table keeps the
+    full upgrade/rollback history so provenance survives repeated transitions.
+    """
+    await conn.execute(
+        "INSERT INTO app_version_history (install_id, from_version, to_version, action)"
+        " VALUES ($1, $2, $3, $4)",
+        install_id,
+        from_version,
+        to_version or "",
+        action,
+    )
 
 
 async def _dispatch_upgrade(
@@ -436,6 +480,13 @@ async def upgrade_app(
         org_id,
         req.target_version,
     )
+    await _record_version_transition(
+        conn,
+        install_id=install_id,
+        from_version=app["app_version"],
+        to_version=req.target_version,
+        action="upgrade",
+    )
     background_tasks.add_task(
         _run_app_lifecycle,
         omodul_name="upgrade_self_hosted_app",
@@ -481,6 +532,13 @@ async def rollback_app_endpoint(
         " WHERE id = $1 AND org_id = $2",
         install_id,
         org_id,
+    )
+    await _record_version_transition(
+        conn,
+        install_id=install_id,
+        from_version=app["app_version"],
+        to_version=app["previous_version"],
+        action="rollback",
     )
     background_tasks.add_task(
         _run_app_lifecycle,

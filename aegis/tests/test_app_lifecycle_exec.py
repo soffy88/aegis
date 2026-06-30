@@ -103,3 +103,17 @@ def test_find_catalog_app_resolves_builtin_image():
     assert entry is not None
     assert entry["image"].startswith("louislam/uptime-kuma")
     assert find_catalog_app("does-not-exist") is None
+
+
+@pytest.mark.asyncio
+async def test_record_version_transition_inserts_history():
+    """Upgrade/rollback must append an immutable history row (#19)."""
+    from aegis.server.api.routers.apps import _record_version_transition
+
+    conn = mock.AsyncMock()
+    await _record_version_transition(
+        conn, install_id=_APP, from_version="1.0", to_version="2.0", action="upgrade"
+    )
+    sql, *params = conn.execute.await_args.args
+    assert "INSERT INTO app_version_history" in sql
+    assert params == [_APP, "1.0", "2.0", "upgrade"]

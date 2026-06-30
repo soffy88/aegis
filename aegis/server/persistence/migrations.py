@@ -799,6 +799,21 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON aegis_nodes(agent_token);
         """,
     ),
+    (
+        "034_app_version_history",
+        """
+        CREATE TABLE IF NOT EXISTS app_version_history (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            install_id UUID NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+            from_version TEXT,
+            to_version TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('upgrade', 'rollback')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_app_version_history_install
+            ON app_version_history(install_id, created_at DESC);
+        """,
+    ),
 ]
 
 
