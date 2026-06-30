@@ -1,9 +1,12 @@
 """Orchestration cron scheduler.
 
-Runs three background loops:
-- Event correlator:  every 5 min
-- Capacity check:    every 60 min
-- Alert escalation:  every 2 min
+Runs background loops:
+- Event correlator:   every 5 min
+- Capacity check:     every 60 min
+- Alert escalation:   every 2 min
+- Metrics scrape:     every 15 s (per-target interval gates actual scrapes)
+- Anomaly scan:       every 60 s (EWMA)
+- Webhook delivery:   every 5 s (drains the delivery queue)
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ _CAPACITY_INTERVAL_SEC = 3600  # 60 min
 _ESCALATION_INTERVAL_SEC = 120  # 2 min
 _SCRAPE_INTERVAL_SEC = 15  # tick; each target's own interval gates actual scrapes
 _ANOMALY_INTERVAL_SEC = 60  # EWMA anomaly scan
+_DELIVERY_INTERVAL_SEC = 5  # tick; drains the webhook delivery queue (next_attempt_at gates)
+_DELIVERY_DRAIN_BATCHES = 20  # max batches per tick so one org's backlog can't wedge the loop
 
 
 def _jittered(interval: float) -> float:
@@ -119,6 +124,33 @@ async def _scrape_loop() -> None:
         await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
 
 
+async def _delivery_loop() -> None:
+    """Drain the webhook delivery queue.
+
+    `enqueue_event` (escalation loop, alert engine, error alerter, envelope) only
+    *queues* deliveries; without this loop nothing is ever sent. Each tick claims
+    due rows (`next_attempt_at <= now`, FOR UPDATE SKIP LOCKED) and POSTs them,
+    looping until the queue drains or the per-tick batch cap is hit so backoff and
+    retry/dead-letter (already implemented in WebhookDispatcher) actually fire.
+    """
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(3, 10))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                dispatcher = _build_webhook_dispatcher(conn)
+                for _ in range(_DELIVERY_DRAIN_BATCHES):
+                    stats = await dispatcher.deliver_batch()
+                    if not any(stats.values()):
+                        break  # queue empty (or nothing due) — wait for next tick
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("delivery_cron_error err=%s", exc)
+        await asyncio.sleep(_jittered(_DELIVERY_INTERVAL_SEC))
+
+
 async def _anomaly_loop() -> None:
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.anomaly_scan import scan_anomalies  # noqa: PLC0415
@@ -142,6 +174,7 @@ async def _cron_main(alerter: Any | None) -> None:
         _escalation_loop(),
         _scrape_loop(),
         _anomaly_loop(),
+        _delivery_loop(),
         return_exceptions=True,
     )
 
