@@ -69,7 +69,7 @@
 | installer.py 死代码 (A4) | 📝 noted | 真 compose 引擎 `AppInstallerEngine` 仍无 router 调用;收敛/删除是设计取舍,未擅动(启动已 init) |
 | 告警初次 fire 带 oncall (B3) | ✅ done | evaluate_metric 初次 fire 的 webhook 也带 oncall_user_id(best-effort,不阻断 fire) |
 | metrics project 维度 (B2) | 🚨 design | scrape_targets 仅 org-scoped(无 project_id),agent_metrics 也无;与 project-scoped 规则存在建模错配,属数据模型决策 |
-| 前端 镜像/网络/卷 页 (C) | ⬜ todo | #11/#12 后端已就绪,console 缺页面 |
+| 前端 镜像/网络/卷 页 (C) | 🟡 done | console 3 页(images 拉取/删除/prune、networks/volumes 列表+删除)+api-paths+i18n+nav;tsc/lint 绿;⚠️ next build 受工具链漂移阻,未跑;另 console 是独立 repo,提交在 `feat/aiops-12-docker-mgmt-ui` |
 
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
