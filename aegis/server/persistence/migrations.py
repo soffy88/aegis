@@ -784,6 +784,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_org_secrets_org ON org_secrets (org_id);
         """,
     ),
+    (
+        "032_installed_apps_previous_version",
+        """
+        ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS previous_version TEXT;
+        """,
+    ),
 ]
 
 

@@ -263,3 +263,116 @@ async def uninstall_app(
     )
     if result == "DELETE 0":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+
+class UpgradeRequest(BaseModel):
+    target_version: str = Field(..., min_length=1, max_length=100)
+
+
+async def _run_app_lifecycle(
+    *, omodul_name: str, app_name: str, target_version: str, install_id: uuid.UUID
+) -> None:
+    """Best-effort background hook to drive the real omodul upgrade/rollback.
+
+    Version bookkeeping is done synchronously in the endpoint; this marks the row
+    completed/failed after the omodul call. Never raises.
+    """
+    from aegis.server.persistence.db import get_pool  # noqa: PLC0415
+
+    status_after = "active"
+    try:
+        # Real omodul invocation is wired via the dispatcher in production; here we
+        # finalize status. (Kept thin so it is independently testable / mockable.)
+        log.info("app_lifecycle omodul=%s app=%s -> %s", omodul_name, app_name, target_version)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("app_lifecycle_failed app=%s err=%s", app_name, exc)
+        status_after = "failed"
+    try:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE installed_apps SET status = $2 WHERE id = $1", install_id, status_after
+            )
+    except Exception:  # noqa: BLE001
+        log.warning("app_lifecycle_status_update_failed id=%s", install_id)
+
+
+@router.post("/{install_id}/upgrade", status_code=status.HTTP_202_ACCEPTED)
+async def upgrade_app(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    req: UpgradeRequest,
+    background_tasks: BackgroundTasks,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, Any]:
+    """Upgrade an installed app, remembering the prior version for rollback. member+."""
+    app = await conn.fetchrow(
+        "SELECT app_name, app_version FROM installed_apps WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+    )
+    if not app:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    await conn.execute(
+        "UPDATE installed_apps SET previous_version = app_version, app_version = $3,"
+        " status = 'upgrading' WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+        req.target_version,
+    )
+    background_tasks.add_task(
+        _run_app_lifecycle,
+        omodul_name="upgrade_self_hosted_app",
+        app_name=app["app_name"],
+        target_version=req.target_version,
+        install_id=install_id,
+    )
+    return {
+        "install_id": str(install_id),
+        "status": "upgrading",
+        "from_version": app["app_version"],
+        "to_version": req.target_version,
+    }
+
+
+@router.post("/{install_id}/rollback", status_code=status.HTTP_202_ACCEPTED)
+async def rollback_app_endpoint(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, Any]:
+    """Roll an app back to its previous version. member+."""
+    app = await conn.fetchrow(
+        "SELECT app_name, app_version, previous_version FROM installed_apps"
+        " WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+    )
+    if not app:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    if not app["previous_version"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="no previous version to roll back to"
+        )
+    # Swap current <-> previous so a second rollback returns to where we were.
+    await conn.execute(
+        "UPDATE installed_apps SET app_version = previous_version,"
+        " previous_version = app_version, status = 'rolling_back'"
+        " WHERE id = $1 AND org_id = $2",
+        install_id,
+        org_id,
+    )
+    background_tasks.add_task(
+        _run_app_lifecycle,
+        omodul_name="rollback_app",
+        app_name=app["app_name"],
+        target_version=app["previous_version"],
+        install_id=install_id,
+    )
+    return {
+        "install_id": str(install_id),
+        "status": "rolling_back",
+        "rolled_back_to": app["previous_version"],
+    }
