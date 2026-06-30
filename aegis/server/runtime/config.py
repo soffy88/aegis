@@ -174,10 +174,14 @@ class AegisSettings(BaseSettings):
     rca_llm_model: str = "claude-sonnet-4-6"
     rca_max_steps: int = 10
     rca_max_cost_usd_per_invocation: float = 5.0
-    # Per-org daily RCA spend ceiling. Each deep investigation reserves one
-    # per-invocation slot against this budget (count = daily / per_invocation),
-    # giving a hard cap on Sonnet spend per org per day. 0 disables the daily gate.
+    # Per-org daily RCA spend ceiling, enforced against actual USD spend summed
+    # from llm_cost_ledger over the trailing day. 0 disables the daily gate.
     rca_max_cost_usd_per_org_daily: float = 25.0
+    # When the budget check itself errors (DB/infra), allow the RCA (True) or block
+    # it (False). Default True: incident response must not be blocked by a budget
+    # -infra outage, and the per-invocation cap still bounds single-call cost. Set
+    # False to prioritise cost-safety over availability.
+    rca_budget_fail_open: bool = True
     planner_llm_model: str = "claude-sonnet-4-6"
     triage_llm_model: str = "claude-haiku-4-5"
     triage_max_tokens: int = 1024
