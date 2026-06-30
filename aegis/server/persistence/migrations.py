@@ -728,6 +728,24 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_oncall_org ON oncall_schedules (org_id);
         """,
     ),
+    (
+        "028_metric_anomalies",
+        """
+        CREATE TABLE IF NOT EXISTS metric_anomalies (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            hostname TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            value DOUBLE PRECISION NOT NULL,
+            baseline DOUBLE PRECISION NOT NULL,
+            score DOUBLE PRECISION NOT NULL,
+            detected_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_anomalies_time
+            ON metric_anomalies (detected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_metric_anomalies_series
+            ON metric_anomalies (hostname, metric_name, detected_at DESC);
+        """,
+    ),
 ]
 
 
