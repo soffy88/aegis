@@ -57,6 +57,18 @@ async def ingest_alert(
         initiated_by="agent",
     )
 
+    # Auto-cluster this alert into an incident (dedup by service + name).
+    from aegis.server.services.incident_correlation import cluster_signal  # noqa: PLC0415
+
+    incident_id, incident_is_new = await cluster_signal(
+        conn,
+        org_id=org_id,
+        dedup_key=f"alert:{body.service or '-'}:{body.alert_name}",
+        title=f"{body.alert_name}" + (f" on {body.service}" if body.service else ""),
+        severity=body.severity,
+        event_id=alert_event_id,
+    )
+
     settings = AegisSettings()
     redis_client = aioredis.from_url(settings.redis_url)
     dispatcher = OmodulDispatcher(
@@ -81,6 +93,8 @@ async def ingest_alert(
     return {
         "trace_id": trace_id,
         "alert_event_id": str(alert_event_id),
+        "incident_id": str(incident_id),
+        "incident_is_new": incident_is_new,
         "brain_pipeline": pipeline,
     }
 

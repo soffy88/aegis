@@ -47,6 +47,7 @@ class ErrorIngestor:
         org_id: uuid.UUID,
         project_id: uuid.UUID,
         envelope_bytes: bytes,
+        conn: Any = None,
     ) -> list[ErrorEventResponse]:
         """Parse envelope and persist all event items to error_events.
 
@@ -75,6 +76,19 @@ class ErrorIngestor:
                     # C3-5: trigger webhook on new issue
                     if self.alerter is not None and is_new:
                         await self.alerter.handle_new_issue(issue=issue)
+                    # AIOps-2: auto-cluster a new error issue into an incident.
+                    if conn is not None and is_new:
+                        from aegis.server.services.incident_correlation import (  # noqa: PLC0415
+                            cluster_signal,
+                        )
+
+                        await cluster_signal(
+                            conn,
+                            org_id=org_id,
+                            dedup_key=f"error:{issue.fingerprint}",
+                            title=issue.title,
+                            severity="warning",
+                        )
                 results.append(event)
             except SentryEnvelopeParseError:
                 # Single-event parse failure: skip, do not abort batch.
