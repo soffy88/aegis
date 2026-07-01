@@ -45,18 +45,37 @@ class InstallRequest(BaseModel):
 
 
 class InstallAppRequest(BaseModel):
-    """Internal request model for _run_install (project_dir is pre-computed)."""
+    """Internal request model for _run_install (catalog spec pre-resolved)."""
 
     app_name: str
-    project_dir: str | None = None
     app_version: str | None = None
     image_to_pull: str | None = None
-    health_check_container: str | None = None
+    ports: list[dict[str, Any]] = []
+    env: list[dict[str, Any]] = []
+    mounts: list[dict[str, Any]] = []
     domain: str | None = None
-    domain_target_url: str | None = None
-    register_domain: bool = False
     target_host: str = "localhost"
     docker_host: str = "unix:///var/run/docker.sock"
+
+
+def _build_container_spec(body: InstallAppRequest) -> dict[str, Any]:
+    """Translate a catalog app spec into oprim docker_container_create kwargs."""
+    ports: dict[str, int] = {}
+    for p in body.ports or []:
+        cp = p.get("container_port")
+        if cp:
+            ports[f"{cp}/{p.get('protocol', 'tcp')}"] = int(cp)
+    env: dict[str, str] = {}
+    for e in body.env or []:
+        k = e.get("name") or e.get("key")
+        if k:
+            env[str(k)] = "" if e.get("value") is None else str(e.get("value"))
+    volumes: dict[str, dict[str, str]] = {}
+    for m in body.mounts or []:
+        vn, target = m.get("volume_name"), m.get("target")
+        if vn and target:
+            volumes[str(vn)] = {"bind": str(target), "mode": "rw"}
+    return {"ports": ports or None, "env": env or None, "volumes": volumes or None}
 
 
 async def _run_install(
@@ -67,67 +86,58 @@ async def _run_install(
     body: InstallAppRequest,
     data_dir: Path | None = None,
 ) -> None:
-    """Background task: invoke omodul.install_self_hosted_app via dispatcher."""
-    from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
-    from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
-    from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
+    """Background task: pull the image and create+start the container from the
+    catalog spec (image/ports/env/mounts). A real single-container deploy."""
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
 
     cfg = get_settings()
-    resolved_dir: Path = data_dir if data_dir is not None else cfg.data_dir
-
     final_status: str = "failed"
     error_detail: str | None = None
     domain: str | None = None
+    dh = body.docker_host
 
     try:
-        import redis.asyncio as aioredis  # noqa: PLC0415
-
-        redis_client = aioredis.from_url(cfg.redis_url)
-        dispatcher = OmodulDispatcher(
-            DedupCache(redis_client),
-            BudgetTracker(redis_client),
-            data_dir=str(resolved_dir),
+        from oprim import (  # noqa: PLC0415
+            docker_container_create,
+            docker_container_start,
+            docker_image_pull,
         )
 
-        result: Any = await dispatcher.invoke(
-            omodul_name="install_self_hosted_app",
-            config={
-                "app_slug": body.app_name,
-                "app_version": body.app_version or "latest",
-                "instance_name": body.app_name,
-                "config_hash": "",
-                "domain": body.domain or "",
-            },
-            input_data={
-                "app_config": {
-                    "image_to_pull": body.image_to_pull,
-                    "project_dir": body.project_dir,
-                },
-                "target_host": body.target_host,
-                "docker_host": body.docker_host,
-                "caddy_admin_url": cfg.caddy_admin_url,
-            },
-            user_id=str(org_id),
-            project_id=project_id,
-        )
-        final_status = str(result.get("status", "failed"))
-        if result.get("error"):
-            error_detail = str(result["error"])
-        # Persist the domain the caller asked for once the install succeeds, so the
-        # row reflects reality instead of always-NULL (the old `domain` local was
-        # never assigned). Only set it on success to avoid claiming a live domain.
-        if final_status == "completed":
-            domain = body.domain
-        await redis_client.aclose()
+        image = body.image_to_pull
+        if not image:
+            raise RuntimeError("no container image resolved for this app")
+
+        # 1. Pull the image (best-effort — create can still use a local copy).
+        try:
+            base, _, tag = image.partition(":")
+            await asyncio.to_thread(
+                docker_image_pull, image=base, tag=tag or "latest", docker_host=dh
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("install_pull_warn image=%s err=%s", image, exc)
+
+        spec = _build_container_spec(body)
+        # 2. Create the container (on re-install the name exists → just start it).
+        try:
+            await asyncio.to_thread(
+                docker_container_create,
+                image=image,
+                name=body.app_name,
+                labels={"aegis.managed": "true", "aegis.app": body.app_name},
+                restart_policy="unless-stopped",
+                network=cfg.app_install_network or None,
+                docker_host=dh,
+                **spec,
+            )
+        except Exception as exc:  # noqa: BLE001 — usually "name already in use"
+            log.info("install_create_skipped app=%s (%s) — starting existing", body.app_name, exc)
+
+        # 3. Start it.
+        await asyncio.to_thread(docker_container_start, container_id=body.app_name, docker_host=dh)
+        final_status = "completed"
+        domain = body.domain
     except Exception as exc:  # noqa: BLE001
-        log.exception(
-            "install dispatch failed install_id=%s %s: %s",
-            install_id,
-            type(exc).__name__,
-            exc,
-        )
-        final_status = "failed"
+        log.exception("install_failed install_id=%s", install_id)
         error_detail = f"{type(exc).__name__}: {exc}"
 
     try:
@@ -248,13 +258,10 @@ async def install_app_endpoint(
     # Resolve the container image from the store catalog when the caller didn't
     # supply one (the console install form doesn't send image_to_pull). Previously
     # the catalog image was ignored entirely, so installs had nothing to pull.
-    image_to_pull = req.image_to_pull
-    if not image_to_pull:
-        from aegis.server.api.routers.store import find_catalog_app  # noqa: PLC0415
+    from aegis.server.api.routers.store import find_catalog_app  # noqa: PLC0415
 
-        entry = find_catalog_app(req.app_name)
-        if entry:
-            image_to_pull = entry.get("image")
+    entry = find_catalog_app(req.app_name) or {}
+    image_to_pull = req.image_to_pull or entry.get("image")
 
     install_id = await conn.fetchval(
         """
@@ -290,13 +297,12 @@ async def install_app_endpoint(
 
     body = InstallAppRequest(
         app_name=req.app_name,
-        project_dir=install_dir,
         app_version=req.app_version,
         image_to_pull=image_to_pull,
-        health_check_container=req.health_check_container,
+        ports=entry.get("ports", []),
+        env=entry.get("env", []),
+        mounts=entry.get("mounts", []),
         domain=req.domain,
-        domain_target_url=req.domain_target_url,
-        register_domain=req.register_domain,
         target_host=target_host,
         docker_host=docker_host,
     )
