@@ -90,7 +90,9 @@ async def build_and_deploy_from_git(
 
     from oprim import docker_container_create, docker_container_start  # noqa: PLC0415
 
-    port_map = {f"{p}/tcp": int(p) for p in (ports or [])}
+    # Publish each container port on an auto-assigned host port (None) to avoid
+    # collisions with services already bound to the fixed number (e.g. 80/443).
+    port_map: dict[str, Any] = {f"{p}/tcp": None for p in (ports or [])}
     env_map = {
         str(e["name"]): "" if e.get("value") is None else str(e.get("value"))
         for e in (env or [])
