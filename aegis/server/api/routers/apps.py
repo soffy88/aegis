@@ -53,6 +53,7 @@ class InstallAppRequest(BaseModel):
     ports: list[dict[str, Any]] = []
     env: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
+    command: list[str] | None = None
     domain: str | None = None
     target_host: str = "localhost"
     docker_host: str = "unix:///var/run/docker.sock"
@@ -75,7 +76,12 @@ def _build_container_spec(body: InstallAppRequest) -> dict[str, Any]:
         vn, target = m.get("volume_name"), m.get("target")
         if vn and target:
             volumes[str(vn)] = {"bind": str(target), "mode": "rw"}
-    return {"ports": ports or None, "env": env or None, "volumes": volumes or None}
+    return {
+        "ports": ports or None,
+        "env": env or None,
+        "volumes": volumes or None,
+        "command": body.command or None,
+    }
 
 
 async def _run_install(
@@ -302,6 +308,7 @@ async def install_app_endpoint(
         ports=entry.get("ports", []),
         env=entry.get("env", []),
         mounts=entry.get("mounts", []),
+        command=entry.get("command"),
         domain=req.domain,
         target_host=target_host,
         docker_host=docker_host,
