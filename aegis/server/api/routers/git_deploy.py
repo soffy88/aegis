@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -37,11 +38,13 @@ class GitDeployRequest(BaseModel):
 async def _run_git_deploy(
     install_id: uuid.UUID, app_name: str, req: GitDeployRequest, docker_host: str
 ) -> None:
-    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
     from aegis.server.services.git_deploy import build_and_deploy_from_git  # noqa: PLC0415
 
-    cfg = get_settings()
-    build_root = str(cfg.data_dir / "git-builds")
+    # Build context lives in a writable temp dir (the data_dir volume is root-owned;
+    # the server runs non-root). Cloned sources are removed after each build.
+    build_root = str(Path(tempfile.gettempdir()) / "aegis-git-builds")
     final_status = "failed"
     image: str | None = None
     error: str | None = None
