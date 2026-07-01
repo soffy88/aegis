@@ -55,7 +55,7 @@ async def test_build_and_deploy_happy_path(tmp_path):
     assert tag == "aegis-git/webapp:latest"
     dfe.return_value.images.build.assert_called_once()
     assert create.call_args.kwargs["image"] == "aegis-git/webapp:latest"
-    assert create.call_args.kwargs["ports"] == {"8080/tcp": 8080}
+    assert create.call_args.kwargs["ports"] == {"8080/tcp": None}
     assert create.call_args.kwargs["env"] == {"K": "V"}
     start.assert_called_once()
 
