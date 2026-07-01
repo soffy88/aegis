@@ -27,7 +27,7 @@ def test_build_container_spec_translates_catalog():
 
 def test_empty_spec_is_none():
     spec = _build_container_spec(InstallAppRequest(app_name="x", image_to_pull="nginx"))
-    assert spec == {"ports": None, "env": None, "volumes": None}
+    assert spec == {"ports": None, "env": None, "volumes": None, "command": None}
 
 
 @pytest.mark.asyncio
