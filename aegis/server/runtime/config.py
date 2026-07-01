@@ -89,6 +89,9 @@ class AegisSettings(BaseSettings):
     caddy_admin_url: str = "http://localhost:2019"
     # Edge/ingress controller URL used by the domains router to provision routes.
     domain_edge_url: str = "http://localhost:8081"
+    # Docker network to attach app-store installs to (so caddy/monitoring can reach
+    # them). Empty = default bridge with published ports.
+    app_install_network: str = ""
     caddy_config_dir: Path = Field(
         default=_UNSET_PATH,
         description="Caddy config dir (default: data_dir/caddy). Override: AEGIS_CADDY_CONFIG_DIR",
