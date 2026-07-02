@@ -30,6 +30,7 @@ from aegis.server.api.routers import autoheal as autoheal_router
 from aegis.server.api.routers import backups as backups_router
 from aegis.server.api.routers import brain as brain_router
 from aegis.server.api.routers import docker as docker_router
+from aegis.server.api.routers import files as files_router
 from aegis.server.api.routers import (
     edge as edge_router,
 )
@@ -365,6 +366,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(release_gates_router.router)
     app.include_router(webhook_subscriptions_router.router)
     app.include_router(docker_router.router)
+    app.include_router(files_router.router)
     app.include_router(autoheal_router.router)
     app.include_router(brain_router.router)
     app.include_router(nodes_router.router)

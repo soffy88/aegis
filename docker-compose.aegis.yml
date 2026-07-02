@@ -76,12 +76,19 @@ services:
       # === Agent token ===
       AEGIS_AGENT_TOKEN: ${AEGIS_AGENT_TOKEN:-}
 
+      # === 文件管理器白名单（宿主机目录，冒号分隔）===
+      # 必须与下方 volumes 里 bind-mount 的宿主机目录一致（同路径挂载）。
+      AEGIS_FILE_MANAGER_ROOTS: ${AEGIS_FILE_MANAGER_ROOTS:-/data:/mnt/d}
+
     volumes:
       # Docker socket — 容器管理核心
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # 持久化数据：备份/向量库/Runbook
       - aegis-data:/data/aegis
       - /home/soffy/projects/aegis/aegis-appstore/apps:/data/aegis-appstore/apps:ro
+      # 文件管理器白名单根（同路径挂载，读写）——须与 AEGIS_FILE_MANAGER_ROOTS 一致
+      - /data:/data
+      - /mnt/d:/mnt/d
 
     networks:
       # Extra stack networks so the uptime prober can reach those stacks' health

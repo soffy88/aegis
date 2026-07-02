@@ -56,6 +56,29 @@ class AegisSettings(BaseSettings):
             self.log_dir = self.data_dir / "logs"
         return self
 
+    # === File Manager (host filesystem browser) ===
+    # Whitelist of host directories the file manager may browse/operate on.
+    # Empty list disables the feature entirely. Each root must also be
+    # bind-mounted into the aegis-backend container at the same path.
+    file_manager_roots: Any = Field(
+        default_factory=list,
+        description=(
+            "Colon- or comma-separated host dirs the file manager may access. "
+            "Empty disables the feature. env: AEGIS_FILE_MANAGER_ROOTS"
+        ),
+        validation_alias=AliasChoices("AEGIS_FILE_MANAGER_ROOTS"),
+    )
+
+    @field_validator("file_manager_roots", mode="before")
+    @classmethod
+    def parse_file_manager_roots(cls, v: object) -> object:
+        if isinstance(v, str):
+            parts = [p.strip() for chunk in v.split(":") for p in chunk.split(",")]
+            return [Path(p) for p in parts if p]
+        if isinstance(v, list):
+            return [Path(p) for p in v]
+        return v
+
     # === Plan / quotas ===
     default_org_plan: str = Field(
         default="free",

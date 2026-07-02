@@ -46,9 +46,11 @@ DOCKER_BUILDKIT=1 docker build \
   -f Dockerfile.prod \
   -t aegis-backend:latest .
 
-# 前端
+# 前端（需 platform 构建上下文提供 OUI 私有包 tarball）
 docker build \
   -f aegis-console/Dockerfile.prod \
+  --build-context platform=/data/soffy/projects/platform \
+  --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.uex.hk \
   -t aegis-console:latest \
   aegis-console/
 ```
