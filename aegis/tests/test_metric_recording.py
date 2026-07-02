@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aegis.server.services.metric_recording import record_container_cpu_percent
+from aegis.server.services.metric_recording import (
+    record_container_cpu_percent,
+    record_host_cpu_percent,
+    record_host_memory,
+)
 
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -54,4 +58,51 @@ async def test_single_sample_series_skipped():
     conn.executemany = AsyncMock()
     n = await record_container_cpu_percent(conn)
     assert n == 0
+    conn.executemany.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_host_cpu_percent_from_idle_counter():
+    # 4 cores; over 10s wall each core spent 8s idle -> 20% busy
+    prev, now = _NOW - timedelta(seconds=10), _NOW
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[
+        *({"ts": now, "value": 108.0} for _ in range(4)),
+        *({"ts": prev, "value": 100.0} for _ in range(4)),
+    ])
+    conn.execute = AsyncMock()
+    n = await record_host_cpu_percent(conn)
+    assert n == 1
+    _sql, host, metric, pct, unit, _tags = conn.execute.await_args.args
+    assert host == "node-exporter" and metric == "node_cpu_percent" and unit == "%"
+    assert abs(pct - 20.0) < 1e-6
+
+
+@pytest.mark.asyncio
+async def test_host_cpu_percent_needs_two_scrapes():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[{"ts": _NOW, "value": 100.0}])
+    conn.execute = AsyncMock()
+    assert await record_host_cpu_percent(conn) == 0
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_host_memory_used_bytes_and_percent():
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(side_effect=[{"value": 32.0e9}, {"value": 8.0e9}])  # total, avail
+    conn.executemany = AsyncMock()
+    n = await record_host_memory(conn)
+    assert n == 2
+    rows = {r[1]: r for r in conn.executemany.await_args.args[1]}
+    assert abs(rows["node_memory_used_bytes"][2] - 24.0e9) < 1
+    assert abs(rows["node_memory_used_percent"][2] - 75.0) < 1e-6
+
+
+@pytest.mark.asyncio
+async def test_host_memory_skipped_when_source_absent():
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(side_effect=[None, None])
+    conn.executemany = AsyncMock()
+    assert await record_host_memory(conn) == 0
     conn.executemany.assert_not_awaited()
