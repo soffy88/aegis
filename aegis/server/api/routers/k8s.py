@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import os
+import ssl
 import tempfile
 import uuid
 from functools import lru_cache
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/v1/orgs/{org_id}/k8s", tags=["k8s"])
 
 @lru_cache(maxsize=1)
 def _kube() -> dict[str, Any] | None:
-    """Parse the kubeconfig once → {server, verify, headers, cert}."""
+    """Parse the kubeconfig once → {server, ssl, headers}."""
     path = get_settings().kubeconfig
     if not path or not os.path.exists(path):
         return None
@@ -40,25 +41,39 @@ def _kube() -> dict[str, Any] | None:
         os.close(fd)
         return p
 
-    verify: Any = True
-    if cluster.get("certificate-authority-data"):
-        verify = _write(cluster["certificate-authority-data"], ".ca")
-    elif cluster.get("insecure-skip-tls-verify"):
-        verify = False
+    ca = cluster.get("certificate-authority-data")
+    sslctx: Any
+    if cluster.get("insecure-skip-tls-verify"):
+        sslctx = ssl.create_default_context()
+        sslctx.check_hostname = False
+        sslctx.verify_mode = ssl.CERT_NONE
+    elif ca:
+        sslctx = ssl.create_default_context(cafile=_write(ca, ".ca"))
+    else:
+        sslctx = ssl.create_default_context()
+
     headers: dict[str, str] = {}
-    cert = None
     if usr.get("token"):
         headers["Authorization"] = f"Bearer {usr['token']}"
     elif usr.get("client-certificate-data") and usr.get("client-key-data"):
-        cert = (_write(usr["client-certificate-data"], ".crt"), _write(usr["client-key-data"], ".key"))
-    return {"server": cluster["server"].rstrip("/"), "verify": verify, "headers": headers, "cert": cert}
+        sslctx.load_cert_chain(
+            certfile=_write(usr["client-certificate-data"], ".crt"),
+            keyfile=_write(usr["client-key-data"], ".key"),
+        )
+    return {
+        "server": cluster["server"].rstrip("/"),
+        "ssl": sslctx,
+        "headers": headers,
+    }
 
 
 def _client() -> tuple[dict[str, Any], httpx.Client]:
     k = _kube()
     if not k:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "kubeconfig not configured (AEGIS_KUBECONFIG)")
-    return k, httpx.Client(verify=k["verify"], cert=k["cert"], headers=k["headers"], timeout=12)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "kubeconfig not configured (AEGIS_KUBECONFIG)"
+        )
+    return k, httpx.Client(verify=k["ssl"], headers=k["headers"], timeout=12)
 
 
 def _get(path: str) -> dict[str, Any]:
@@ -148,7 +163,11 @@ async def k8s_deployments(
         {
             "name": d["metadata"]["name"],
             "ready": f"{d.get('status', {}).get('readyReplicas', 0)}/{d.get('spec', {}).get('replicas', 0)}",
-            "image": (d["spec"]["template"]["spec"]["containers"][0]["image"] if d["spec"]["template"]["spec"].get("containers") else ""),
+            "image": (
+                d["spec"]["template"]["spec"]["containers"][0]["image"]
+                if d["spec"]["template"]["spec"].get("containers")
+                else ""
+            ),
         }
         for d in items
     ]
