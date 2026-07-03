@@ -1743,5 +1743,213 @@
     ],
     "env": [],
     "mounts": []
+  },
+  {
+    "slug": "wordpress",
+    "name": "WordPress",
+    "description": "著名开源博客/CMS，自带 MariaDB,开箱即用。",
+    "icon": "📰",
+    "version": "latest",
+    "category": "Web",
+    "ports": [
+      {
+        "container_port": 18090,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: wordpress\n      MARIADB_USER: wordpress\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: wordpress:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:80\"]\n    environment:\n      WORDPRESS_DB_HOST: db\n      WORDPRESS_DB_NAME: wordpress\n      WORDPRESS_DB_USER: wordpress\n      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}\n    volumes: [app:/var/www/html]\nvolumes: {db: {}, app: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18090"
+    }
+  },
+  {
+    "slug": "ghost",
+    "name": "Ghost",
+    "description": "现代化开源写作/发布平台,自带 MySQL。",
+    "icon": "👻",
+    "version": "latest",
+    "category": "Web",
+    "ports": [
+      {
+        "container_port": 18091,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mysql:8\n    restart: unless-stopped\n    environment:\n      MYSQL_DATABASE: ghost\n      MYSQL_USER: ghost\n      MYSQL_PASSWORD: ${DB_PASSWORD}\n      MYSQL_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: ghost:5-alpine\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:2368\"]\n    environment:\n      database__client: mysql\n      database__connection__host: db\n      database__connection__user: ghost\n      database__connection__password: ${DB_PASSWORD}\n      database__connection__database: ghost\n      NODE_ENV: production\n    volumes: [content:/var/lib/ghost/content]\nvolumes: {db: {}, content: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18091"
+    }
+  },
+  {
+    "slug": "wikijs",
+    "name": "Wiki.js",
+    "description": "强大的开源 Wiki/知识库,自带 PostgreSQL。",
+    "icon": "📚",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18092,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: wiki\n      POSTGRES_USER: wiki\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: ghcr.io/requarks/wiki:2\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:3000\"]\n    environment:\n      DB_TYPE: postgres\n      DB_HOST: db\n      DB_PORT: \"5432\"\n      DB_USER: wiki\n      DB_PASS: ${DB_PASSWORD}\n      DB_NAME: wiki\nvolumes: {db: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18092"
+    }
+  },
+  {
+    "slug": "umami",
+    "name": "Umami",
+    "description": "隐私友好的开源网站统计分析,自带 PostgreSQL。",
+    "icon": "📊",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 18093,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: umami\n      POSTGRES_USER: umami\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: ghcr.io/umami-software/umami:postgresql-latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:3000\"]\n    environment:\n      DATABASE_TYPE: postgresql\n      DATABASE_URL: postgresql://umami:${DB_PASSWORD}@db:5432/umami\n      APP_SECRET: ${APP_SECRET}\nvolumes: {db: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_SECRET": "__RANDOM__",
+      "HOST_PORT": "18093"
+    }
+  },
+  {
+    "slug": "directus",
+    "name": "Directus",
+    "description": "开源 headless CMS / 数据平台,自带 PostgreSQL。",
+    "icon": "🧩",
+    "version": "latest",
+    "category": "Development",
+    "ports": [
+      {
+        "container_port": 18094,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: directus\n      POSTGRES_USER: directus\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: directus/directus:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:8055\"]\n    environment:\n      KEY: ${DIRECTUS_KEY}\n      SECRET: ${DIRECTUS_SECRET}\n      DB_CLIENT: pg\n      DB_HOST: db\n      DB_PORT: \"5432\"\n      DB_DATABASE: directus\n      DB_USER: directus\n      DB_PASSWORD: ${DB_PASSWORD}\n      ADMIN_EMAIL: admin@example.com\n      ADMIN_PASSWORD: ${ADMIN_PASSWORD}\n    volumes: [uploads:/directus/uploads]\nvolumes: {db: {}, uploads: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "DIRECTUS_KEY": "__RANDOM__",
+      "DIRECTUS_SECRET": "__RANDOM__",
+      "ADMIN_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18094"
+    }
+  },
+  {
+    "slug": "nocodb",
+    "name": "NocoDB",
+    "description": "开源 Airtable 替代(在线表格/数据库),自带 PostgreSQL。",
+    "icon": "🗄️",
+    "version": "latest",
+    "category": "Development",
+    "ports": [
+      {
+        "container_port": 18095,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: nocodb\n      POSTGRES_USER: nocodb\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: nocodb/nocodb:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:8080\"]\n    environment:\n      NC_DB: \"pg://db:5432?u=nocodb&p=${DB_PASSWORD}&d=nocodb\"\n      NC_AUTH_JWT_SECRET: ${JWT_SECRET}\n    volumes: [data:/usr/app/data]\nvolumes: {db: {}, data: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "JWT_SECRET": "__RANDOM__",
+      "HOST_PORT": "18095"
+    }
+  },
+  {
+    "slug": "metabase",
+    "name": "Metabase",
+    "description": "开源 BI / 数据可视化,自带 PostgreSQL。",
+    "icon": "📈",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 18096,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: metabase\n      POSTGRES_USER: metabase\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: metabase/metabase:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:3000\"]\n    environment:\n      MB_DB_TYPE: postgres\n      MB_DB_DBNAME: metabase\n      MB_DB_PORT: \"5432\"\n      MB_DB_USER: metabase\n      MB_DB_PASS: ${DB_PASSWORD}\n      MB_DB_HOST: db\nvolumes: {db: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18096"
+    }
+  },
+  {
+    "slug": "mattermost",
+    "name": "Mattermost",
+    "description": "开源团队协作/IM(Slack 替代),自带 PostgreSQL。",
+    "icon": "💬",
+    "version": "latest",
+    "category": "Messaging",
+    "ports": [
+      {
+        "container_port": 18097,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: mattermost\n      POSTGRES_USER: mattermost\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: mattermost/mattermost-team-edition:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:8065\"]\n    environment:\n      MM_SQLSETTINGS_DRIVERNAME: postgres\n      MM_SQLSETTINGS_DATASOURCE: \"postgres://mattermost:${DB_PASSWORD}@db:5432/mattermost?sslmode=disable\"\n    volumes: [data:/mattermost/data, config:/mattermost/config]\nvolumes: {db: {}, data: {}, config: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18097"
+    }
+  },
+  {
+    "slug": "bookstack",
+    "name": "BookStack",
+    "description": "简洁的开源文档/知识库,自带 MariaDB。",
+    "icon": "📖",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18098,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: bookstack\n      MARIADB_USER: bookstack\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: lscr.io/linuxserver/bookstack:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:80\"]\n    environment:\n      APP_URL: http://localhost:${HOST_PORT}\n      APP_KEY: ${APP_KEY}\n      DB_HOST: db\n      DB_PORT: \"3306\"\n      DB_USERNAME: bookstack\n      DB_PASSWORD: ${DB_PASSWORD}\n      DB_DATABASE: bookstack\n    volumes: [config:/config]\nvolumes: {db: {}, config: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_KEY": "__APP_KEY_B64__",
+      "HOST_PORT": "18098"
+    }
+  },
+  {
+    "slug": "firefly-iii",
+    "name": "Firefly III",
+    "description": "开源个人财务管理,自带 MariaDB。",
+    "icon": "💰",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18099,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: firefly\n      MARIADB_USER: firefly\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: fireflyiii/core:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:8080\"]\n    environment:\n      APP_KEY: ${APP_KEY}\n      DB_HOST: db\n      DB_PORT: \"3306\"\n      DB_CONNECTION: mysql\n      DB_DATABASE: firefly\n      DB_USERNAME: firefly\n      DB_PASSWORD: ${DB_PASSWORD}\n      STATIC_CRON_TOKEN: ${CRON_TOKEN}\n    volumes: [upload:/var/www/html/storage/upload]\nvolumes: {db: {}, upload: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_KEY": "__HEX32__",
+      "CRON_TOKEN": "__HEX32__",
+      "HOST_PORT": "18099"
+    }
   }
 ]
