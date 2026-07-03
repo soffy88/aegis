@@ -283,14 +283,23 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
 
             cron_task = start_orchestration_crons(alerter=alerter)
 
+            # Re-apply website Caddy routes on startup + periodically, so bound
+            # domains survive a Caddy restart (admin-API config is runtime-only).
+            from aegis.server.api.routers.websites import (  # noqa: PLC0415
+                website_route_reconcile_loop,
+            )
+
+            website_task = asyncio.create_task(website_route_reconcile_loop())
+
             yield
         finally:
-            if cron_task is not None:
-                cron_task.cancel()
-                # Await cancellation so the loop isn't mid-iteration on the pool
-                # when we close it.
-                with suppress(asyncio.CancelledError):
-                    await cron_task
+            for _t in (cron_task, locals().get("website_task")):
+                if _t is not None:
+                    _t.cancel()
+                    # Await cancellation so the loop isn't mid-iteration on the pool
+                    # when we close it.
+                    with suppress(asyncio.CancelledError):
+                        await _t
             log.info("aegis_shutting_down")
             # Don't let a close error mask the original startup exception.
             with suppress(Exception):

@@ -83,3 +83,19 @@ def test_files_chmod(tmp_path, monkeypatch):
     p.write_text("x")
     assert f.change_mode(str(p), "600")["mode"] == "0o600"
     get_settings.cache_clear()
+
+
+def test_website_domain_parse(monkeypatch):
+    import subprocess
+
+    from aegis.server.api.routers import websites
+
+    class R:
+        stdout = "website-blog\tblog.example.com\nwebsite-nodmn\t\nwebsite-shop\tshop.example.com\n"
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    pairs = websites._list_website_domains()
+    assert ("blog", "blog.example.com") in pairs
+    assert ("shop", "shop.example.com") in pairs
+    assert all(name != "nodmn" for name, _ in pairs)  # no domain -> skipped

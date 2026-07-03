@@ -58,6 +58,10 @@ def _caddy_add_domain(name: str, domain: str) -> None:
         "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": f"website-{name}:80"}]}],
         "terminal": True,
     }
+    # Idempotent: drop any existing route with this @id first (so reconcile /
+    # re-create doesn't stack duplicates).
+    with __import__("contextlib").suppress(Exception):
+        httpx.delete(f"{_CADDY_ADMIN}/id/website-{name}", timeout=8)
     base = f"{_CADDY_ADMIN}/config/apps/http/servers/sites"
     r = httpx.get(base, timeout=8)
     if r.status_code != 200 or not r.json():
@@ -193,3 +197,46 @@ async def delete_website(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid name")
     _caddy_del_domain(name)
     _dcmd(["rm", "-f", f"website-{name}"])
+
+
+def _list_website_domains() -> list[tuple[str, str]]:
+    """[(name, domain), ...] for running website containers that have a domain."""
+    r = _dcmd(
+        ["ps", "--filter", f"label={_LABEL}", "--format",
+         '{{.Names}}\t{{.Label "aegis.website.domain"}}']
+    )
+    out: list[tuple[str, str]] = []
+    for line in r.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[1]:
+            out.append((parts[0].removeprefix("website-"), parts[1]))
+    return out
+
+
+def reconcile_caddy_routes() -> int:
+    """Re-apply Caddy Host routes for every website container that declares a
+    domain. Idempotent — safe to run repeatedly. Returns how many were applied."""
+    n = 0
+    for name, domain in _list_website_domains():
+        try:
+            _caddy_add_domain(name, domain)
+            n += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("website route reconcile failed name=%s: %s", name, exc)
+    return n
+
+
+async def website_route_reconcile_loop(interval_sec: int = 60) -> None:
+    """Periodically reconcile website Caddy routes so they survive a Caddy restart
+    (the admin-API config is runtime-only; containers + their domain labels are the
+    durable source of truth)."""
+    import asyncio  # noqa: PLC0415
+
+    while True:
+        try:
+            applied = await asyncio.to_thread(reconcile_caddy_routes)
+            if applied:
+                log.debug("reconciled %d website Caddy routes", applied)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("website reconcile loop error: %s", exc)
+        await asyncio.sleep(interval_sec)
