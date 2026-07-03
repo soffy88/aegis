@@ -32,6 +32,9 @@ from aegis.server.api.routers import brain as brain_router
 from aegis.server.api.routers import backup_storage as backup_storage_router
 from aegis.server.api.routers import databases as databases_router
 from aegis.server.api.routers import firewall as firewall_router
+from aegis.server.api.routers import loki as loki_router
+from aegis.server.api.routers import slo as slo_router
+from aegis.server.api.routers import telemetry as telemetry_router
 from aegis.server.api.routers import websites as websites_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import files as files_router
@@ -383,6 +386,10 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(backup_storage_router.router)
     app.include_router(firewall_router.router)
     app.include_router(websites_router.router)
+    app.include_router(telemetry_router.ingest_router)
+    app.include_router(telemetry_router.router)
+    app.include_router(slo_router.router)
+    app.include_router(loki_router.router)
     app.include_router(files_router.router)
     app.include_router(autoheal_router.router)
     app.include_router(brain_router.router)

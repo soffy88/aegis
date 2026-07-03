@@ -336,6 +336,12 @@ class AegisSettings(BaseSettings):
     backup_local_dir: Path = Field(
         default=_UNSET_PATH, description="Local backup dir (default: data_dir/backups)"
     )
+    # Telemetry (OTLP trace ingest). If set, exporters must send this as the
+    # X-Aegis-Ingest-Key header. Empty = open ingest (fine on a private network).
+    telemetry_ingest_key: str = Field(default="")
+    # Loki base URL for the log-query page (e.g. http://loki:3100). Empty = disabled.
+    loki_url: str = Field(default="")
+
     # WebDAV remote-backup target (Nextcloud / Synology / any WebDAV server).
     backup_webdav_url: str = Field(default="", description="Base WebDAV URL, e.g. https://host/dav")
     backup_webdav_user: str = Field(default="")

@@ -867,6 +867,44 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON autoheal_policies (enabled) WHERE enabled = TRUE;
         """,
     ),
+    (
+        "038_spans",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_spans (
+            trace_id TEXT NOT NULL,
+            span_id TEXT NOT NULL,
+            parent_span_id TEXT,
+            service TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind INT NOT NULL DEFAULT 0,
+            start_ns BIGINT NOT NULL,
+            duration_ns BIGINT NOT NULL,
+            status_code INT NOT NULL DEFAULT 0,
+            attributes JSONB,
+            ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_spans_service_time
+            ON aegis_spans (service, ingested_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_spans_trace ON aegis_spans (trace_id);
+        CREATE INDEX IF NOT EXISTS idx_spans_ingested ON aegis_spans (ingested_at);
+        """,
+    ),
+    (
+        "039_slos",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_slos (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL,
+            name TEXT NOT NULL,
+            service TEXT,
+            sli TEXT NOT NULL DEFAULT 'trace_success',
+            objective DOUBLE PRECISION NOT NULL,
+            window_days INT NOT NULL DEFAULT 30,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        """,
+    ),
 ]
 
 

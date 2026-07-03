@@ -99,3 +99,16 @@ def test_website_domain_parse(monkeypatch):
     assert ("blog", "blog.example.com") in pairs
     assert ("shop", "shop.example.com") in pairs
     assert all(name != "nodmn" for name, _ in pairs)  # no domain -> skipped
+
+
+def test_otlp_attr_map():
+    from aegis.server.api.routers.telemetry import _attr_map
+
+    attrs = [
+        {"key": "service.name", "value": {"stringValue": "backend"}},
+        {"key": "http.status", "value": {"intValue": 500}},
+    ]
+    m = _attr_map(attrs)
+    assert m["service.name"] == "backend"
+    assert m["http.status"] == 500
+    assert _attr_map(None) == {}

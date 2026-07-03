@@ -2206,5 +2206,44 @@
     ],
     "env": [],
     "mounts": []
+  },
+  {
+    "slug": "coroot",
+    "name": "Coroot",
+    "description": "eBPF 零侵入可观测(服务图/金信号/网络流/日志),自带 ClickHouse。",
+    "icon": "🦡",
+    "version": "latest",
+    "category": "Monitoring",
+    "ports": [
+      {
+        "container_port": 18110,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  clickhouse:\n    image: clickhouse/clickhouse-server:24-alpine\n    restart: unless-stopped\n    environment:\n      CLICKHOUSE_DB: default\n      CLICKHOUSE_USER: coroot\n      CLICKHOUSE_PASSWORD: ${CH_PASSWORD}\n    volumes: [ch:/var/lib/clickhouse]\n  coroot:\n    image: ghcr.io/coroot/coroot:latest\n    restart: unless-stopped\n    depends_on: [clickhouse]\n    ports: [\"${HOST_PORT}:8080\"]\n    command: [\"--data-dir=/data\", \"--clickhouse-address=clickhouse:9000\", \"--clickhouse-user=coroot\", \"--clickhouse-password=${CH_PASSWORD}\"]\n    volumes: [data:/data]\n  node-agent:\n    image: ghcr.io/coroot/coroot-node-agent:latest\n    restart: unless-stopped\n    privileged: true\n    pid: host\n    command: [\"--collector-endpoint=http://coroot:8080\", \"--wal-dir=/tmp/coroot-node-agent\"]\n    volumes:\n      - /sys/kernel/tracing:/sys/kernel/tracing:rw\n      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro\nvolumes: {ch: {}, data: {}}\n",
+    "compose_env": {
+      "CH_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18110"
+    }
+  },
+  {
+    "slug": "otel-collector",
+    "name": "OpenTelemetry Collector",
+    "description": "OTLP 收集/处理/转发(可转发 trace 到 Aegis APM 或 Tempo/Jaeger)。",
+    "icon": "📡",
+    "version": "latest",
+    "category": "Monitoring",
+    "ports": [
+      {
+        "container_port": 4318,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  otelcol:\n    image: otel/opentelemetry-collector-contrib:latest\n    restart: unless-stopped\n    ports: [\"${HOST_PORT}:4318\", \"4317:4317\"]\n    command: [\"--config=/etc/otelcol/config.yaml\"]\n    volumes: [config:/etc/otelcol]\nvolumes: {config: {}}\n",
+    "compose_env": {
+      "HOST_PORT": "4318"
+    }
   }
 ]
