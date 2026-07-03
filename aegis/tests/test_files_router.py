@@ -65,6 +65,29 @@ def test_list_and_navigation(client: TestClient, root: Path) -> None:
     assert body["parent"] is None  # root has no parent link
 
 
+def test_large_dir_is_capped(client: TestClient, root: Path) -> None:
+    # A folder with more than MAX_LIST_ENTRIES files must be truncated so the
+    # browser never has to render an unbounded number of DOM rows (which freezes
+    # the tab's main thread).
+    from aegis.server.services.files import MAX_LIST_ENTRIES
+
+    big = root / "big"
+    big.mkdir()
+    for i in range(MAX_LIST_ENTRIES + 50):
+        (big / f"f{i:05d}").write_text("")
+    body = client.get(f"{_base()}/list", params={"path": str(big)}).json()
+    assert len(body["entries"]) == MAX_LIST_ENTRIES
+    assert body["total"] == MAX_LIST_ENTRIES + 50
+    assert body["truncated"] is True
+
+
+def test_small_dir_not_truncated(client: TestClient, root: Path) -> None:
+    (root / "a.txt").write_text("hi")
+    body = client.get(f"{_base()}/list", params={"path": str(root)}).json()
+    assert body["truncated"] is False
+    assert body["total"] == 1
+
+
 def test_outside_root_is_forbidden(client: TestClient) -> None:
     r = client.get(f"{_base()}/list", params={"path": "/etc"})
     assert r.status_code == 403

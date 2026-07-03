@@ -23,6 +23,10 @@ from aegis.server.runtime.config import get_settings
 MAX_TEXT_BYTES = 2 * 1024 * 1024  # 2 MiB
 # Upload ceiling — a coarse guard against filling the disk via the browser.
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MiB
+# Directory-listing ceiling — the browser renders one DOM row per entry with no
+# virtualization, so an unbounded listing (a folder with tens of thousands of
+# files) freezes the tab's main thread. Cap the payload and flag truncation.
+MAX_LIST_ENTRIES = 1000
 
 
 class PathNotAllowed(Exception):
@@ -102,10 +106,14 @@ def list_dir(path: str, *, show_hidden: bool = True) -> dict[str, Any]:
     # No parent link when the current dir is itself a whitelist root (can't
     # navigate above the sandbox) or the filesystem root.
     is_root = any(p.resolve() == r.resolve() for r in _roots()) or p == p.parent
+    total = len(entries)
+    truncated = total > MAX_LIST_ENTRIES
     return {
         "path": str(p),
         "parent": None if is_root else str(p.parent),
-        "entries": entries,
+        "entries": entries[:MAX_LIST_ENTRIES],
+        "total": total,
+        "truncated": truncated,
     }
 
 
