@@ -297,6 +297,181 @@ async def container_stats(
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
 
+# ── Memory management ─────────────────────────────────────────────────────────
+# oprim has no container-update primitive and 3O libs are off-limits, so memory
+# limits are set at the aegis layer via the docker CLI (staged into the image),
+# the same pattern apps.py uses to shell to `docker compose`.
+
+_UNITS = {
+    "B": 1,
+    "KIB": 1024,
+    "MIB": 1024**2,
+    "GIB": 1024**3,
+    "TIB": 1024**4,
+    "KB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "TB": 1000**4,
+}
+
+
+def _parse_size(s: str) -> float:
+    """'36.32MiB' / '1.5GiB' / '0B' → bytes. Returns 0.0 on unparseable input."""
+    s = s.strip()
+    for unit in sorted(_UNITS, key=len, reverse=True):
+        if s.upper().endswith(unit):
+            try:
+                return float(s[: -len(unit)].strip()) * _UNITS[unit]
+            except ValueError:
+                return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _docker_cli(docker_host: str | None, args: list[str], timeout: int = 30) -> str:
+    """Run `docker [-H host] <args>` and return stdout. Raises 502 on failure."""
+    import subprocess  # noqa: PLC0415
+
+    dh = docker_host or get_settings().docker_host
+    cmd = ["docker", "-H", dh, *args]
+    try:
+        r = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,  # noqa: S607
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(_502, f"docker cli failed: {exc}") from exc
+    if r.returncode != 0:
+        raise HTTPException(_502, f"docker: {(r.stderr or r.stdout).strip()[:300]}")
+    return r.stdout
+
+
+class ContainerLimitsRequest(BaseModel):
+    # Megabytes. null → remove the limit (unlimited). memory_swap_mb defaults to
+    # memory_mb (i.e. no extra swap) when a memory limit is set.
+    memory_mb: int | None = None
+    memory_swap_mb: int | None = None
+
+
+@router.post("/containers/{container}/limits", status_code=status.HTTP_200_OK)
+async def set_container_limits(
+    org_id: UUID,
+    container: str,
+    body: ContainerLimitsRequest,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Set a container's memory limit via `docker update`. operator+.
+
+    memory_swap defaults to memory_mb (no extra swap) unless memory_swap_mb is
+    given explicitly (>= memory_mb). The limit applies to the live container; it
+    is reset if the container is recreated (e.g. `compose up`), so for permanent
+    caps also set the limit in the container's compose/run definition.
+
+    Note: Docker cannot *remove* a memory limit from a live container
+    (`docker update --memory 0` is a no-op); memory_mb=null is rejected. To go
+    back to unlimited, recreate the container without a limit.
+    """
+    if body.memory_mb is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Docker cannot unset a memory limit on a live container; recreate it "
+            "(e.g. compose up) without a limit instead.",
+        )
+    if body.memory_mb < 6:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "memory_mb must be >= 6")
+    swap = body.memory_swap_mb if body.memory_swap_mb is not None else body.memory_mb
+    if swap < body.memory_mb:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "memory_swap_mb must be >= memory_mb")
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    args = ["update", "--memory", f"{body.memory_mb}m", "--memory-swap", f"{swap}m", container]
+    await asyncio.to_thread(_docker_cli, docker_host, args)
+    return {"container": container, "memory_mb": body.memory_mb, "ok": True}
+
+
+async def _host_memory(conn: asyncpg.Connection) -> dict[str, Any]:
+    """Whole-host mem/swap summary from the latest node_exporter samples."""
+
+    async def latest(metric: str) -> float | None:
+        return await conn.fetchval(
+            "SELECT value FROM agent_metrics WHERE metric_name = $1 ORDER BY ts DESC LIMIT 1",
+            metric,
+        )
+
+    mt = await latest("node_memory_MemTotal_bytes")
+    ma = await latest("node_memory_MemAvailable_bytes")
+    st = await latest("node_memory_SwapTotal_bytes")
+    sf = await latest("node_memory_SwapFree_bytes")
+    mb = 1024 * 1024
+    out: dict[str, Any] = {}
+    if mt and ma is not None:
+        out.update(
+            mem_total_mb=round(mt / mb),
+            mem_available_mb=round(ma / mb),
+            mem_used_mb=round((mt - ma) / mb),
+            mem_used_pct=round((1 - ma / mt) * 100, 1),
+        )
+    if st and sf is not None and st > 0:
+        out.update(
+            swap_total_mb=round(st / mb),
+            swap_used_mb=round((st - sf) / mb),
+            swap_used_pct=round((1 - sf / st) * 100, 1),
+        )
+    return out
+
+
+@router.get("/memory/overview")
+async def memory_overview(
+    org_id: UUID,
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Per-container memory usage vs limit + whole-host summary. viewer+.
+
+    A container with no memory limit reports its limit as the host's total RAM;
+    we flag those (has_limit=false) so they can be capped from the UI.
+    """
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    host = await _host_memory(conn)
+    host_total_bytes = host.get("mem_total_mb", 0) * 1024 * 1024
+
+    out = await asyncio.to_thread(
+        _docker_cli, docker_host, ["stats", "--no-stream", "--format", "{{json .}}"], 40
+    )
+    containers: list[dict[str, Any]] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        used_s, _, limit_s = d.get("MemUsage", "").partition(" / ")
+        used = _parse_size(used_s)
+        limit = _parse_size(limit_s)
+        # docker shows host-total as the limit for uncapped containers
+        has_limit = bool(limit) and (not host_total_bytes or limit < host_total_bytes * 0.98)
+        containers.append(
+            {
+                "name": d.get("Name"),
+                "mem_mb": round(used / 1024 / 1024, 1),
+                "limit_mb": round(limit / 1024 / 1024, 1) if has_limit else None,
+                "pct_of_limit": round(used / limit * 100, 1) if has_limit and limit else None,
+                "has_limit": has_limit,
+            }
+        )
+    containers.sort(key=lambda c: c["mem_mb"], reverse=True)
+    return {"host": host, "containers": containers}
+
+
 @router.post("/networks", status_code=status.HTTP_201_CREATED)
 async def create_network(
     org_id: UUID,
