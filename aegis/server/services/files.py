@@ -23,10 +23,10 @@ from aegis.server.runtime.config import get_settings
 MAX_TEXT_BYTES = 2 * 1024 * 1024  # 2 MiB
 # Upload ceiling — a coarse guard against filling the disk via the browser.
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MiB
-# Directory-listing ceiling — the browser renders one DOM row per entry with no
-# virtualization, so an unbounded listing (a folder with tens of thousands of
-# files) freezes the tab's main thread. Cap the payload and flag truncation.
-MAX_LIST_ENTRIES = 1000
+# Directory-listing ceiling — bounds the JSON payload (and network cost on slow
+# links). The client virtualizes rendering, so row count no longer freezes the
+# tab; this cap is about transfer size. Truncation is flagged in the response.
+MAX_LIST_ENTRIES = 5000
 
 
 class PathNotAllowed(Exception):
