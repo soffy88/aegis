@@ -51,6 +51,67 @@ async def list_domains(
     return [dict(r) for r in rows]
 
 
+def _probe_cert(domain: str) -> dict[str, Any]:
+    """Fetch and parse the live TLS certificate served for *domain* on :443.
+
+    Reads the presented cert without verifying it (so expired / self-signed
+    certs still report their status) and returns issuer / expiry / days_left.
+    """
+    import datetime as _dt  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+    import ssl  # noqa: PLC0415
+
+    from cryptography import x509  # noqa: PLC0415
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with socket.create_connection((domain, 443), timeout=6) as sock:
+            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+                der = ssock.getpeercert(binary_form=True)
+        cert = x509.load_der_x509_certificate(der)  # type: ignore[arg-type]
+        not_after = cert.not_valid_after_utc
+        days_left = (not_after - _dt.datetime.now(_dt.UTC)).days
+        issuer = next(
+            (a.value for a in cert.issuer if a.oid == x509.NameOID.ORGANIZATION_NAME), ""
+        ) or next((a.value for a in cert.issuer if a.oid == x509.NameOID.COMMON_NAME), "")
+        return {
+            "domain": domain,
+            "reachable": True,
+            "issuer": issuer,
+            "not_after": not_after.isoformat(),
+            "days_left": days_left,
+            "expiring_soon": days_left < 21,
+            "expired": days_left < 0,
+        }
+    except Exception as exc:  # noqa: BLE001 — probe is best-effort
+        return {"domain": domain, "reachable": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+@router.get("/certificates")
+async def list_certificates(
+    org_id: uuid.UUID,
+    project_id: uuid.UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """TLS certificate status for each registered domain — probes the live cert
+    served on :443 and reports issuer, expiry and days remaining."""
+    import asyncio  # noqa: PLC0415
+
+    rows = await conn.fetch(
+        """
+        SELECT domain FROM domains
+         WHERE org_id = $1 AND ($2::uuid IS NULL OR project_id = $2) AND tls_enabled
+         ORDER BY domain
+        """,
+        org_id,
+        project_id,
+    )
+    return await asyncio.gather(*(asyncio.to_thread(_probe_cert, r["domain"]) for r in rows))
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def register_domain(
     org_id: uuid.UUID,

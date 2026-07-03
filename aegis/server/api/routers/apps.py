@@ -36,6 +36,7 @@ class InstallRequest(BaseModel):
     register_domain: bool = False
     node_id: uuid.UUID | None = None  # target node; omit to install on the platform host
     host_port: int | None = None  # published host port for compose apps (auto-freed if taken)
+    params: dict[str, str] = {}  # values for the catalog entry's declared install params
 
     @field_validator("install_dir")
     @classmethod
@@ -386,6 +387,11 @@ async def install_app_endpoint(
     # catalog default, then bump to a free port so the install never fails on a
     # port collision. host_port stays None for single-container apps.
     compose_env = dict(entry.get("compose_env") or {})
+    # Merge user-supplied install params (only keys the catalog entry declared).
+    declared = {p.get("key") for p in (entry.get("params") or []) if p.get("key")}
+    for k, v in (req.params or {}).items():
+        if k in declared and v != "":
+            compose_env[k] = v
     host_port: int | None = None
     if entry.get("compose") and compose_env.get("HOST_PORT"):
         preferred = req.host_port or int(compose_env["HOST_PORT"])
@@ -466,6 +472,102 @@ async def uninstall_app(
         install_id,
         org_id,
     )
+
+
+class ComposeUpdateRequest(BaseModel):
+    compose: str = Field(..., min_length=1)
+
+
+async def _compose_path_for(
+    conn: asyncpg.Connection, org_id: uuid.UUID, install_id: uuid.UUID
+) -> tuple[str, Path]:
+    row = await conn.fetchrow(
+        "SELECT app_name FROM installed_apps WHERE id = $1 AND org_id = $2", install_id, org_id
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App not found")
+    path = Path(get_settings().data_dir) / "apps" / row["app_name"] / "docker-compose.yml"
+    return row["app_name"], path
+
+
+@router.get("/{install_id}/compose")
+async def get_compose(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Return the compose file of a multi-container app (None for single-container)."""
+    app_name, path = await _compose_path_for(conn, org_id, install_id)
+    return {
+        "app_name": app_name,
+        "is_compose": path.exists(),
+        "compose": path.read_text() if path.exists() else None,
+    }
+
+
+@router.put("/{install_id}/compose")
+async def update_compose(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    req: ComposeUpdateRequest,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, str]:
+    """Overwrite the compose file and redeploy the stack (`docker compose up -d`)."""
+    app_name, path = await _compose_path_for(conn, org_id, install_id)
+    if not path.exists():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "not a compose app")
+    path.write_text(req.compose)
+
+    def _redeploy() -> None:
+        from oprim import docker_compose_up  # noqa: PLC0415
+
+        docker_compose_up(
+            compose_file=str(path),
+            project_name=app_name,
+            pull="missing",
+            docker_host=get_settings().docker_host,
+        )
+
+    try:
+        await asyncio.to_thread(_redeploy)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"redeploy failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    return {"status": "redeployed"}
+
+
+@router.post("/{install_id}/backup")
+async def backup_app_endpoint(
+    org_id: uuid.UUID,
+    install_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, Any]:
+    """Tar the app's data directory and upload it to configured S3 storage."""
+    import datetime as _dt  # noqa: PLC0415
+
+    from aegis.server.services import remote_backup  # noqa: PLC0415
+
+    row = await conn.fetchrow(
+        "SELECT app_name FROM installed_apps WHERE id = $1 AND org_id = $2", install_id, org_id
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App not found")
+    cfg = get_settings()
+    if not remote_backup.is_configured(cfg):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "S3 backup storage is not configured")
+    stamp = _dt.datetime.now(_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        return await asyncio.to_thread(
+            remote_backup.backup_app, str(org_id), row["app_name"], cfg, Path(cfg.data_dir), stamp
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"backup failed: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 class UpgradeRequest(BaseModel):

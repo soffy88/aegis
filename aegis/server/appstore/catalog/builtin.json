@@ -1846,7 +1846,20 @@
       "DIRECTUS_SECRET": "__RANDOM__",
       "ADMIN_PASSWORD": "__RANDOM__",
       "HOST_PORT": "18094"
-    }
+    },
+    "params": [
+      {
+        "key": "ADMIN_EMAIL",
+        "label": "管理员邮箱 / Admin Email",
+        "type": "text",
+        "default": "admin@example.com"
+      },
+      {
+        "key": "ADMIN_PASSWORD",
+        "label": "管理员密码 / Admin Password (留空=随机)",
+        "type": "password"
+      }
+    ]
   },
   {
     "slug": "nocodb",
@@ -2012,7 +2025,14 @@
       "DB_PASSWORD": "__RANDOM__",
       "ADMIN_PASSWORD": "__RANDOM__",
       "HOST_PORT": "18102"
-    }
+    },
+    "params": [
+      {
+        "key": "ADMIN_PASSWORD",
+        "label": "管理员密码 / Admin Password (留空=随机)",
+        "type": "password"
+      }
+    ]
   },
   {
     "slug": "snipe-it",
