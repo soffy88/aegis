@@ -814,5 +814,149 @@
       "gateway",
       "run"
     ]
+  },
+  {
+    "slug": "comfyui",
+    "name": "ComfyUI",
+    "description": "Node-based Stable Diffusion GUI for image and video generation (AnimateDiff, SVD).",
+    "icon": "🧩",
+    "version": "latest-cuda",
+    "category": "AI",
+    "image": "ghcr.io/ai-dock/comfyui:latest-cuda",
+    "ports": [
+      {
+        "container_port": 8188,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/workspace",
+        "volume_name": "comfyui-data"
+      }
+    ]
+  },
+  {
+    "slug": "stable-diffusion-webui",
+    "name": "Stable Diffusion WebUI",
+    "description": "AUTOMATIC1111 web UI for text-to-image and image-to-image generation.",
+    "icon": "🖼️",
+    "version": "latest-cuda",
+    "category": "AI",
+    "image": "ghcr.io/ai-dock/stable-diffusion-webui:latest-cuda",
+    "ports": [
+      {
+        "container_port": 7860,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/workspace",
+        "volume_name": "sd-webui-data"
+      }
+    ]
+  },
+  {
+    "slug": "invokeai",
+    "name": "InvokeAI",
+    "description": "Polished creative studio for Stable Diffusion image generation and editing.",
+    "icon": "🎨",
+    "version": "latest",
+    "category": "AI",
+    "image": "ghcr.io/invoke-ai/invokeai:latest",
+    "ports": [
+      {
+        "container_port": 9090,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/invokeai",
+        "volume_name": "invokeai-data"
+      }
+    ]
+  },
+  {
+    "slug": "iopaint",
+    "name": "IOPaint",
+    "description": "AI image editing: remove objects, defects and watermarks, or inpaint any area.",
+    "icon": "🪄",
+    "version": "latest",
+    "category": "AI",
+    "image": "uiewy/iopaint:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/root/.cache",
+        "volume_name": "iopaint-cache"
+      }
+    ]
+  },
+  {
+    "slug": "lobe-chat",
+    "name": "Lobe Chat",
+    "description": "Modern chat UI for writing, copywriting and multi-model conversations.",
+    "icon": "✍️",
+    "version": "latest",
+    "category": "AI",
+    "image": "lobehub/lobe-chat:latest",
+    "ports": [
+      {
+        "container_port": 3210,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "whisper-asr",
+    "name": "Whisper ASR",
+    "description": "OpenAI Whisper speech-to-text web service for transcription and subtitles.",
+    "icon": "🎙️",
+    "version": "latest",
+    "category": "AI",
+    "image": "onerahmet/openai-whisper-asr-webservice:latest",
+    "ports": [
+      {
+        "container_port": 9000,
+        "protocol": "tcp",
+        "label": "API"
+      }
+    ],
+    "env": [
+      {
+        "key": "ASR_MODEL",
+        "default_value": "base",
+        "description": "Whisper model size: tiny, base, small, medium or large."
+      },
+      {
+        "key": "ASR_ENGINE",
+        "default_value": "openai_whisper",
+        "description": "ASR engine: openai_whisper, faster_whisper or whisperx."
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/root/.cache",
+        "volume_name": "whisper-cache"
+      }
+    ]
   }
 ]
