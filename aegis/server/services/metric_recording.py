@@ -20,6 +20,11 @@ log = logging.getLogger(__name__)
 _CPU_COUNTER = "container_cpu_usage_seconds_total"
 _CPU_GAUGE = "container_cpu_percent"
 
+_NODE_CPU_COUNTER = "node_cpu_seconds_total"
+_NODE_CPU_GAUGE = "node_cpu_percent"
+_NODE_MEM_GAUGE = "node_memory_used_percent"
+_NODE_HOST = "node-exporter"
+
 
 def _as_dict(tags: Any) -> dict[str, Any]:
     if isinstance(tags, dict):
@@ -70,6 +75,72 @@ async def record_container_cpu_percent(conn: asyncpg.Connection) -> int:
         pct = max(0.0, (v2 - v1) / dt * 100.0)
         tags_json = tags if isinstance(tags, str) else json.dumps(tags)
         inserts.append(("cadvisor", _CPU_GAUGE, pct, "%", tags_json))
+
+    if inserts:
+        await conn.executemany(
+            "INSERT INTO agent_metrics (hostname, metric_name, value, unit, tags)"
+            " VALUES ($1, $2, $3, $4, $5::jsonb)",
+            inserts,
+        )
+    return len(inserts)
+
+
+async def record_node_percentages(conn: asyncpg.Connection) -> int:
+    """Derive whole-host gauges from scraped node_exporter counters/gauges.
+
+    - node_cpu_percent: 100 * (1 - Σidle / Σtotal) over the rate of
+      node_cpu_seconds_total across all (cpu, mode) series.
+    - node_memory_used_percent: 100 * (1 - MemAvailable / MemTotal).
+
+    node_exporter only exposes raw counters/gauges; the dashboard's "整机 CPU/内存"
+    meters read these two derived gauges. Written under the node-exporter hostname.
+    Returns the number of gauge rows written (0-2).
+    """
+    inserts: list[tuple[str, str, float, str, str]] = []
+
+    # --- CPU: rate over node_cpu_seconds_total, aggregated across cores ---
+    cpu_rows = await conn.fetch(
+        """
+        SELECT tags->>'cpu' AS cpu, tags->>'mode' AS mode, value, ts
+        FROM agent_metrics
+        WHERE metric_name = $1
+          AND ts > now() - interval '3 minutes'
+        ORDER BY tags->>'cpu', tags->>'mode', ts DESC
+        """,
+        _NODE_CPU_COUNTER,
+    )
+    by_key: dict[tuple[str, str], list[tuple[float, Any]]] = {}
+    for r in cpu_rows:
+        if r["cpu"] is None or r["mode"] is None:
+            continue
+        by_key.setdefault((r["cpu"], r["mode"]), []).append((r["value"], r["ts"]))
+
+    total_delta = 0.0
+    idle_delta = 0.0
+    for (_cpu, mode), samples in by_key.items():
+        if len(samples) < 2:
+            continue
+        (v2, _t2), (v1, _t1) = samples[0], samples[1]
+        d = max(0.0, v2 - v1)  # clamp counter resets
+        total_delta += d
+        if mode == "idle":
+            idle_delta += d
+    if total_delta > 0:
+        pct = max(0.0, min(100.0, (1.0 - idle_delta / total_delta) * 100.0))
+        inserts.append((_NODE_HOST, _NODE_CPU_GAUGE, pct, "%", "{}"))
+
+    # --- Memory: (1 - MemAvailable / MemTotal) * 100 ---
+    total = await conn.fetchval(
+        "SELECT value FROM agent_metrics WHERE metric_name = 'node_memory_MemTotal_bytes'"
+        " ORDER BY ts DESC LIMIT 1"
+    )
+    avail = await conn.fetchval(
+        "SELECT value FROM agent_metrics WHERE metric_name = 'node_memory_MemAvailable_bytes'"
+        " ORDER BY ts DESC LIMIT 1"
+    )
+    if total and avail is not None and total > 0:
+        mem_pct = max(0.0, min(100.0, (1.0 - avail / total) * 100.0))
+        inserts.append((_NODE_HOST, _NODE_MEM_GAUGE, mem_pct, "%", "{}"))
 
     if inserts:
         await conn.executemany(

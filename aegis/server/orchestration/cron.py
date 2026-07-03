@@ -174,6 +174,7 @@ async def _recording_loop() -> None:
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.metric_recording import (
         record_container_cpu_percent,  # noqa: PLC0415
+        record_node_percentages,  # noqa: PLC0415
     )
 
     await asyncio.sleep(random.uniform(20, 35))
@@ -181,6 +182,7 @@ async def _recording_loop() -> None:
         try:
             async with get_pool().acquire() as conn:
                 await record_container_cpu_percent(conn)
+                await record_node_percentages(conn)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
