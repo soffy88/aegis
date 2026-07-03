@@ -958,5 +958,96 @@
         "volume_name": "whisper-cache"
       }
     ]
+  },
+  {
+    "slug": "stirling-pdf",
+    "name": "Stirling-PDF",
+    "description": "本地 PDF 工具箱：合并/拆分/旋转/压缩/转换/OCR/加水印/签名等 50+ 操作，文件不出本机。",
+    "icon": "📄",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "stirlingtools/stirling-pdf:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/configs",
+        "volume_name": "stirling-configs"
+      },
+      {
+        "target": "/usr/share/tessdata",
+        "volume_name": "stirling-tessdata"
+      }
+    ]
+  },
+  {
+    "slug": "gotenberg",
+    "name": "Gotenberg",
+    "description": "文档转换 API：把 Office/HTML/Markdown/网页 转成 PDF，供程序调用（无网页界面）。",
+    "icon": "🔄",
+    "version": "8",
+    "category": "Productivity",
+    "image": "gotenberg/gotenberg:8",
+    "ports": [
+      {
+        "container_port": 3000,
+        "protocol": "tcp",
+        "label": "API"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "presenton",
+    "name": "Presenton",
+    "description": "AI 生成演示文稿 / PPT，可对接本地 Ollama 或云端 LLM，支持导出 PPTX/PDF。",
+    "icon": "📊",
+    "version": "latest",
+    "category": "AI",
+    "image": "ghcr.io/presenton/presenton:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app_data",
+        "volume_name": "presenton-data"
+      }
+    ]
+  },
+  {
+    "slug": "libretranslate",
+    "name": "LibreTranslate",
+    "description": "自托管机器翻译，多语言互译，带网页界面与 REST API，完全离线。",
+    "icon": "🌐",
+    "version": "latest",
+    "category": "AI",
+    "image": "libretranslate/libretranslate:latest",
+    "ports": [
+      {
+        "container_port": 5000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/home/libretranslate/.local",
+        "volume_name": "libretranslate-models"
+      }
+    ]
   }
 ]
