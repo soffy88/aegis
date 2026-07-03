@@ -388,3 +388,59 @@ class TestAuthRouter:
     async def test_me_no_token_401(self, auth_client: httpx.AsyncClient) -> None:
         resp = await auth_client.get("/api/v1/auth/me")
         assert resp.status_code == 401
+
+    async def test_change_password_flow(self, auth_client: httpx.AsyncClient) -> None:
+        login = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        )
+        assert login.status_code == 200
+        hdr = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        new_pw = "brand-new-password-9"
+
+        # Wrong current password -> 400.
+        bad = await auth_client.post(
+            "/api/v1/auth/password",
+            headers=hdr,
+            json={"current_password": "not-my-password", "new_password": new_pw},
+        )
+        assert bad.status_code == 400
+
+        # Too-short new password -> 422 (min_length=8).
+        short = await auth_client.post(
+            "/api/v1/auth/password",
+            headers=hdr,
+            json={"current_password": TEST_PASSWORD, "new_password": "short"},
+        )
+        assert short.status_code == 422
+
+        # Correct current password -> 204, old password stops working, new one works.
+        ok = await auth_client.post(
+            "/api/v1/auth/password",
+            headers=hdr,
+            json={"current_password": TEST_PASSWORD, "new_password": new_pw},
+        )
+        assert ok.status_code == 200
+        old = await auth_client.post(
+            "/api/v1/auth/login", json={"email": TEST_EMAIL, "password": TEST_PASSWORD}
+        )
+        assert old.status_code == 401
+        new = await auth_client.post(
+            "/api/v1/auth/login", json={"email": TEST_EMAIL, "password": new_pw}
+        )
+        assert new.status_code == 200
+
+        # Restore the seeded password so sibling tests are unaffected.
+        restore = await auth_client.post(
+            "/api/v1/auth/password",
+            headers={"Authorization": f"Bearer {new.json()['access_token']}"},
+            json={"current_password": new_pw, "new_password": TEST_PASSWORD},
+        )
+        assert restore.status_code == 200
+
+    async def test_change_password_requires_auth(self, auth_client: httpx.AsyncClient) -> None:
+        resp = await auth_client.post(
+            "/api/v1/auth/password",
+            json={"current_password": TEST_PASSWORD, "new_password": "whatever-8"},
+        )
+        assert resp.status_code == 401

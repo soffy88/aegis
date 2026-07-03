@@ -48,6 +48,11 @@ class RegisterRequest(BaseModel):
     org_slug: str = Field(..., min_length=1, pattern=r"^[a-z0-9-]+$")
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -264,3 +269,22 @@ async def me(user: UserContext = Depends(get_current_user)) -> dict:
         "email": user.email,
         "orgs": [{"org_id": str(o.org_id), "slug": o.slug, "role": o.role} for o in user.orgs],
     }
+
+
+@router.post("/password")
+async def change_password(
+    req: ChangePasswordRequest,
+    user: UserContext = Depends(get_current_user),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+) -> dict[str, str]:
+    """Self-service password change: verify the current password, then set a new one."""
+    from obase.auth import argon2_hash  # noqa: PLC0415
+
+    user_repo = UserRepository(conn)
+    db_user = await user_repo.get_by_id(user.user_id)
+    if not db_user or not db_user.password_hash:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+    if not argon2_verify(password=req.current_password, hash=db_user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "current password is incorrect")
+    await user_repo.update_password(user.user_id, argon2_hash(password=req.new_password))
+    return {"status": "ok"}

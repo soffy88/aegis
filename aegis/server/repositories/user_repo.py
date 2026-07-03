@@ -36,6 +36,11 @@ class UserRepository:
     async def update_last_login(self, user_id: UUID) -> None:
         await self.conn.execute("UPDATE users SET last_login_at = NOW() WHERE id = $1", user_id)
 
+    async def update_password(self, user_id: UUID, password_hash: str) -> None:
+        await self.conn.execute(
+            "UPDATE users SET password_hash = $1 WHERE id = $2", password_hash, user_id
+        )
+
     async def set_active(self, user_id: UUID, *, is_active: bool) -> None:
         await self.conn.execute("UPDATE users SET is_active = $1 WHERE id = $2", is_active, user_id)
 
