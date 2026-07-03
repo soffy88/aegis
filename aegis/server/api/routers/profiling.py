@@ -38,13 +38,22 @@ async def profiling_apps(
     org_id: uuid.UUID,
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> dict[str, Any]:
-    """List profiled applications from Pyroscope (label values for the app name)."""
+    """List profiled applications from Pyroscope.
+
+    Pyroscope 1.x dropped the 0.x ``/pyroscope/api/apps`` route; apps are now the
+    values of the ``service_name`` label, exposed via the Connect QuerierService.
+    """
     url = (get_settings().pyroscope_url or "").rstrip("/")
     if not url:
         return {"configured": False, "apps": []}
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(f"{url}/pyroscope/api/apps")
-        return {"configured": True, "apps": r.json() if r.status_code == 200 else []}
+            r = await c.post(
+                f"{url}/querier.v1.QuerierService/LabelValues",
+                json={"name": "service_name", "start": 0, "end": 0},
+                headers={"Content-Type": "application/json"},
+            )
+        apps = r.json().get("names", []) if r.status_code == 200 else []
+        return {"configured": True, "apps": apps}
     except Exception:  # noqa: BLE001
         return {"configured": True, "apps": []}

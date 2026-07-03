@@ -69,6 +69,11 @@ services:
       AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-false}
       AEGIS_SENTRY_DSN: ${AEGIS_SENTRY_DSN:-}
 
+      # === 可观测性外置组件 (helios-net 内直连) ===
+      AEGIS_LOKI_URL: ${AEGIS_LOKI_URL:-http://aegis-loki:3100}
+      AEGIS_PYROSCOPE_URL: ${AEGIS_PYROSCOPE_URL:-http://aegis-pyroscope:4040}
+      AEGIS_KUBECONFIG: ${AEGIS_KUBECONFIG:-/data/aegis/kubeconfig}
+
       # === Plan (自托管默认 enterprise) ===
       AEGIS_SELF_HOSTED_MODE: "true"
       AEGIS_DEFAULT_ORG_PLAN: enterprise
