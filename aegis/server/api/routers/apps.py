@@ -35,6 +35,7 @@ class InstallRequest(BaseModel):
     domain_target_url: str | None = None
     register_domain: bool = False
     node_id: uuid.UUID | None = None  # target node; omit to install on the platform host
+    host_port: int | None = None  # published host port for compose apps (auto-freed if taken)
 
     @field_validator("install_dir")
     @classmethod
@@ -86,6 +87,31 @@ def _build_container_spec(body: InstallAppRequest) -> dict[str, Any]:
         "volumes": volumes or None,
         "command": body.command or None,
     }
+
+
+def _pick_free_host_port(preferred: int, docker_host: str) -> int:
+    """Return `preferred` if no container already publishes it on the host, else the
+    next free port above it. Best-effort — falls back to `preferred` on any error."""
+    import re  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    used: set[int] = set()
+    try:
+        out = subprocess.run(  # noqa: S603
+            ["docker", "-H", docker_host, "ps", "--format", "{{.Ports}}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout
+        for m in re.finditer(r":(\d+)->", out):
+            used.add(int(m.group(1)))
+    except Exception:  # noqa: BLE001
+        return preferred
+    port = preferred
+    while port in used and port < preferred + 500:
+        port += 1
+    return port
 
 
 def _compose_install(body: InstallAppRequest, data_dir: Path | None, docker_host: str) -> None:
@@ -356,6 +382,16 @@ async def install_app_endpoint(
         target_host = node["host"]
         docker_host = node["docker_host_url"] or docker_host
 
+    # Compose apps publish a host port. Honor a caller-supplied port, else the
+    # catalog default, then bump to a free port so the install never fails on a
+    # port collision. host_port stays None for single-container apps.
+    compose_env = dict(entry.get("compose_env") or {})
+    host_port: int | None = None
+    if entry.get("compose") and compose_env.get("HOST_PORT"):
+        preferred = req.host_port or int(compose_env["HOST_PORT"])
+        host_port = _pick_free_host_port(preferred, docker_host)
+        compose_env["HOST_PORT"] = str(host_port)
+
     body = InstallAppRequest(
         app_name=req.app_name,
         app_version=req.app_version,
@@ -365,7 +401,7 @@ async def install_app_endpoint(
         mounts=entry.get("mounts", []),
         command=entry.get("command"),
         compose=entry.get("compose"),
-        compose_env=entry.get("compose_env") or {},
+        compose_env=compose_env,
         domain=req.domain,
         target_host=target_host,
         docker_host=docker_host,
@@ -375,7 +411,7 @@ async def install_app_endpoint(
         _run_install, install_id, org_id, project_id, task_trace_id, body, cfg_data_dir
     )
 
-    return {"install_id": str(install_id), "status": "installing"}
+    return {"install_id": str(install_id), "status": "installing", "host_port": host_port}
 
 
 @router.delete("/{install_id}", status_code=status.HTTP_204_NO_CONTENT)

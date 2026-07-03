@@ -9,7 +9,11 @@ from typing import Any
 
 import pytest
 
-from aegis.server.api.routers.apps import InstallAppRequest, _compose_install
+from aegis.server.api.routers.apps import (
+    InstallAppRequest,
+    _compose_install,
+    _pick_free_host_port,
+)
 
 COMPOSE = """services:
   db:
@@ -62,6 +66,29 @@ def test_compose_install_materializes_and_generates_secrets(
     assert len(calls) == 1
     assert calls[0]["pull"] == "missing"
     assert calls[0]["project_name"] == "demo"
+
+
+def test_pick_free_host_port_skips_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    class R:
+        stdout = "0.0.0.0:18090->80/tcp\n:::18091->80/tcp, 0.0.0.0:18091->80/tcp\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    # 18090 and 18091 are taken -> next free is 18092.
+    assert _pick_free_host_port(18090, "unix:///var/run/docker.sock") == 18092
+    # a free preferred port is returned as-is.
+    assert _pick_free_host_port(18099, "unix:///var/run/docker.sock") == 18099
+
+
+def test_pick_free_host_port_falls_back_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    def boom(*a: object, **k: object) -> None:
+        raise OSError("docker missing")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert _pick_free_host_port(18090, "unix:///var/run/docker.sock") == 18090
 
 
 def test_compose_install_env_stable_across_reinstall(
