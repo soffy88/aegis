@@ -51,7 +51,7 @@ class InviteInfoResponse(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
-    password: str = Field(..., min_length=12)
+    password: str = Field(..., min_length=8)
     display_name: str | None = None
 
 

@@ -151,7 +151,7 @@ class AegisSettings(BaseSettings):
     )
 
     # === Password policy (M1 relaxed, M2 tighten) ===
-    password_min_length: int = 12
+    password_min_length: int = 8
 
     # === Secrets vault ===
     secrets_master_key: str = Field(
