@@ -95,6 +95,62 @@ async def ingest_traces(
     return {"accepted": len(rows)}
 
 
+@ingest_router.post("/rum")
+async def ingest_rum(request: Request) -> dict[str, str]:
+    """RUM beacon ingest — a browser snippet POSTs page-load timing here."""
+    b = await request.json()
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            """INSERT INTO aegis_rum (app, page, load_ms, ttfb_ms, fcp_ms, ua)
+               VALUES ($1,$2,$3,$4,$5,$6)""",
+            str(b.get("app") or "web")[:120],
+            str(b.get("page") or "/")[:300],
+            _num(b.get("load_ms")),
+            _num(b.get("ttfb_ms")),
+            _num(b.get("fcp_ms")),
+            str(b.get("ua") or "")[:300] or None,
+        )
+    return {"status": "ok"}
+
+
+def _num(v: Any) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/rum")
+async def rum_metrics(
+    org_id: uuid.UUID,
+    minutes: int = Query(default=60, ge=1, le=1440),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """Real-user page-load metrics per page: sample count, p50/p95 load (ms)."""
+    rows = await conn.fetch(
+        """
+        SELECT app, page, count(*) AS views,
+               percentile_disc(0.5) WITHIN GROUP (ORDER BY load_ms)  AS p50,
+               percentile_disc(0.95) WITHIN GROUP (ORDER BY load_ms) AS p95
+          FROM aegis_rum
+         WHERE ingested_at > now() - ($1 || ' minutes')::interval AND load_ms IS NOT NULL
+         GROUP BY app, page ORDER BY views DESC LIMIT 100
+        """,
+        str(minutes),
+    )
+    return [
+        {
+            "app": r["app"],
+            "page": r["page"],
+            "views": r["views"],
+            "p50_ms": round(r["p50"] or 0, 1),
+            "p95_ms": round(r["p95"] or 0, 1),
+        }
+        for r in rows
+    ]
+
+
 @router.get("/services")
 async def services(
     org_id: uuid.UUID,
@@ -209,6 +265,67 @@ async def trace_detail(
             }
             for r in rows
         ],
+    }
+
+
+@router.get("/rca")
+async def root_cause(
+    org_id: uuid.UUID,
+    service: str = Query(..., description="the impacted service"),
+    minutes: int = Query(default=60, ge=1, le=1440),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Deterministic, topology-driven root-cause ranking: walk the dependency
+    graph downstream of *service* and rank each reachable service by error rate.
+    The likeliest root is the deepest downstream service that is itself erroring."""
+    edges = await conn.fetch(
+        """SELECT DISTINCT p.service AS src, c.service AS dst
+             FROM aegis_spans c JOIN aegis_spans p ON c.parent_span_id = p.span_id
+            WHERE c.ingested_at > now() - ($1 || ' minutes')::interval AND c.service <> p.service""",
+        str(minutes),
+    )
+    graph: dict[str, list[str]] = {}
+    for e in edges:
+        graph.setdefault(e["src"], []).append(e["dst"])
+
+    # BFS downstream from the impacted service, tracking depth.
+    depth: dict[str, int] = {service: 0}
+    queue = [service]
+    while queue:
+        cur = queue.pop(0)
+        for nxt in graph.get(cur, []):
+            if nxt not in depth:
+                depth[nxt] = depth[cur] + 1
+                queue.append(nxt)
+
+    err = await conn.fetch(
+        """SELECT service,
+                  (sum(CASE WHEN status_code=2 THEN 1 ELSE 0 END)::float / count(*)) * 100 AS error_pct,
+                  count(*) AS calls
+             FROM aegis_spans
+            WHERE ingested_at > now() - ($1 || ' minutes')::interval AND service = ANY($2::text[])
+            GROUP BY service""",
+        str(minutes),
+        list(depth.keys()),
+    )
+    cand = [
+        {
+            "service": r["service"],
+            "depth": depth.get(r["service"], 0),
+            "error_pct": round(r["error_pct"], 2),
+            "calls": r["calls"],
+            # deeper + more errors ⇒ likelier root cause
+            "score": round(r["error_pct"] * (1 + depth.get(r["service"], 0)), 2),
+        }
+        for r in err
+        if r["error_pct"] > 0
+    ]
+    cand.sort(key=lambda c: c["score"], reverse=True)
+    return {
+        "impacted": service,
+        "likely_root": cand[0]["service"] if cand else None,
+        "candidates": cand,
     }
 
 

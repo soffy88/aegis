@@ -905,6 +905,49 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "040_rum",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_rum (
+            app TEXT NOT NULL,
+            page TEXT NOT NULL,
+            load_ms DOUBLE PRECISION,
+            ttfb_ms DOUBLE PRECISION,
+            fcp_ms DOUBLE PRECISION,
+            ua TEXT,
+            ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_rum_app_time ON aegis_rum (app, ingested_at DESC);
+        """,
+    ),
+    (
+        "041_notification_channels",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_notification_channels (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,          -- slack | discord | telegram | webhook
+            config JSONB NOT NULL,       -- {url} or {bot_token, chat_id}
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        """,
+    ),
+    (
+        "042_status_components",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_status_components (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'operational',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        """,
+    ),
 ]
 
 

@@ -341,6 +341,8 @@ class AegisSettings(BaseSettings):
     telemetry_ingest_key: str = Field(default="")
     # Loki base URL for the log-query page (e.g. http://loki:3100). Empty = disabled.
     loki_url: str = Field(default="")
+    pyroscope_url: str = Field(default="")
+    kubeconfig: str = Field(default="", description="Path to a kubeconfig file for the K8s viewer")
 
     # WebDAV remote-backup target (Nextcloud / Synology / any WebDAV server).
     backup_webdav_url: str = Field(default="", description="Base WebDAV URL, e.g. https://host/dav")

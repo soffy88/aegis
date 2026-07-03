@@ -2245,5 +2245,51 @@
     "compose_env": {
       "HOST_PORT": "4318"
     }
+  },
+  {
+    "slug": "pyroscope",
+    "name": "Grafana Pyroscope",
+    "description": "持续剖析(CPU/内存火焰图)。应用需接 Pyroscope SDK 上报 profile。",
+    "icon": "🔥",
+    "version": "latest",
+    "category": "Monitoring",
+    "ports": [
+      {
+        "container_port": 4040,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "image": "grafana/pyroscope:latest",
+    "env": [],
+    "mounts": [
+      {
+        "target": "/data",
+        "volume_name": "pyroscope-data"
+      }
+    ]
+  },
+  {
+    "slug": "trivy",
+    "name": "Trivy Server",
+    "description": "镜像/文件系统漏洞(CVE)扫描服务端。",
+    "icon": "🛡️",
+    "version": "latest",
+    "category": "Security",
+    "ports": [
+      {
+        "container_port": 4954,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "image": "aquasec/trivy:latest",
+    "env": [
+      {
+        "name": "TRIVY_LISTEN",
+        "value": "0.0.0.0:4954"
+      }
+    ],
+    "mounts": []
   }
 ]
