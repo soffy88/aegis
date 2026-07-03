@@ -56,4 +56,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3).read()" || exit 1
 
-CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Single worker: the app is async (I/O-bound) and, more importantly, its FastAPI
+# lifespan starts the background orchestration (metrics scrape, alert eval,
+# autoheal, anomaly scan, recording). With >1 worker that lifespan runs in every
+# worker, so those singletons double-run (double metric writes, risk of double
+# alert/autoheal firing) — and each worker is a full ~500MB copy of the heavy
+# ML/document stack. One worker is correct here and ~halves memory.
+CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
