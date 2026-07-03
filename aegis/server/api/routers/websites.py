@@ -47,8 +47,9 @@ _EDGE_NET = "helios-net"  # Caddy's network — website containers join it for n
 
 
 def _caddy_add_domain(name: str, domain: str) -> None:
-    """Prepend a Host-matched route on Caddy's main server → the website container.
-    HTTPS is provided by the Cloudflare edge once the domain routes through the tunnel."""
+    """Bind *domain* to the website container on Caddy's :443 'sites' server so
+    Caddy serves it and auto-issues a Let's Encrypt cert (the domain's DNS must
+    point at this host with 80/443 open)."""
     import httpx  # noqa: PLC0415
 
     route = {
@@ -57,8 +58,13 @@ def _caddy_add_domain(name: str, domain: str) -> None:
         "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": f"website-{name}:80"}]}],
         "terminal": True,
     }
-    r = httpx.put(f"{_CADDY_ADMIN}/config/apps/http/servers/srv0/routes/0", json=route, timeout=8)
-    r.raise_for_status()
+    base = f"{_CADDY_ADMIN}/config/apps/http/servers/sites"
+    r = httpx.get(base, timeout=8)
+    if r.status_code != 200 or not r.json():
+        # Create the sites server (Caddy adds the :80 ACME listener itself).
+        httpx.put(base, json={"listen": [":443"], "routes": [route]}, timeout=8).raise_for_status()
+    else:
+        httpx.put(f"{base}/routes/0", json=route, timeout=8).raise_for_status()
 
 
 def _caddy_del_domain(name: str) -> None:
@@ -160,8 +166,8 @@ async def create_website(
             _caddy_add_domain(req.name, req.domain)
             domain_bound = True
             https = (
-                "HTTPS is served automatically by Cloudflare once this domain's DNS "
-                "points at the tunnel and it's added as a tunnel public hostname."
+                "Caddy auto-issues a Let's Encrypt certificate — point the domain's "
+                "A/AAAA record at this host with ports 80/443 open."
             )
         except Exception as exc:  # noqa: BLE001
             https = f"domain route failed: {exc}"

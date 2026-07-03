@@ -169,6 +169,11 @@ services:
     image: caddy:2.11.4-alpine
     container_name: aegis-caddy
     restart: unless-stopped
+    ports:
+      # Public 80/443 for direct-domain websites (Caddy auto-HTTPS via Let's Encrypt).
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - aegis-caddy-data:/data

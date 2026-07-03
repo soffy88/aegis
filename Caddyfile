@@ -1,6 +1,10 @@
 {
     admin 0.0.0.0:2019
-    auto_https off
+    # Automatic HTTPS (Let's Encrypt) is enabled for host-matched website routes
+    # added at runtime via the admin API. The :8080 tunnel entry below has no
+    # hostname, so nothing here triggers cert issuance for the console itself
+    # (that stays behind the Cloudflare edge).
+    email soffy88@gmail.com
 }
 
 # Mneme API
