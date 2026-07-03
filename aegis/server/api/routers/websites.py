@@ -39,6 +39,35 @@ class WebsiteRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=40)
     root_dir: str = Field(..., min_length=1)
     php: bool = False
+    domain: str | None = None
+
+
+_CADDY_ADMIN = "http://aegis-caddy:2019"
+_EDGE_NET = "helios-net"  # Caddy's network — website containers join it for name routing
+
+
+def _caddy_add_domain(name: str, domain: str) -> None:
+    """Prepend a Host-matched route on Caddy's main server → the website container.
+    HTTPS is provided by the Cloudflare edge once the domain routes through the tunnel."""
+    import httpx  # noqa: PLC0415
+
+    route = {
+        "@id": f"website-{name}",
+        "match": [{"host": [domain]}],
+        "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": f"website-{name}:80"}]}],
+        "terminal": True,
+    }
+    r = httpx.put(f"{_CADDY_ADMIN}/config/apps/http/servers/srv0/routes/0", json=route, timeout=8)
+    r.raise_for_status()
+
+
+def _caddy_del_domain(name: str) -> None:
+    import httpx  # noqa: PLC0415
+
+    try:
+        httpx.delete(f"{_CADDY_ADMIN}/id/website-{name}", timeout=8)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.get("")
@@ -53,7 +82,7 @@ async def list_websites(
             "--filter",
             f"label={_LABEL}",
             "--format",
-            "{{.Names}}\t{{.Status}}\t{{.Ports}}",
+            '{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label "aegis.website.domain"}}',
         ]
     )
     out = []
@@ -66,6 +95,7 @@ async def list_websites(
                     "container": parts[0],
                     "status": parts[1] if len(parts) > 1 else "",
                     "ports": parts[2] if len(parts) > 2 else "",
+                    "domain": parts[3] if len(parts) > 3 and parts[3] else None,
                 }
             )
     return out
@@ -96,6 +126,7 @@ async def create_website(
     else:
         image, mount = "nginx:alpine", "/usr/share/nginx/html"
 
+    _caddy_del_domain(req.name)
     _dcmd(["rm", "-f", cname])
     run = _dcmd(
         [
@@ -105,8 +136,12 @@ async def create_website(
             cname,
             "--restart",
             "unless-stopped",
+            "--network",
+            _EDGE_NET,
             "--label",
             f"{_LABEL}=true",
+            "--label",
+            f"{_LABEL}.domain={req.domain or ''}",
             "-v",
             f"{root}:{mount}:ro",
             "-p",
@@ -117,7 +152,29 @@ async def create_website(
     )
     if run.returncode != 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, (run.stderr or "docker run failed")[:300])
-    return {"name": req.name, "container": cname, "port": port, "url": f"http://<host>:{port}"}
+
+    domain_bound = False
+    https = None
+    if req.domain:
+        try:
+            _caddy_add_domain(req.name, req.domain)
+            domain_bound = True
+            https = (
+                "HTTPS is served automatically by Cloudflare once this domain's DNS "
+                "points at the tunnel and it's added as a tunnel public hostname."
+            )
+        except Exception as exc:  # noqa: BLE001
+            https = f"domain route failed: {exc}"
+
+    return {
+        "name": req.name,
+        "container": cname,
+        "port": port,
+        "url": f"http://<host>:{port}",
+        "domain": req.domain,
+        "domain_bound": domain_bound,
+        "https": https,
+    }
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
@@ -128,4 +185,5 @@ async def delete_website(
 ) -> None:
     if not _SLUG.match(name):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid name")
+    _caddy_del_domain(name)
     _dcmd(["rm", "-f", f"website-{name}"])
