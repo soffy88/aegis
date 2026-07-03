@@ -1049,5 +1049,699 @@
         "volume_name": "libretranslate-models"
       }
     ]
+  },
+  {
+    "slug": "filebrowser",
+    "name": "File Browser",
+    "description": "网页版文件管理器：上传/下载/预览/分享，可绑定任意目录。",
+    "icon": "🗂️",
+    "version": "latest",
+    "category": "Storage",
+    "image": "filebrowser/filebrowser:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/srv",
+        "volume_name": "filebrowser-data"
+      },
+      {
+        "target": "/database",
+        "volume_name": "filebrowser-db"
+      }
+    ]
+  },
+  {
+    "slug": "it-tools",
+    "name": "IT-Tools",
+    "description": "开发者常用工具集合：编解码/格式化/生成/换算等 60+ 工具，纯前端。",
+    "icon": "🧰",
+    "version": "latest",
+    "category": "Development",
+    "image": "corentinth/it-tools:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "memos",
+    "name": "Memos",
+    "description": "轻量自托管备忘/笔记（Markdown），SQLite 单容器。",
+    "icon": "📝",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "neosmemo/memos:stable",
+    "ports": [
+      {
+        "container_port": 5230,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/var/opt/memos",
+        "volume_name": "memos-data"
+      }
+    ]
+  },
+  {
+    "slug": "excalidraw",
+    "name": "Excalidraw",
+    "description": "手绘风格白板/画图工具。",
+    "icon": "✏️",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "excalidraw/excalidraw:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "drawio",
+    "name": "Draw.io",
+    "description": "流程图/架构图/思维导图绘制。",
+    "icon": "📐",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "jgraph/drawio:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "cyberchef",
+    "name": "CyberChef",
+    "description": "数据处理瑞士军刀：编码/加解密/正则/取证。",
+    "icon": "🔬",
+    "version": "latest",
+    "category": "Development",
+    "image": "mpepping/cyberchef:latest",
+    "ports": [
+      {
+        "container_port": 8000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "convertx",
+    "name": "ConvertX",
+    "description": "自托管文件格式转换（文档/图片/音视频等 1000+ 格式）。",
+    "icon": "🔀",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "ghcr.io/c4illin/convertx:latest",
+    "ports": [
+      {
+        "container_port": 3000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/data",
+        "volume_name": "convertx-data"
+      }
+    ]
+  },
+  {
+    "slug": "kkfileview",
+    "name": "kkFileView",
+    "description": "在线文档预览：Office/PDF/图片/压缩包等 100+ 格式。",
+    "icon": "👁️",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "keking/kkfileview:latest",
+    "ports": [
+      {
+        "container_port": 8012,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "dashy",
+    "name": "Dashy",
+    "description": "高度可定制的自托管导航/仪表盘。",
+    "icon": "🎛️",
+    "version": "latest",
+    "category": "Management",
+    "image": "lissy93/dashy:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/user-data",
+        "volume_name": "dashy-config"
+      }
+    ]
+  },
+  {
+    "slug": "homepage",
+    "name": "Homepage",
+    "description": "现代化服务导航页，支持服务状态与小组件。",
+    "icon": "🏠",
+    "version": "latest",
+    "category": "Management",
+    "image": "ghcr.io/gethomepage/homepage:latest",
+    "ports": [
+      {
+        "container_port": 3000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/config",
+        "volume_name": "homepage-config"
+      }
+    ]
+  },
+  {
+    "slug": "glance",
+    "name": "Glance",
+    "description": "把订阅/服务/仪表盘聚合到一页。",
+    "icon": "📋",
+    "version": "latest",
+    "category": "Management",
+    "image": "glanceapp/glance:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/config",
+        "volume_name": "glance-config"
+      }
+    ]
+  },
+  {
+    "slug": "heimdall",
+    "name": "Heimdall",
+    "description": "应用导航起始页。",
+    "icon": "🚪",
+    "version": "latest",
+    "category": "Management",
+    "image": "lscr.io/linuxserver/heimdall:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/config",
+        "volume_name": "heimdall-config"
+      }
+    ]
+  },
+  {
+    "slug": "navidrome",
+    "name": "Navidrome",
+    "description": "自托管音乐流媒体服务器（Subsonic 兼容）。",
+    "icon": "🎵",
+    "version": "latest",
+    "category": "Media",
+    "image": "deluan/navidrome:latest",
+    "ports": [
+      {
+        "container_port": 4533,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/data",
+        "volume_name": "navidrome-data"
+      },
+      {
+        "target": "/music",
+        "volume_name": "navidrome-music"
+      }
+    ]
+  },
+  {
+    "slug": "komga",
+    "name": "Komga",
+    "description": "漫画/电子书媒体服务器。",
+    "icon": "📚",
+    "version": "latest",
+    "category": "Media",
+    "image": "gotson/komga:latest",
+    "ports": [
+      {
+        "container_port": 25600,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/config",
+        "volume_name": "komga-config"
+      }
+    ]
+  },
+  {
+    "slug": "calibre-web",
+    "name": "Calibre-Web",
+    "description": "电子书库网页阅读/管理。",
+    "icon": "📖",
+    "version": "latest",
+    "category": "Media",
+    "image": "lscr.io/linuxserver/calibre-web:latest",
+    "ports": [
+      {
+        "container_port": 8083,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/config",
+        "volume_name": "calibre-web-config"
+      }
+    ]
+  },
+  {
+    "slug": "audiobookshelf",
+    "name": "Audiobookshelf",
+    "description": "有声书/播客服务器。",
+    "icon": "🎧",
+    "version": "latest",
+    "category": "Media",
+    "image": "ghcr.io/advplyr/audiobookshelf:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/config",
+        "volume_name": "audiobookshelf-config"
+      },
+      {
+        "target": "/metadata",
+        "volume_name": "audiobookshelf-metadata"
+      },
+      {
+        "target": "/audiobooks",
+        "volume_name": "audiobookshelf-audiobooks"
+      }
+    ]
+  },
+  {
+    "slug": "koodo-reader",
+    "name": "Koodo Reader",
+    "description": "网页电子书阅读器（epub/pdf/mobi 等）。",
+    "icon": "📕",
+    "version": "latest",
+    "category": "Media",
+    "image": "ghcr.io/troyeguo/koodo-reader:master",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/root/.config/Koodo-Reader",
+        "volume_name": "koodo-reader-data"
+      }
+    ]
+  },
+  {
+    "slug": "freshrss",
+    "name": "FreshRSS",
+    "description": "自托管 RSS 阅读器，SQLite 单容器。",
+    "icon": "📰",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "freshrss/freshrss:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/var/www/FreshRSS/data",
+        "volume_name": "freshrss-data"
+      }
+    ]
+  },
+  {
+    "slug": "rsshub",
+    "name": "RSSHub",
+    "description": "万物皆可 RSS，聚合各站更新为订阅源。",
+    "icon": "🔗",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "diygod/rsshub:latest",
+    "ports": [
+      {
+        "container_port": 1200,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "linkding",
+    "name": "Linkding",
+    "description": "极简自托管书签管理，SQLite。",
+    "icon": "🔖",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "sissbruecker/linkding:latest",
+    "ports": [
+      {
+        "container_port": 9090,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/etc/linkding/data",
+        "volume_name": "linkding-data"
+      }
+    ]
+  },
+  {
+    "slug": "archivebox",
+    "name": "ArchiveBox",
+    "description": "网页永久存档（保存快照/PDF/截图）。",
+    "icon": "🗃️",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "archivebox/archivebox:latest",
+    "ports": [
+      {
+        "container_port": 8000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/data",
+        "volume_name": "archivebox-data"
+      }
+    ]
+  },
+  {
+    "slug": "gotify",
+    "name": "Gotify",
+    "description": "自托管消息推送服务器 + App。",
+    "icon": "📣",
+    "version": "latest",
+    "category": "Messaging",
+    "image": "gotify/server:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/data",
+        "volume_name": "gotify-data"
+      }
+    ]
+  },
+  {
+    "slug": "alist",
+    "name": "AList",
+    "description": "聚合多网盘的文件列表程序，SQLite。",
+    "icon": "☁️",
+    "version": "latest",
+    "category": "Storage",
+    "image": "xhofe/alist:latest",
+    "ports": [
+      {
+        "container_port": 5244,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/opt/alist/data",
+        "volume_name": "alist-data"
+      }
+    ]
+  },
+  {
+    "slug": "code-server",
+    "name": "code-server",
+    "description": "浏览器里的 VS Code。",
+    "icon": "💻",
+    "version": "latest",
+    "category": "Development",
+    "image": "codercom/code-server:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/home/coder",
+        "volume_name": "code-server-data"
+      }
+    ]
+  },
+  {
+    "slug": "jupyter",
+    "name": "Jupyter Notebook",
+    "description": "交互式 Python/数据科学笔记本。",
+    "icon": "📓",
+    "version": "latest",
+    "category": "Development",
+    "image": "jupyter/scipy-notebook:latest",
+    "ports": [
+      {
+        "container_port": 8888,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/home/jovyan/work",
+        "volume_name": "jupyter-work"
+      }
+    ]
+  },
+  {
+    "slug": "dockge",
+    "name": "Dockge",
+    "description": "docker-compose 可视化管理面板。",
+    "icon": "🐳",
+    "version": "latest",
+    "category": "Management",
+    "image": "louislam/dockge:latest",
+    "ports": [
+      {
+        "container_port": 5001,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/app/data",
+        "volume_name": "dockge-data"
+      }
+    ]
+  },
+  {
+    "slug": "changedetection",
+    "name": "changedetection.io",
+    "description": "网页变更监控，有变化即通知。",
+    "icon": "🔎",
+    "version": "latest",
+    "category": "Automation",
+    "image": "ghcr.io/dgtlmoon/changedetection.io:latest",
+    "ports": [
+      {
+        "container_port": 5000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/datastore",
+        "volume_name": "changedetection-datastore"
+      }
+    ]
+  },
+  {
+    "slug": "ddns-go",
+    "name": "DDNS-Go",
+    "description": "自动把动态公网 IP 更新到 DNS。",
+    "icon": "🌍",
+    "version": "latest",
+    "category": "Network",
+    "image": "jeessy/ddns-go:latest",
+    "ports": [
+      {
+        "container_port": 9876,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/root",
+        "volume_name": "ddns-go-data"
+      }
+    ]
+  },
+  {
+    "slug": "beszel",
+    "name": "Beszel",
+    "description": "轻量服务器资源监控面板。",
+    "icon": "📈",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "henrygd/beszel:latest",
+    "ports": [
+      {
+        "container_port": 8090,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/beszel_data",
+        "volume_name": "beszel-data"
+      }
+    ]
+  },
+  {
+    "slug": "gatus",
+    "name": "Gatus",
+    "description": "自动化健康检查 + 状态页。",
+    "icon": "🟢",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "twinproduction/gatus:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/data",
+        "volume_name": "gatus-data"
+      }
+    ]
+  },
+  {
+    "slug": "netdata",
+    "name": "Netdata",
+    "description": "实时系统/容器指标监控。",
+    "icon": "⚡",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "netdata/netdata:latest",
+    "ports": [
+      {
+        "container_port": 19999,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
   }
 ]
