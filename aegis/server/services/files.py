@@ -205,3 +205,73 @@ def resolve_for_download(path: str) -> Path:
     if not p.is_file():
         raise FileNotFoundError(f"not a file: {path}")
     return p
+
+
+def change_mode(path: str, mode: str) -> dict[str, Any]:
+    """chmod a file/dir. *mode* is an octal string like '755' or '0o644'."""
+    p = _safe(path)
+    if not p.exists():
+        raise FileNotFoundError(f"not found: {path}")
+    try:
+        m = int(mode.replace("0o", ""), 8)
+    except ValueError as exc:
+        raise ValueError("mode must be octal, e.g. 755") from exc
+    p.chmod(m)
+    return {"path": str(p), "mode": oct(p.stat().st_mode & 0o777)}
+
+
+def compress(paths: list[str], dest: str) -> dict[str, Any]:
+    """Create a .zip or .tar.gz archive at *dest* from the given paths."""
+    import tarfile as _tar  # noqa: PLC0415
+    import zipfile as _zip  # noqa: PLC0415
+
+    dp = _safe(dest)
+    srcs = [_safe(x) for x in paths]
+    for s in srcs:
+        if not s.exists():
+            raise FileNotFoundError(f"not found: {s}")
+    if dest.endswith(".zip"):
+        with _zip.ZipFile(dp, "w", _zip.ZIP_DEFLATED) as z:
+            for s in srcs:
+                if s.is_dir():
+                    for f in s.rglob("*"):
+                        if f.is_file():
+                            z.write(f, f.relative_to(s.parent))
+                else:
+                    z.write(s, s.name)
+    else:
+        with _tar.open(dp, "w:gz") as t:
+            for s in srcs:
+                t.add(str(s), arcname=s.name)
+    return {"path": str(dp), "size": dp.stat().st_size}
+
+
+def extract(path: str, dest_dir: str) -> dict[str, Any]:
+    """Extract a .zip or .tar/.tar.gz into *dest_dir*, guarding against
+    zip-slip / tar-slip (members escaping the destination)."""
+    import tarfile as _tar  # noqa: PLC0415
+    import zipfile as _zip  # noqa: PLC0415
+
+    p = _safe(path)
+    d = _safe(dest_dir)
+    if not p.is_file():
+        raise FileNotFoundError(f"not a file: {path}")
+    d.mkdir(parents=True, exist_ok=True)
+    root = d.resolve()
+
+    def _inside(name: str) -> bool:
+        return str((d / name).resolve()).startswith(str(root))
+
+    if str(p).endswith(".zip"):
+        with _zip.ZipFile(p) as z:
+            for name in z.namelist():
+                if not _inside(name):
+                    raise PathNotAllowed(f"archive member escapes destination: {name}")
+            z.extractall(d)
+    else:
+        with _tar.open(p) as t:
+            for member in t.getmembers():
+                if not _inside(member.name):
+                    raise PathNotAllowed(f"archive member escapes destination: {member.name}")
+            t.extractall(d)  # noqa: S202 — members validated above
+    return {"path": str(d)}

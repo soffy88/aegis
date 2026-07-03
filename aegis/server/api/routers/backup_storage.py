@@ -23,11 +23,20 @@ async def status(
     from aegis.server.services import remote_backup  # noqa: PLC0415
 
     cfg = get_settings()
-    conn = remote_backup.test_connection(cfg)
+    s3 = remote_backup.test_connection(cfg)
+    dav = remote_backup.test_webdav(cfg)
     return {
-        "configured": remote_backup.is_configured(cfg),
-        "bucket": cfg.backup_s3_bucket or None,
-        "endpoint": cfg.backup_s3_endpoint_url or None,
-        "reachable": conn["ok"],
-        "detail": conn["detail"],
+        "s3": {
+            "configured": remote_backup.is_configured(cfg),
+            "bucket": cfg.backup_s3_bucket or None,
+            "endpoint": cfg.backup_s3_endpoint_url or None,
+            "reachable": s3["ok"],
+            "detail": s3["detail"],
+        },
+        "webdav": {
+            "configured": remote_backup.webdav_configured(cfg),
+            "url": cfg.backup_webdav_url or None,
+            "reachable": dav["ok"],
+            "detail": dav["detail"],
+        },
     }

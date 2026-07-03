@@ -68,6 +68,21 @@ class RenameRequest(BaseModel):
     dst: str
 
 
+class ChmodRequest(BaseModel):
+    path: str
+    mode: str
+
+
+class CompressRequest(BaseModel):
+    paths: list[str]
+    dest: str
+
+
+class ExtractRequest(BaseModel):
+    path: str
+    dest_dir: str
+
+
 @router.get("/roots")
 async def list_roots(
     org_id: UUID,
@@ -175,5 +190,41 @@ async def delete_file(
 ) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(filesvc.delete_path, path)
+    except Exception as exc:
+        raise _map(exc) from exc
+
+
+@router.post("/chmod")
+async def chmod_file(
+    org_id: UUID,
+    body: ChmodRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(filesvc.change_mode, body.path, body.mode)
+    except Exception as exc:
+        raise _map(exc) from exc
+
+
+@router.post("/compress")
+async def compress_files(
+    org_id: UUID,
+    body: CompressRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(filesvc.compress, body.paths, body.dest)
+    except Exception as exc:
+        raise _map(exc) from exc
+
+
+@router.post("/extract")
+async def extract_archive(
+    org_id: UUID,
+    body: ExtractRequest,
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(filesvc.extract, body.path, body.dest_dir)
     except Exception as exc:
         raise _map(exc) from exc

@@ -53,3 +53,33 @@ def test_cert_probe_unreachable() -> None:
     r = _probe_cert("nonexistent.invalid.example.test")
     assert r["reachable"] is False
     assert "error" in r
+
+
+def test_files_compress_extract_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("AEGIS_FILE_MANAGER_ROOTS", str(tmp_path))
+    from aegis.server.runtime.config import get_settings
+
+    get_settings.cache_clear()
+    from aegis.server.services import files as f
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+    f.compress([str(src)], str(tmp_path / "o.zip"))
+    (tmp_path / "ex").mkdir()
+    f.extract(str(tmp_path / "o.zip"), str(tmp_path / "ex"))
+    assert (tmp_path / "ex" / "src" / "a.txt").read_text() == "x"
+    get_settings.cache_clear()
+
+
+def test_files_chmod(tmp_path, monkeypatch):
+    monkeypatch.setenv("AEGIS_FILE_MANAGER_ROOTS", str(tmp_path))
+    from aegis.server.runtime.config import get_settings
+
+    get_settings.cache_clear()
+    from aegis.server.services import files as f
+
+    p = tmp_path / "f.txt"
+    p.write_text("x")
+    assert f.change_mode(str(p), "600")["mode"] == "0o600"
+    get_settings.cache_clear()

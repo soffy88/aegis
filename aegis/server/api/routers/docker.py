@@ -230,6 +230,46 @@ async def container_logs(
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
 
+@router.get("/logs/search")
+async def search_logs(
+    org_id: UUID,
+    q: str = Query(default="", description="case-insensitive substring filter"),
+    containers: str = Query(default="", description="comma-separated names; empty = all running"),
+    tail: int = Query(default=200, ge=1, le=1000),
+    node_id: UUID | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Aggregate + search recent logs across multiple containers (self-hosted log
+    aggregation without an external Loki/ES stack)."""
+    from oprim import docker_container_list  # noqa: PLC0415
+
+    docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    names = [c.strip() for c in containers.split(",") if c.strip()]
+    if not names:
+        try:
+            lst = await asyncio.to_thread(docker_container_list, **_hostkw(docker_host))
+            names = [getattr(c, "name", None) for c in lst if getattr(c, "name", None)][:25]
+        except OprimError as exc:
+            raise HTTPException(status_code=_502, detail=str(exc)) from exc
+    ql = q.lower()
+    rows: list[dict[str, Any]] = []
+    for name in names[:25]:
+        try:
+            logs = await asyncio.to_thread(
+                docker_container_logs, container_id=name, lines=tail, **_hostkw(docker_host)
+            )
+        except Exception:  # noqa: BLE001 — skip containers we can't read
+            continue
+        for ll in logs:
+            d = ll.model_dump()
+            msg = str(d.get("message") or d.get("line") or "")
+            if not ql or ql in msg.lower():
+                rows.append({"container": name, "timestamp": d.get("timestamp"), "message": msg})
+    rows.sort(key=lambda r: r.get("timestamp") or "")
+    return {"total": len(rows), "lines": rows[-1000:]}
+
+
 @router.get("/containers/{container}/stats")
 async def container_stats(
     org_id: UUID,
@@ -463,6 +503,67 @@ async def exec_container(
         return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
+
+
+@router.post("/host-shell", status_code=status.HTTP_200_OK)
+async def ensure_host_shell(
+    org_id: UUID,
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, Any]:
+    """Ensure a privileged host-access helper container is running, then return it.
+
+    The container shares the host PID namespace and bind-mounts the host root at
+    /host, so the standard container terminal into it reaches the host (run
+    `chroot /host bash`). Powerful — gated on INSTALL_APP.
+    """
+    import subprocess  # noqa: PLC0415
+
+    name = "aegis-host-shell"
+    dh = get_settings().docker_host
+
+    def _ensure() -> None:
+        # Already running?
+        ps = subprocess.run(  # noqa: S603
+            ["docker", "-H", dh, "ps", "-q", "-f", f"name=^{name}$"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if ps.stdout.strip():
+            return
+        subprocess.run(["docker", "-H", dh, "rm", "-f", name], capture_output=True, check=False)  # noqa: S603, S607
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "docker",
+                "-H",
+                dh,
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--privileged",
+                "--pid=host",
+                "--network=host",
+                "-v",
+                "/:/host",
+                "--restart",
+                "unless-stopped",
+                "alpine:latest",
+                "sleep",
+                "infinity",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+
+    try:
+        await asyncio.to_thread(_ensure)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=_502, detail=f"host shell start failed: {exc}") from exc
+    return {"container": name, "hint": "chroot /host bash"}
 
 
 @router.websocket("/containers/{container_name}/terminal")

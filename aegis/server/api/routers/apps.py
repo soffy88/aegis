@@ -543,10 +543,11 @@ async def update_compose(
 async def backup_app_endpoint(
     org_id: uuid.UUID,
     install_id: uuid.UUID,
+    target: str = Query(default="s3", description="s3 | webdav"),
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
 ) -> dict[str, Any]:
-    """Tar the app's data directory and upload it to configured S3 storage."""
+    """Tar the app's data directory and upload it to S3 or WebDAV storage."""
     import datetime as _dt  # noqa: PLC0415
 
     from aegis.server.services import remote_backup  # noqa: PLC0415
@@ -557,12 +558,20 @@ async def backup_app_endpoint(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "App not found")
     cfg = get_settings()
-    if not remote_backup.is_configured(cfg):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "S3 backup storage is not configured")
+    fn = remote_backup.backup_app_webdav if target == "webdav" else remote_backup.backup_app
+    configured = (
+        remote_backup.webdav_configured(cfg)
+        if target == "webdav"
+        else remote_backup.is_configured(cfg)
+    )
+    if not configured:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"{target} backup storage is not configured"
+        )
     stamp = _dt.datetime.now(_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     try:
         return await asyncio.to_thread(
-            remote_backup.backup_app, str(org_id), row["app_name"], cfg, Path(cfg.data_dir), stamp
+            fn, str(org_id), row["app_name"], cfg, Path(cfg.data_dir), stamp
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(

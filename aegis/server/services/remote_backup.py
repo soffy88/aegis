@@ -54,6 +54,60 @@ def _tar_dir(src: Path) -> bytes:
     return buf.getvalue()
 
 
+def webdav_configured(cfg: Any) -> bool:
+    return bool(cfg.backup_webdav_url)
+
+
+def test_webdav(cfg: Any) -> dict[str, Any]:
+    if not webdav_configured(cfg):
+        return {"ok": False, "detail": "WebDAV backup storage is not configured"}
+    import httpx  # noqa: PLC0415
+
+    try:
+        auth = (cfg.backup_webdav_user, cfg.backup_webdav_password)
+        r = httpx.request(
+            "PROPFIND", cfg.backup_webdav_url, auth=auth, timeout=8, headers={"Depth": "0"}
+        )
+        ok = r.status_code < 400
+        return {"ok": ok, "detail": f"HTTP {r.status_code}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+
+
+def _webdav_upload(cfg: Any, rel_key: str, blob: bytes) -> str:
+    """PUT *blob* to {webdav_url}/{rel_key}, creating parent collections first."""
+    import httpx  # noqa: PLC0415
+
+    base = cfg.backup_webdav_url.rstrip("/")
+    auth = (cfg.backup_webdav_user, cfg.backup_webdav_password)
+    with httpx.Client(auth=auth, timeout=60) as client:
+        # MKCOL each parent directory (idempotent — 405/301 mean it exists).
+        parts = rel_key.split("/")[:-1]
+        acc = base
+        for seg in parts:
+            acc = f"{acc}/{seg}"
+            client.request("MKCOL", acc)
+        url = f"{base}/{rel_key}"
+        r = client.put(url, content=blob)
+        r.raise_for_status()
+    return url
+
+
+def backup_app_webdav(
+    org_id: str, app_name: str, cfg: Any, data_dir: Path, stamp: str
+) -> dict[str, Any]:
+    if not webdav_configured(cfg):
+        raise RuntimeError("WebDAV backup storage is not configured")
+    src = data_dir / "apps" / app_name
+    if not src.exists():
+        raise FileNotFoundError(f"no data directory for app '{app_name}' at {src}")
+    blob = _tar_dir(src)
+    rel = f"aegis/{org_id}/{app_name}/{stamp}.tar.gz"
+    url = _webdav_upload(cfg, rel, blob)
+    log.info("remote_backup webdav app=%s url=%s size=%d", app_name, url, len(blob))
+    return {"key": rel, "size_bytes": len(blob), "target": url}
+
+
 def backup_app(org_id: str, app_name: str, cfg: Any, data_dir: Path, stamp: str) -> dict[str, Any]:
     """Tar {data_dir}/apps/{app_name} and upload to
     s3://{bucket}/aegis/{org}/{app}/{stamp}.tar.gz. Returns {key, size_bytes, target}.

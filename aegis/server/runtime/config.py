@@ -336,6 +336,10 @@ class AegisSettings(BaseSettings):
     backup_local_dir: Path = Field(
         default=_UNSET_PATH, description="Local backup dir (default: data_dir/backups)"
     )
+    # WebDAV remote-backup target (Nextcloud / Synology / any WebDAV server).
+    backup_webdav_url: str = Field(default="", description="Base WebDAV URL, e.g. https://host/dav")
+    backup_webdav_user: str = Field(default="")
+    backup_webdav_password: str = Field(default="")
 
     @model_validator(mode="after")
     def resolve_backup_local_dir(self) -> AegisSettings:

@@ -2147,5 +2147,64 @@
         "volume_name": "trilium-data"
       }
     ]
+  },
+  {
+    "slug": "jaeger",
+    "name": "Jaeger",
+    "description": "分布式链路追踪 UI + collector(all-in-one)。应用需接入 OpenTelemetry/Jaeger SDK 上报 span。",
+    "icon": "🔦",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "jaegertracing/all-in-one:latest",
+    "ports": [
+      {
+        "container_port": 16686,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [
+      {
+        "name": "COLLECTOR_OTLP_ENABLED",
+        "value": "true"
+      }
+    ],
+    "mounts": []
+  },
+  {
+    "slug": "grafana-tempo",
+    "name": "Grafana Tempo",
+    "description": "高扩展分布式追踪后端(OTLP 接收),配 Grafana 查询。",
+    "icon": "🌀",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "grafana/tempo:latest",
+    "ports": [
+      {
+        "container_port": 3200,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "loki",
+    "name": "Grafana Loki",
+    "description": "日志聚合后端(配 Promtail 采集 + Grafana 查询)。轻量级日志检索另见内置「日志」页。",
+    "icon": "📜",
+    "version": "latest",
+    "category": "Monitoring",
+    "image": "grafana/loki:latest",
+    "ports": [
+      {
+        "container_port": 3100,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": []
   }
 ]
