@@ -251,10 +251,42 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # === 可观测性后端 (backend 通过 AEGIS_LOKI_URL / AEGIS_PYROSCOPE_URL 直连) ===
+  aegis-loki:
+    image: grafana/loki:2.9.8
+    container_name: aegis-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - helios-net
+    volumes:
+      - aegis-loki-data:/loki
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  aegis-pyroscope:
+    image: grafana/pyroscope:1.9.2
+    container_name: aegis-pyroscope
+    restart: unless-stopped
+    networks:
+      - helios-net
+    volumes:
+      - aegis-pyroscope-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   aegis-caddy-data:
   aegis-caddy-config:
   aegis-data:          # 备份/向量库/Runbook YAML 持久化
+  aegis-loki-data:     # Loki 日志块存储
+  aegis-pyroscope-data: # Pyroscope profile 存储
 
 networks:
   helios-net:
