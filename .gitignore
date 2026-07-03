@@ -32,3 +32,4 @@ aegis-poc/
 aegis-watch/
 # 内部 handoff 文档
 handoff_section6_updated.md
+.buildbin/

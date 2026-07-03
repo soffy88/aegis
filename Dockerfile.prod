@@ -26,6 +26,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
+# Docker CLI + compose plugin — required for multi-container (compose) app
+# installs, which shell out to `docker compose` against the mounted socket.
+# Staged into .buildbin from the host by scripts/stage-docker-cli.sh.
+COPY .buildbin/docker /usr/local/bin/docker
+COPY .buildbin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+RUN chmod +x /usr/local/bin/docker /usr/local/lib/docker/cli-plugins/docker-compose && \
+    docker --version && docker compose version
+
 COPY --from=builder /app/.venv ./.venv
 COPY aegis ./aegis
 COPY pyproject.toml ./

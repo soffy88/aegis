@@ -8,9 +8,19 @@ FROM python:3.14-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 ca-certificates libmagic1 git && \
+    libpq5 ca-certificates libmagic1 git curl && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
+
+# Docker CLI + compose plugin — the backend talks to the mounted docker.sock, and
+# oprim.docker_compose_up shells out to `docker compose`. Multi-container app
+# installs need this binary present (single-container installs use the SDK).
+# Binaries are staged into .buildbin by the deploy step (copied from the host) to
+# avoid a slow download at build time.
+COPY .buildbin/docker /usr/local/bin/docker
+COPY .buildbin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+RUN chmod +x /usr/local/bin/docker /usr/local/lib/docker/cli-plugins/docker-compose && \
+    docker --version && docker compose version
 
 # Reuse the existing .venv (has all private deps already installed)
 COPY --from=base /app/.venv ./.venv

@@ -57,6 +57,10 @@ class InstallAppRequest(BaseModel):
     domain: str | None = None
     target_host: str = "localhost"
     docker_host: str = "unix:///var/run/docker.sock"
+    # Multi-container apps: a docker-compose YAML shipped in the catalog entry.
+    # When set, install runs `docker compose up` instead of a single container.
+    compose: str | None = None
+    compose_env: dict[str, str] = {}
 
 
 def _build_container_spec(body: InstallAppRequest) -> dict[str, Any]:
@@ -84,6 +88,47 @@ def _build_container_spec(body: InstallAppRequest) -> dict[str, Any]:
     }
 
 
+def _compose_install(body: InstallAppRequest, data_dir: Path | None, docker_host: str) -> None:
+    """Materialize a multi-container app's compose file + .env under the data dir
+    and bring it up. Images are pulled on demand (compose pull='missing')."""
+    import secrets  # noqa: PLC0415
+
+    from oprim import docker_compose_up  # noqa: PLC0415
+
+    base = (data_dir or Path("/data/aegis")) / "apps" / body.app_name
+    base.mkdir(parents=True, exist_ok=True)
+    compose_path = base / "docker-compose.yml"
+    compose_path.write_text(body.compose or "")
+
+    # .env is written once and reused so generated secrets stay stable across
+    # restarts/re-installs. Sentinel values get freshly generated on first write:
+    #   __RANDOM__     -> url-safe token (generic secret / password)
+    #   __HEX32__      -> 32 hex chars (e.g. Laravel-style APP_KEY without prefix)
+    #   __APP_KEY_B64__-> "base64:"+b64(32 bytes) (Laravel/BookStack APP_KEY)
+    import base64  # noqa: PLC0415
+
+    def _gen(v: str) -> str:
+        if v == "__RANDOM__":
+            return secrets.token_urlsafe(24)
+        if v == "__HEX32__":
+            return secrets.token_hex(16)
+        if v == "__APP_KEY_B64__":
+            return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
+        return v
+
+    env_path = base / ".env"
+    if not env_path.exists():
+        lines = [f"{k}={_gen(v)}" for k, v in (body.compose_env or {}).items()]
+        env_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+
+    docker_compose_up(
+        compose_file=str(compose_path),
+        project_name=body.app_name,
+        pull="missing",
+        docker_host=docker_host,
+    )
+
+
 async def _run_install(
     install_id: uuid.UUID,
     org_id: uuid.UUID,
@@ -103,45 +148,55 @@ async def _run_install(
     dh = body.docker_host
 
     try:
-        from oprim import (  # noqa: PLC0415
-            docker_container_create,
-            docker_container_start,
-            docker_image_pull,
-        )
-
-        image = body.image_to_pull
-        if not image:
-            raise RuntimeError("no container image resolved for this app")
-
-        # 1. Pull the image (best-effort — create can still use a local copy).
-        try:
-            base, _, tag = image.partition(":")
-            await asyncio.to_thread(
-                docker_image_pull, image=base, tag=tag or "latest", docker_host=dh
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("install_pull_warn image=%s err=%s", image, exc)
-
-        spec = _build_container_spec(body)
-        # 2. Create the container (on re-install the name exists → just start it).
-        try:
-            await asyncio.to_thread(
+        if body.compose:
+            # Multi-container app: materialize compose + .env and bring it up.
+            await asyncio.to_thread(_compose_install, body, data_dir, dh)
+            final_status = "completed"
+            domain = body.domain
+        else:
+            from oprim import (  # noqa: PLC0415
                 docker_container_create,
-                image=image,
-                name=body.app_name,
-                labels={"aegis.managed": "true", "aegis.app": body.app_name},
-                restart_policy="unless-stopped",
-                network=cfg.app_install_network or None,
-                docker_host=dh,
-                **spec,
+                docker_container_start,
+                docker_image_pull,
             )
-        except Exception as exc:  # noqa: BLE001 — usually "name already in use"
-            log.info("install_create_skipped app=%s (%s) — starting existing", body.app_name, exc)
 
-        # 3. Start it.
-        await asyncio.to_thread(docker_container_start, container_id=body.app_name, docker_host=dh)
-        final_status = "completed"
-        domain = body.domain
+            image = body.image_to_pull
+            if not image:
+                raise RuntimeError("no container image resolved for this app")
+
+            # 1. Pull the image (best-effort — create can still use a local copy).
+            try:
+                base, _, tag = image.partition(":")
+                await asyncio.to_thread(
+                    docker_image_pull, image=base, tag=tag or "latest", docker_host=dh
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("install_pull_warn image=%s err=%s", image, exc)
+
+            spec = _build_container_spec(body)
+            # 2. Create the container (on re-install the name exists → just start it).
+            try:
+                await asyncio.to_thread(
+                    docker_container_create,
+                    image=image,
+                    name=body.app_name,
+                    labels={"aegis.managed": "true", "aegis.app": body.app_name},
+                    restart_policy="unless-stopped",
+                    network=cfg.app_install_network or None,
+                    docker_host=dh,
+                    **spec,
+                )
+            except Exception as exc:  # noqa: BLE001 — usually "name already in use"
+                log.info(
+                    "install_create_skipped app=%s (%s) — starting existing", body.app_name, exc
+                )
+
+            # 3. Start it.
+            await asyncio.to_thread(
+                docker_container_start, container_id=body.app_name, docker_host=dh
+            )
+            final_status = "completed"
+            domain = body.domain
     except Exception as exc:  # noqa: BLE001
         log.exception("install_failed install_id=%s", install_id)
         error_detail = f"{type(exc).__name__}: {exc}"
@@ -309,6 +364,8 @@ async def install_app_endpoint(
         env=entry.get("env", []),
         mounts=entry.get("mounts", []),
         command=entry.get("command"),
+        compose=entry.get("compose"),
+        compose_env=entry.get("compose_env") or {},
         domain=req.domain,
         target_host=target_host,
         docker_host=docker_host,
@@ -343,16 +400,30 @@ async def uninstall_app(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
 
-    try:
-        from oprim import docker_container_stop  # noqa: PLC0415
+    dh = get_settings().docker_host
+    compose_file = Path(get_settings().data_dir) / "apps" / row["app_name"] / "docker-compose.yml"
+    if compose_file.exists():
+        # Multi-container app: tear the whole stack down (containers + network).
+        try:
+            from oprim import docker_compose_down  # noqa: PLC0415
 
-        await asyncio.to_thread(
-            docker_container_stop,
-            container_id=row["app_name"],
-            docker_host=get_settings().docker_host,
-        )
-    except Exception as exc:  # noqa: BLE001 — teardown is best-effort
-        log.warning("uninstall_stop_failed app=%s err=%s", row["app_name"], exc)
+            await asyncio.to_thread(
+                docker_compose_down,
+                compose_file=str(compose_file),
+                project_name=row["app_name"],
+                docker_host=dh,
+            )
+        except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+            log.warning("uninstall_compose_down_failed app=%s err=%s", row["app_name"], exc)
+    else:
+        try:
+            from oprim import docker_container_stop  # noqa: PLC0415
+
+            await asyncio.to_thread(
+                docker_container_stop, container_id=row["app_name"], docker_host=dh
+            )
+        except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+            log.warning("uninstall_stop_failed app=%s err=%s", row["app_name"], exc)
 
     await conn.execute(
         "DELETE FROM installed_apps WHERE id = $1 AND org_id = $2",
@@ -503,8 +574,9 @@ async def _run_app_lifecycle(
         error_detail = f"{type(exc).__name__}: {exc}"
 
     if error_detail:
-        log.warning("app_lifecycle_outcome id=%s status=%s err=%s",
-                    install_id, status_after, error_detail)
+        log.warning(
+            "app_lifecycle_outcome id=%s status=%s err=%s", install_id, status_after, error_detail
+        )
     try:
         async with get_pool().acquire() as conn:
             await conn.execute(
