@@ -1951,5 +1951,181 @@
       "CRON_TOKEN": "__HEX32__",
       "HOST_PORT": "18099"
     }
+  },
+  {
+    "slug": "matomo",
+    "name": "Matomo",
+    "description": "开源网站统计分析(Google Analytics 替代),自带 MariaDB。",
+    "icon": "📊",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 18100,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: matomo\n      MARIADB_USER: matomo\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: matomo:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:80\"]\n    environment:\n      MATOMO_DATABASE_HOST: db\n      MATOMO_DATABASE_ADAPTER: mysql\n      MATOMO_DATABASE_USERNAME: matomo\n      MATOMO_DATABASE_PASSWORD: ${DB_PASSWORD}\n      MATOMO_DATABASE_DBNAME: matomo\n    volumes: [app:/var/www/html]\nvolumes: {db: {}, app: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18100"
+    }
+  },
+  {
+    "slug": "vikunja",
+    "name": "Vikunja",
+    "description": "开源待办/项目管理(Todoist 替代),自带 PostgreSQL。",
+    "icon": "✅",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18101,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: vikunja\n      POSTGRES_USER: vikunja\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  app:\n    image: vikunja/vikunja:latest\n    restart: unless-stopped\n    user: \"0:0\"\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:3456\"]\n    environment:\n      VIKUNJA_DATABASE_TYPE: postgres\n      VIKUNJA_DATABASE_HOST: db\n      VIKUNJA_DATABASE_USER: vikunja\n      VIKUNJA_DATABASE_PASSWORD: ${DB_PASSWORD}\n      VIKUNJA_DATABASE_DATABASE: vikunja\n      VIKUNJA_SERVICE_SECRET: ${JWT_SECRET}\n      VIKUNJA_SERVICE_PUBLICURL: http://localhost:${HOST_PORT}\n    volumes: [files:/app/vikunja/files]\nvolumes: {db: {}, files: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "JWT_SECRET": "__RANDOM__",
+      "HOST_PORT": "18101"
+    }
+  },
+  {
+    "slug": "kimai",
+    "name": "Kimai",
+    "description": "开源工时/计时管理,自带 MariaDB。",
+    "icon": "⏱️",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18102,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: kimai\n      MARIADB_USER: kimai\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: kimai/kimai2:apache\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:8001\"]\n    environment:\n      DATABASE_URL: \"mysql://kimai:${DB_PASSWORD}@db:3306/kimai?charset=utf8mb4&serverVersion=11.0.0-MariaDB\"\n      ADMINMAIL: admin@example.com\n      ADMINPASS: ${ADMIN_PASSWORD}\n    volumes: [data:/opt/kimai/var/data]\nvolumes: {db: {}, data: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "ADMIN_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18102"
+    }
+  },
+  {
+    "slug": "snipe-it",
+    "name": "Snipe-IT",
+    "description": "开源 IT 资产/库存管理,自带 MariaDB。",
+    "icon": "🏷️",
+    "version": "latest",
+    "category": "Management",
+    "ports": [
+      {
+        "container_port": 18103,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: snipeit\n      MARIADB_USER: snipeit\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: snipe/snipe-it:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:80\"]\n    environment:\n      APP_KEY: ${APP_KEY}\n      APP_URL: http://localhost:${HOST_PORT}\n      DB_CONNECTION: mysql\n      DB_HOST: db\n      DB_PORT: \"3306\"\n      DB_DATABASE: snipeit\n      DB_USERNAME: snipeit\n      DB_PASSWORD: ${DB_PASSWORD}\n    volumes: [data:/var/lib/snipeit]\nvolumes: {db: {}, data: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_KEY": "__APP_KEY_B64__",
+      "HOST_PORT": "18103"
+    }
+  },
+  {
+    "slug": "wallabag",
+    "name": "Wallabag",
+    "description": "开源稍后读/文章存档(Pocket 替代),自带 MariaDB。",
+    "icon": "📑",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18104,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MARIADB_DATABASE: wallabag\n      MARIADB_USER: wallabag\n      MARIADB_PASSWORD: ${DB_PASSWORD}\n      MARIADB_RANDOM_ROOT_PASSWORD: \"yes\"\n    volumes: [db:/var/lib/mysql]\n  app:\n    image: wallabag/wallabag:latest\n    restart: unless-stopped\n    depends_on: [db]\n    ports: [\"${HOST_PORT}:80\"]\n    environment:\n      SYMFONY__ENV__DATABASE_DRIVER: pdo_mysql\n      SYMFONY__ENV__DATABASE_HOST: db\n      SYMFONY__ENV__DATABASE_PORT: \"3306\"\n      SYMFONY__ENV__DATABASE_NAME: wallabag\n      SYMFONY__ENV__DATABASE_USER: wallabag\n      SYMFONY__ENV__DATABASE_PASSWORD: ${DB_PASSWORD}\n      SYMFONY__ENV__DOMAIN_NAME: http://localhost:${HOST_PORT}\n      SYMFONY__ENV__SECRET: ${APP_SECRET}\n    volumes: [images:/var/www/wallabag/web/assets/images]\nvolumes: {db: {}, images: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_SECRET": "__RANDOM__",
+      "HOST_PORT": "18104"
+    }
+  },
+  {
+    "slug": "docmost",
+    "name": "Docmost",
+    "description": "开源协作 Wiki / 文档(Confluence 替代),自带 PostgreSQL + Redis。",
+    "icon": "📄",
+    "version": "latest",
+    "category": "Productivity",
+    "ports": [
+      {
+        "container_port": 18105,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  db:\n    image: postgres:16-alpine\n    restart: unless-stopped\n    environment:\n      POSTGRES_DB: docmost\n      POSTGRES_USER: docmost\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes: [db:/var/lib/postgresql/data]\n  redis:\n    image: redis:7-alpine\n    restart: unless-stopped\n    volumes: [redis:/data]\n  app:\n    image: docmost/docmost:latest\n    restart: unless-stopped\n    depends_on: [db, redis]\n    ports: [\"${HOST_PORT}:3000\"]\n    environment:\n      APP_URL: http://localhost:${HOST_PORT}\n      APP_SECRET: ${APP_SECRET}\n      DATABASE_URL: \"postgresql://docmost:${DB_PASSWORD}@db:5432/docmost?schema=public\"\n      REDIS_URL: \"redis://redis:6379\"\n    volumes: [storage:/app/data/storage]\nvolumes: {db: {}, redis: {}, storage: {}}\n",
+    "compose_env": {
+      "DB_PASSWORD": "__RANDOM__",
+      "APP_SECRET": "__RANDOM__",
+      "HOST_PORT": "18105"
+    }
+  },
+  {
+    "slug": "baserow",
+    "name": "Baserow",
+    "description": "开源在线数据库/表格(Airtable 替代),内置数据库,单容器。",
+    "icon": "🧮",
+    "version": "latest",
+    "category": "Development",
+    "image": "baserow/baserow:latest",
+    "ports": [
+      {
+        "container_port": 80,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [
+      {
+        "name": "BASEROW_PUBLIC_URL",
+        "value": "http://localhost"
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/baserow/data",
+        "volume_name": "baserow-data"
+      }
+    ]
+  },
+  {
+    "slug": "trilium",
+    "name": "Trilium Notes",
+    "description": "开源层级式笔记/知识库,单容器。",
+    "icon": "🌲",
+    "version": "latest",
+    "category": "Productivity",
+    "image": "triliumnext/notes:latest",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/home/node/trilium-data",
+        "volume_name": "trilium-data"
+      }
+    ]
   }
 ]
