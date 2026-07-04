@@ -208,12 +208,14 @@ async def _uptime_loop() -> None:
 
 
 async def _recording_loop() -> None:
-    """Derive rate-based gauges (container_cpu_percent) from scraped counters so
-    threshold rules can alert on CPU. Runs just behind the scrape cadence."""
+    """Derive gauges from scraped counters/gauges so threshold rules & the overview
+    tiles have them: per-container container_cpu_percent, plus whole-host
+    node_cpu_percent and node_memory_used_bytes/percent. Runs behind the scrape."""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.metric_recording import (
         record_container_cpu_percent,  # noqa: PLC0415
-        record_node_percentages,  # noqa: PLC0415
+        record_host_cpu_percent,  # noqa: PLC0415
+        record_host_memory,  # noqa: PLC0415
     )
 
     await asyncio.sleep(random.uniform(20, 35))
@@ -221,7 +223,8 @@ async def _recording_loop() -> None:
         try:
             async with get_pool().acquire() as conn:
                 await record_container_cpu_percent(conn)
-                await record_node_percentages(conn)
+                await record_host_cpu_percent(conn)
+                await record_host_memory(conn)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -229,27 +229,12 @@ services:
           memory: 256M
           cpus: "1.0"
 
-  # Container metrics source for Aegis monitoring. Exposes Prometheus /metrics with
-  # per-container CPU/mem/net/disk for ALL host containers; Aegis scrapes it (scrape
-  # target "cadvisor") so every stack on the host gets time-series metrics without
-  # per-app instrumentation. Read-only.
-  aegis-cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
-    container_name: aegis-cadvisor
-    restart: unless-stopped
-    privileged: true
-    networks:
-      - helios-net
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+  # Container metrics are provided by the shared platform observability stack
+  # (obsv-prometheus/obsv-cadvisor/obsv-node-exporter, project `observability`),
+  # NOT by an Aegis-local cAdvisor. Aegis ingests them by scraping obsv-prometheus'
+  # /federate endpoint over helios-net; the scrape targets ("cadvisor",
+  # "node-exporter") live in the scrape_targets table. gcr.io/cadvisor also cannot
+  # be pulled on this host and can't read the containerd-snapshotter docker layout.
 
   # === 可观测性后端 (backend 通过 AEGIS_LOKI_URL / AEGIS_PYROSCOPE_URL 直连) ===
   aegis-loki:
