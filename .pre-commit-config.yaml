@@ -36,3 +36,28 @@ repos:
         language: script
         entry: scripts/check_no_inline_secret.sh
         pass_filenames: false
+
+      # DESIGN.md 附录 B 符合性矩阵 — CI 类门禁
+      - id: design-c42-loop-idempotent
+        name: "design C-4.2: 编排循环幂等锚点"
+        language: script
+        entry: scripts/check_loop_idempotent.sh
+        pass_filenames: false
+
+      - id: design-ci8-outbox-idempotent
+        name: "design C-I8: outbox 原子领取锚点"
+        language: script
+        entry: scripts/check_outbox_consumer_idempotent.sh
+        pass_filenames: false
+
+      - id: design-c9c-skip-baseline
+        name: "design C-9c: skip 不增长且带 reason"
+        language: script
+        entry: scripts/check_skip_baseline.sh
+        pass_filenames: false
+
+      - id: design-ci6-telemetry-retention
+        name: "design C-I6: 遥测保留登记表"
+        language: script
+        entry: scripts/check_telemetry_retention.sh
+        pass_filenames: false

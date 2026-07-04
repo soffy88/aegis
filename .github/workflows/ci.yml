@@ -75,6 +75,14 @@ jobs:
 
           echo "All 3O paradigm compliance checks passed."
 
+      - name: DESIGN.md Compliance Matrix (附录 B — CI 类)
+        run: |
+          set -e
+          scripts/check_loop_idempotent.sh            # C-4.2 循环幂等锚点
+          scripts/check_outbox_consumer_idempotent.sh # C-I8 outbox 原子领取
+          scripts/check_skip_baseline.sh              # C-9c skip 不增长 + 带 reason
+          scripts/check_telemetry_retention.sh        # C-I6 遥测保留登记表（骨架，登记表落地即转硬 gate）
+
       - name: aegis-watch isolation check (§8.4)
         run: |
           set -e
