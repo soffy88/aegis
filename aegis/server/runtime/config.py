@@ -356,6 +356,14 @@ class AegisSettings(BaseSettings):
     )
     deadman_heartbeat_timeout_sec: float = Field(default=5.0)
 
+    # §11.4 平台自备份:定时 pg_dump 自身控制面 DB(事件/策略/指标 可恢复是底线)。
+    # backup_target 可注入(标注归档去向);S3(backup_s3_*)配了则工件另上传离宿主(本地 dump 不抗宿主故障)。
+    self_backup_interval_hours: float = Field(default=24.0)
+    self_backup_retain: int = Field(default=7, description="保留最近 N 份自备份工件")
+    self_backup_target: str = Field(
+        default="local", description="自备份归档去向标注(§11.4 ⑥ 可注入)"
+    )
+
     @model_validator(mode="after")
     def resolve_backup_local_dir(self) -> AegisSettings:
         if self.backup_local_dir == _UNSET_PATH:

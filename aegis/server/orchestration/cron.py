@@ -36,6 +36,7 @@ _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probe
 _AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
 _RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
 _HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
+_SELF_BACKUP_TICK_SEC = 3600  # 每小时醒来判断是否到自备份周期 (§11.4)
 _DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
 _DEADMAN_STARTUP_GRACE_SEC = 180.0  # 不误报 boot 期尚未首轮 tick 的循环
 
@@ -409,6 +410,52 @@ async def _deadman_loop() -> None:
         await asyncio.sleep(_jittered(_HEARTBEAT_INTERVAL_SEC))
 
 
+_last_self_backup: datetime | None = None
+
+
+async def _self_backup_loop() -> None:
+    """§11.4: 定时 pg_dump 平台自身控制面 DB(可恢复是底线)。每小时醒来,到周期才真备份。
+
+    run_self_backup/prune 是 sync(pg_dump/文件)→ to_thread。status=failed(如 pg_dump 缺失)
+    大声 error 但不崩循环。仅 loop-runner 实例跑(_cron_main 已由 advisory 锁把关)。"""
+    global _last_self_backup
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    from aegis.server.services.self_backup import (  # noqa: PLC0415
+        prune_self_backups,
+        run_self_backup,
+    )
+
+    await asyncio.sleep(random.uniform(90, 150))
+    while True:
+        cfg = get_settings()
+        interval = float(cfg.self_backup_interval_hours) * 3600.0
+        now = _utcnow()
+        due = _last_self_backup is None or (now - _last_self_backup).total_seconds() >= interval
+        if interval > 0 and due:
+            try:
+                result = await asyncio.to_thread(run_self_backup, cfg)
+                _last_self_backup = now
+                if result.get("status") == "completed":
+                    f = result.get("findings")
+                    log.info(
+                        "self_backup_ok id=%s size=%s sha256=%s",
+                        getattr(f, "backup_id", "?"),
+                        getattr(f, "size_bytes", "?"),
+                        (getattr(f, "checksum_sha256", "") or "")[:12],
+                    )
+                else:
+                    log.error(
+                        "self_backup_failed err=%s (控制面 DB 未产出可恢复工件)",
+                        result.get("error"),
+                    )
+                await asyncio.to_thread(prune_self_backups, cfg, int(cfg.self_backup_retain))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.error("self_backup_error err=%s", exc)
+        await asyncio.sleep(_jittered(_SELF_BACKUP_TICK_SEC))
+
+
 _LOOP_RUNNER_ROLE = "aegis.loop_runner"
 
 
@@ -464,6 +511,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _alert_eval_loop(),
             _retention_loop(),
             _deadman_loop(),
+            _self_backup_loop(),
             return_exceptions=True,
         )
     finally:
