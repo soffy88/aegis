@@ -33,6 +33,8 @@ _ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
 _RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
 _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probes
 _AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
+_RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
+_HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
 
 
 def _jittered(interval: float) -> float:
@@ -260,6 +262,62 @@ async def _anomaly_loop() -> None:
         await asyncio.sleep(_jittered(_ANOMALY_INTERVAL_SEC))
 
 
+async def _retention_loop() -> None:
+    """§7/I6: 按 retention 登记表分批删除过期遥测(有界写入者)+ 存储守卫(§7 70% 大声告警).
+
+    retention_prune/disk_usage 是 sync oprim 原语(psycopg/os.statvfs)→ 走 to_thread 不阻塞事件循环。
+    单条 prune 失败不阻断其它条目;缺 psycopg 等致命错整体降级但不崩循环。"""
+    from aegis.server.persistence.retention import (  # noqa: PLC0415
+        RETENTION,
+        STORAGE_GUARD_PERCENT,
+    )
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    from oprim import disk_usage, retention_prune  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(60, 120))
+    while True:
+        cfg = get_settings()
+        for entry in RETENTION:
+            try:
+                res = await asyncio.to_thread(
+                    retention_prune,
+                    dsn=cfg.postgres_dsn,
+                    table=str(entry["table"]),
+                    ts_column=str(entry["ts_column"]),
+                    retain_days=float(entry["retain_days"]),  # type: ignore[arg-type]
+                )
+                if getattr(res, "deleted_rows", 0):
+                    log.info(
+                        "retention_pruned table=%s rows=%d retain_days=%s",
+                        entry["table"],
+                        res.deleted_rows,
+                        entry["retain_days"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("retention_prune_error table=%s err=%s", entry["table"], exc)
+        try:
+            du = await asyncio.to_thread(
+                disk_usage,
+                path=cfg.platform_alerter_disk_path,
+                threshold_percent=STORAGE_GUARD_PERCENT,
+            )
+            if getattr(du, "over_threshold", False):
+                log.warning(
+                    "storage_guard_breach path=%s used=%.1f%% threshold=%.0f%% "
+                    "(retention/rollup 可能未收口;生产盘将被平台遥测拖垮)",
+                    cfg.platform_alerter_disk_path,
+                    getattr(du, "used_percent", 0.0),
+                    STORAGE_GUARD_PERCENT,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("storage_guard_error err=%s", exc)
+        await asyncio.sleep(_jittered(_RETENTION_INTERVAL_SEC))
+
+
 _LOOP_RUNNER_ROLE = "aegis.loop_runner"
 
 
@@ -313,6 +371,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _uptime_loop(),
             _autoheal_policy_loop(),
             _alert_eval_loop(),
+            _retention_loop(),
             return_exceptions=True,
         )
     finally:
