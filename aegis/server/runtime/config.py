@@ -371,6 +371,13 @@ class AegisSettings(BaseSettings):
         default="local", description="自备份归档去向标注(§11.4 ⑥ 可注入)"
     )
 
+    # §5.2 磁盘回收(R2 破坏性):存储守卫越阈时,在 data_dir 自有子树内回收可再生文件。
+    # allowlist 硬约束绝不越界系统路径。R2 → 默认 dry_run,运维显式关闭才真删。
+    disk_cleanup_dry_run: bool = Field(
+        default=True, description="§5.2 磁盘回收干跑(R2 默认只统计不删)"
+    )
+    disk_cleanup_log_age_days: int = Field(default=14, description="超此天数的日志文件计为可回收")
+
     @model_validator(mode="after")
     def resolve_backup_local_dir(self) -> AegisSettings:
         if self.backup_local_dir == _UNSET_PATH:

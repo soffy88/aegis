@@ -344,6 +344,21 @@ async def _retention_loop() -> None:
                     getattr(du, "used_percent", 0.0),
                     STORAGE_GUARD_PERCENT,
                 )
+                # §5.2 R2 磁盘回收:在 data_dir 自有子树内回收可再生文件(allowlist 硬护栏);
+                # R2 破坏性 → 默认 dry_run 只统计,运维显式关闭 disk_cleanup_dry_run 才真删。
+                try:
+                    from aegis.server.services.disk_reclaim import reclaim_disk  # noqa: PLC0415
+
+                    rc = await asyncio.to_thread(reclaim_disk, cfg)
+                    log.warning(
+                        "disk_reclaim targets=%d freed=%dB touched=%d dry_run=%s",
+                        rc["targets"],
+                        rc["freed_bytes"],
+                        rc["touched"],
+                        rc["dry_run"],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("disk_reclaim_error err=%s", exc)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
