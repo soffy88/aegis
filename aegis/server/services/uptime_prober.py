@@ -93,10 +93,11 @@ async def probe_due_targets(conn: asyncpg.Connection) -> int:
         )
         await conn.execute(
             "UPDATE uptime_targets SET last_up=$1, last_latency_ms=$2,"
-            " last_checked_at=now(), last_error=$3 WHERE id=$4",
+            " last_checked_at=now(), last_error=$3, last_tls_days_remaining=$4 WHERE id=$5",
             up,
             latency,
             err,
+            tls_days,
             t["id"],
         )
         probed += 1

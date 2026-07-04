@@ -18,6 +18,20 @@ async def is_flag_enabled(conn: Any, key: str) -> bool:
     return bool(row and row["enabled"])
 
 
+async def get_flag(conn: Any, key: str) -> dict[str, Any]:
+    """flag 完整状态(供 API/UI 展示)。缺行 → 默认放行态。"""
+    row = await conn.fetchrow(
+        "SELECT enabled, reason, updated_at FROM aegis_platform_flags WHERE key = $1", key
+    )
+    if row is None:
+        return {"enabled": False, "reason": None, "updated_at": None}
+    return {
+        "enabled": bool(row["enabled"]),
+        "reason": row["reason"],
+        "updated_at": row["updated_at"],
+    }
+
+
 async def set_flag(conn: Any, key: str, *, enabled: bool, reason: str | None = None) -> None:
     """置位/清除 flag(upsert)。运维事中经 API/SQL 调用以急停或恢复。"""
     await conn.execute(

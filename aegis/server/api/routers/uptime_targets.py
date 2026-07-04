@@ -65,7 +65,7 @@ async def list_targets(
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         "SELECT id, name, url, interval_seconds, expected_status, enabled,"
-        " last_up, last_latency_ms, last_checked_at, last_error"
+        " last_up, last_latency_ms, last_checked_at, last_error, last_tls_days_remaining"
         " FROM uptime_targets WHERE org_id = $1 ORDER BY name",
         org_id,
     )
@@ -83,10 +83,17 @@ async def create_target(
         r = await conn.fetchrow(
             "INSERT INTO uptime_targets (org_id, name, url, interval_seconds, expected_status, enabled)"
             " VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
-            org_id, body.name, body.url, body.interval_seconds, body.expected_status, body.enabled,
+            org_id,
+            body.name,
+            body.url,
+            body.interval_seconds,
+            body.expected_status,
+            body.enabled,
         )
     except asyncpg.UniqueViolationError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"target '{body.name}' already exists") from exc
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"target '{body.name}' already exists"
+        ) from exc
     return _row(r)
 
 
@@ -100,12 +107,16 @@ async def update_target(
 ) -> dict[str, Any]:
     updates = body.model_dump(exclude_unset=True, exclude_none=True)
     if not updates:
-        r = await conn.fetchrow("SELECT * FROM uptime_targets WHERE org_id=$1 AND id=$2", org_id, target_id)
+        r = await conn.fetchrow(
+            "SELECT * FROM uptime_targets WHERE org_id=$1 AND id=$2", org_id, target_id
+        )
     else:
         cols = ", ".join(f"{k} = ${i + 3}" for i, k in enumerate(updates))
         r = await conn.fetchrow(
             f"UPDATE uptime_targets SET {cols} WHERE org_id=$1 AND id=$2 RETURNING *",
-            org_id, target_id, *updates.values(),
+            org_id,
+            target_id,
+            *updates.values(),
         )
     if not r:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "target not found")
@@ -119,6 +130,8 @@ async def delete_target(
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
 ) -> None:
-    res = await conn.execute("DELETE FROM uptime_targets WHERE org_id=$1 AND id=$2", org_id, target_id)
+    res = await conn.execute(
+        "DELETE FROM uptime_targets WHERE org_id=$1 AND id=$2", org_id, target_id
+    )
     if res == "DELETE 0":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "target not found")

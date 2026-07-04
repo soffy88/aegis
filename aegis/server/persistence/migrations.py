@@ -978,6 +978,15 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON agent_metrics_rollup_1h(bucket DESC);
         """,
     ),
+    (
+        # §3.2: uptime 拨测顺带做的 TLS 证书到期检查(tls_cert_days_remaining gauge)缺一处
+        # 直接可见的位置(此前只进 agent_metrics)。持久化到 target 行,供 uptime 列表页直接显示,
+        # 与 last_up/last_latency_ms 同一 UPDATE 一并写。
+        "045_uptime_targets_tls_days",
+        """
+        ALTER TABLE uptime_targets ADD COLUMN IF NOT EXISTS last_tls_days_remaining DOUBLE PRECISION;
+        """,
+    ),
 ]
 
 

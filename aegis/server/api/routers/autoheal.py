@@ -8,15 +8,23 @@ from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
-from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.auth.rbac import Permission, require_min_role, require_permission
+from aegis.server.models.membership import Role
 from aegis.server.repositories.autoheal_event_repository import AutoHealEventRepository
+from aegis.server.services.platform_flags import AUTOHEAL_KILL_SWITCH, get_flag, set_flag
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/autoheal", tags=["autoheal"])
+
+
+class KillSwitchUpdate(BaseModel):
+    enabled: bool
+    reason: str | None = Field(default=None, max_length=500)
 
 
 @router.get("/events")
@@ -82,3 +90,33 @@ async def get_autoheal_stats(
 ) -> dict[str, Any]:
     """Get autoheal summary stats."""
     return await AutoHealEventRepository(conn).stats(org_id=org_id)
+
+
+@router.get("/kill-switch")
+async def get_kill_switch(
+    org_id: uuid.UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """§5.3 全局自愈急停开关当前状态。缺行=未急停(默认放行)。viewer+ 可读。"""
+    return await get_flag(conn, AUTOHEAL_KILL_SWITCH)
+
+
+@router.put("/kill-switch")
+async def put_kill_switch(
+    org_id: uuid.UUID,
+    body: KillSwitchUpdate,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_min_role(Role.ADMIN)),
+) -> dict[str, Any]:
+    """§5.3 置位/解除全局自愈急停(DB 支撑,事中即生效不必重启)。admin+ 方可翻动
+    ——这是全平台范围的动作,故门槛高于常规 autoheal 操作(TRIGGER_AUTOHEAL/operator+)。"""
+    await set_flag(conn, AUTOHEAL_KILL_SWITCH, enabled=body.enabled, reason=body.reason)
+    log.warning(
+        "autoheal_kill_switch_changed enabled=%s reason=%s by=%s org_id=%s",
+        body.enabled,
+        body.reason,
+        user.user_id,
+        org_id,
+    )
+    return await get_flag(conn, AUTOHEAL_KILL_SWITCH)
