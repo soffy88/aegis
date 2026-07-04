@@ -111,6 +111,13 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict]:
         # 急停开关读取失败:保守放行(不因 flags 表故障瘫痪自愈),但记录。
         log.warning("autoheal_kill_switch_read_error err=%s (fail-open)", exc)
 
+    # §9/§3.3 变更冻结窗口:高风险时段禁自动自愈(部署侧另有闸门)。
+    from aegis.server.services.change_freeze import is_change_frozen  # noqa: PLC0415
+
+    if is_change_frozen(cfg, _utcnow()):
+        log.warning("autoheal_change_frozen — 变更冻结窗口内,禁止自动自愈(§9/§3.3)")
+        return []
+
     policies = await conn.fetch(
         """
         SELECT id, org_id, name, target_container, trigger_metric, trigger_operator,

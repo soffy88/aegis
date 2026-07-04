@@ -298,6 +298,15 @@ class AegisSettings(BaseSettings):
     alert_suppress_enabled: bool = True
     alert_host_liveness_metric: str = "node_up"
 
+    # §9/§3.3 变更冻结窗口:高风险时段(如交易剧烈时段)MUST 禁自动自愈与部署。窗口活跃由
+    # window_active_check 判定。change_freeze_start 空或 duration<=0 → 禁用(不冻结)。
+    change_freeze_start: str = Field(default="", description="冻结窗起点 ISO 时刻;空=禁用")
+    change_freeze_duration_seconds: int = Field(default=0)
+    change_freeze_recurrence: str = Field(default="none", description="none|daily|weekly")
+    change_freeze_weekdays: str = Field(
+        default="", description="weekly 生效星期逗号列(0=周一..6=周日)"
+    )
+
     # === Email (Resend) ===
     resend_api_key: str = Field(
         default="",
