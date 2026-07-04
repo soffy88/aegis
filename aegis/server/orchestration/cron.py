@@ -38,6 +38,7 @@ _RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storag
 _ROLLUP_INTERVAL_SEC = 3600  # 60 min: downsample raw metrics into hourly rollups (§4.2)
 _ROLLUP_LOOKBACK_HOURS = 3  # re-aggregate last N hours each run (idempotent upsert 兜迟到点)
 _HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
+_DRIFT_INTERVAL_SEC = 600  # 10 min: config-as-code drift scan (§10/§3.7)
 _SELF_BACKUP_TICK_SEC = 3600  # 每小时醒来判断是否到自备份周期 (§11.4)
 _DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
 _DEADMAN_STARTUP_GRACE_SEC = 180.0  # 不误报 boot 期尚未首轮 tick 的循环
@@ -404,6 +405,27 @@ async def _rollup_loop() -> None:
         await _tick("rollup", _ROLLUP_INTERVAL_SEC)
 
 
+async def _drift_loop() -> None:
+    """§10/§3.7: 周期比对声明态(installed_apps.image)与运行态(容器镜像),漂移写 config.drift
+    一等 change 事件。docker 不可达/禁用则空转。"""
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    from aegis.server.services.compose_drift import scan_drift  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(60, 120))
+    while True:
+        cfg = get_settings()
+        if cfg.compose_drift_enabled:
+            try:
+                async with get_pool().acquire() as conn:
+                    await scan_drift(conn, cfg)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("compose_drift_error err=%s", exc)
+        await asyncio.sleep(_jittered(_DRIFT_INTERVAL_SEC))
+
+
 async def _deadman_loop() -> None:
     """§6 死人开关:内部循环存活评估(deadman_evaluate) + L1 外部心跳(heartbeat_emit).
 
@@ -566,6 +588,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _rollup_loop(),
             _deadman_loop(),
             _self_backup_loop(),
+            _drift_loop(),
             return_exceptions=True,
         )
     finally:

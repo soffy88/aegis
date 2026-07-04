@@ -307,6 +307,10 @@ class AegisSettings(BaseSettings):
         default="", description="weekly 生效星期逗号列(0=周一..6=周日)"
     )
 
+    # §10/§3.7 config-as-code 对账:周期比对声明态(installed_apps.image)与运行态(容器镜像),
+    # 漂移写 config.drift 一等 change 事件(§10.1)。docker 不可达 → 跳过(不崩循环)。
+    compose_drift_enabled: bool = True
+
     # === Email (Resend) ===
     resend_api_key: str = Field(
         default="",
