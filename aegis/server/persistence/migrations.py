@@ -948,6 +948,19 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        # §5.3 运行时全局急停开关(DB 支撑,事中可翻不必重启)。key='autoheal' 关掉时
+        # 编排层停止一切自愈动作。缺行=未急停(默认放行)。
+        "043_platform_flags",
+        """
+        CREATE TABLE IF NOT EXISTS aegis_platform_flags (
+            key TEXT PRIMARY KEY,
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            reason TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+    ),
 ]
 
 

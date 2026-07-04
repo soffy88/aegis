@@ -286,6 +286,13 @@ class AegisSettings(BaseSettings):
     autoheal_diagnose_min_confidence: float = 0.5
     autoheal_health_retries: int = 5
 
+    # §5.3 自愈安全层:抖动检测(同一目标 window 内自愈≥threshold 且仍异常 → 停手升级人工)
+    # + 全局限流(单位窗口内真实动作上限,防连锁误伤)。窗口/阈值可注入覆盖(业务知识不焊库)。
+    autoheal_flap_window_seconds: int = 1800  # 30 min
+    autoheal_flap_threshold: int = 2
+    autoheal_rate_limit_max: int = 10  # 每 window 最多真实自愈动作数
+    autoheal_rate_limit_window_seconds: int = 3600  # 1 h
+
     # === Email (Resend) ===
     resend_api_key: str = Field(
         default="",
