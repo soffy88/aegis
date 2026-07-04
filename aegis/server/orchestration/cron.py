@@ -35,6 +35,8 @@ _RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
 _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probes
 _AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
 _RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
+_ROLLUP_INTERVAL_SEC = 3600  # 60 min: downsample raw metrics into hourly rollups (§4.2)
+_ROLLUP_LOOKBACK_HOURS = 3  # re-aggregate last N hours each run (idempotent upsert 兜迟到点)
 _HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
 _SELF_BACKUP_TICK_SEC = 3600  # 每小时醒来判断是否到自备份周期 (§11.4)
 _DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
@@ -66,6 +68,7 @@ _SUPERVISED_LOOPS: dict[str, float] = {
     "autoheal": _AUTOHEAL_INTERVAL_SEC,
     "alert_eval": _ALERT_EVAL_INTERVAL_SEC,
     "retention": _RETENTION_INTERVAL_SEC,
+    "rollup": _ROLLUP_INTERVAL_SEC,
 }
 
 
@@ -366,6 +369,41 @@ async def _retention_loop() -> None:
         await _tick("retention", _RETENTION_INTERVAL_SEC)
 
 
+async def _rollup_loop() -> None:
+    """§4.2/§7: 把 agent_metrics 原始点按小时桶降采样 upsert 进 rollup 表(幂等),使长期趋势
+    有界(原始点 15d 保留,rollup 90d)。每轮重聚合最近 N 小时兜迟到点;metric_downsample_rollup
+    是 sync psycopg → to_thread。"""
+    from datetime import timedelta  # noqa: PLC0415
+
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    from oprim import metric_downsample_rollup  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(90, 150))
+    while True:
+        cfg = get_settings()
+        try:
+            since = _utcnow() - timedelta(hours=_ROLLUP_LOOKBACK_HOURS)
+            res = await asyncio.to_thread(
+                metric_downsample_rollup,
+                dsn=cfg.postgres_dsn,
+                source_table="agent_metrics",
+                dest_table="agent_metrics_rollup_1h",
+                ts_column="ts",
+                value_column="value",
+                agg="avg",
+                bucket_seconds=3600,
+                since=since,
+                label_columns=["metric_name", "hostname"],
+            )
+            if getattr(res, "rows_written", 0):
+                log.info("metric_rollup rows_written=%d", res.rows_written)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("metric_rollup_error err=%s", exc)
+        await _tick("rollup", _ROLLUP_INTERVAL_SEC)
+
+
 async def _deadman_loop() -> None:
     """§6 死人开关:内部循环存活评估(deadman_evaluate) + L1 外部心跳(heartbeat_emit).
 
@@ -525,6 +563,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _autoheal_policy_loop(),
             _alert_eval_loop(),
             _retention_loop(),
+            _rollup_loop(),
             _deadman_loop(),
             _self_backup_loop(),
             return_exceptions=True,

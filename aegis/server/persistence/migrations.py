@@ -961,6 +961,23 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        # §4.2/§7 指标降采样目标表:agent_metrics 原始点按小时桶(bucket)聚合 upsert 于此,
+        # 使长期趋势有界(原始点 15d 保留,rollup 90d)。(bucket, metric_name, hostname) 唯一
+        # 供 metric_downsample_rollup 的 ON CONFLICT 幂等。列名固定 bucket/value(元素约定)。
+        "044_agent_metrics_rollup",
+        """
+        CREATE TABLE IF NOT EXISTS agent_metrics_rollup_1h (
+            bucket      TIMESTAMPTZ NOT NULL,
+            metric_name TEXT NOT NULL,
+            hostname    TEXT NOT NULL,
+            value       DOUBLE PRECISION NOT NULL,
+            UNIQUE (bucket, metric_name, hostname)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_metrics_rollup_1h_bucket
+            ON agent_metrics_rollup_1h(bucket DESC);
+        """,
+    ),
 ]
 
 

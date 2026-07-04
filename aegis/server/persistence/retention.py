@@ -11,6 +11,11 @@ from __future__ import annotations
 # (table, ts_column, retain_days) —— 每条信号的 TTL
 RETENTION: list[dict[str, object]] = [
     {"table": "agent_metrics", "ts_column": "ts", "retain_days": 15},  # 指标原始点
+    {
+        "table": "agent_metrics_rollup_1h",
+        "ts_column": "bucket",
+        "retain_days": 90,
+    },  # 小时降采样(§4.2)
     {"table": "error_events", "ts_column": "ts", "retain_days": 14},
     {"table": "metric_anomalies", "ts_column": "detected_at", "retain_days": 90},
     {"table": "aegis_alert_events", "ts_column": "created_at", "retain_days": 90},
