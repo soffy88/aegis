@@ -293,6 +293,11 @@ class AegisSettings(BaseSettings):
     autoheal_rate_limit_max: int = 10  # 每 window 最多真实自愈动作数
     autoheal_rate_limit_window_seconds: int = 3600  # 1 h
 
+    # §3.2 告警抑制:父级 host 下线时抑制其子告警(消除单根因引发的告警风暴,只留 host-down 根因)。
+    # host 存活由 alert_host_liveness_metric 的每 host 最新值判定(>0=up,否则 down)。空/无该指标 → 不抑制。
+    alert_suppress_enabled: bool = True
+    alert_host_liveness_metric: str = "node_up"
+
     # === Email (Resend) ===
     resend_api_key: str = Field(
         default="",

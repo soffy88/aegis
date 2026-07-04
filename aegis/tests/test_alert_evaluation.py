@@ -69,19 +69,29 @@ async def test_picks_max_for_greater_operator():
     async def fake_eval(*, rule, current_value, now):
         captured["value"] = current_value
         return AlertEvaluationResult(
-            rule_id=rule.rule_id, fired=True, throttled=False,
-            dedup_existed=False, severity="critical", fired_row=None, reason="x",
+            rule_id=rule.rule_id,
+            fired=True,
+            throttled=False,
+            dedup_existed=False,
+            severity="critical",
+            fired_row=None,
+            reason="x",
         )
 
     conn = _conn_with_values([40.0, 95.0, 60.0])
-    with patch.object(ae.AlertRuleRepository, "list_all_enabled",
-                      AsyncMock(return_value=[_rule(operator=">=")])), \
-         patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval), \
-         patch.object(ae.AutoHealEventRepository, "insert", AsyncMock()):
+    with (
+        patch.object(
+            ae.AlertRuleRepository,
+            "list_all_enabled",
+            AsyncMock(return_value=[_rule(operator=">=")]),
+        ),
+        patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval),
+        patch.object(ae.AutoHealEventRepository, "insert", AsyncMock()),
+    ):
         stats = await ae.run_alert_evaluation(conn=conn, now=_NOW)
 
     assert captured["value"] == 95.0
-    assert stats == {"evaluated": 1, "fired": 1, "skipped": 0}
+    assert stats == {"evaluated": 1, "fired": 1, "skipped": 0, "suppressed": 0}
 
 
 @pytest.mark.asyncio
@@ -92,15 +102,26 @@ async def test_picks_min_for_less_operator():
     async def fake_eval(*, rule, current_value, now):
         captured["value"] = current_value
         return AlertEvaluationResult(
-            rule_id=rule.rule_id, fired=False, throttled=False,
-            dedup_existed=False, severity="ok", fired_row=None, reason="ok",
+            rule_id=rule.rule_id,
+            fired=False,
+            throttled=False,
+            dedup_existed=False,
+            severity="ok",
+            fired_row=None,
+            reason="ok",
         )
 
     conn = _conn_with_values([40.0, 95.0, 60.0])
-    with patch.object(ae.AlertRuleRepository, "list_all_enabled",
-                      AsyncMock(return_value=[_rule(operator="<=", threshold_critical=10.0,
-                                                    threshold_warn=None)])), \
-         patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval):
+    with (
+        patch.object(
+            ae.AlertRuleRepository,
+            "list_all_enabled",
+            AsyncMock(
+                return_value=[_rule(operator="<=", threshold_critical=10.0, threshold_warn=None)]
+            ),
+        ),
+        patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval),
+    ):
         await ae.run_alert_evaluation(conn=conn, now=_NOW)
 
     assert captured["value"] == 40.0
@@ -111,13 +132,14 @@ async def test_skips_rule_with_no_recent_data():
     """A rule whose metric has no fresh reading is skipped, not evaluated."""
     conn = _conn_with_values([])  # empty
     eval_mock = AsyncMock()
-    with patch.object(ae.AlertRuleRepository, "list_all_enabled",
-                      AsyncMock(return_value=[_rule()])), \
-         patch.object(ae.AlertEngine, "evaluate_metric", eval_mock):
+    with (
+        patch.object(ae.AlertRuleRepository, "list_all_enabled", AsyncMock(return_value=[_rule()])),
+        patch.object(ae.AlertEngine, "evaluate_metric", eval_mock),
+    ):
         stats = await ae.run_alert_evaluation(conn=conn, now=_NOW)
 
     eval_mock.assert_not_awaited()
-    assert stats == {"evaluated": 0, "fired": 0, "skipped": 1}
+    assert stats == {"evaluated": 0, "fired": 0, "skipped": 1, "suppressed": 0}
 
 
 @pytest.mark.asyncio
@@ -131,9 +153,65 @@ async def test_loop_registered_in_cron_main():
             scheduled.append(getattr(c, "__name__", str(c)))
             c.close()
 
-    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather), patch.object(
-        cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())
+    with (
+        patch.object(cron.asyncio, "gather", side_effect=_fake_gather),
+        patch.object(cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())),
     ):
         await cron._cron_main(alerter=None)
 
     assert "_alert_eval_loop" in scheduled
+
+
+@pytest.mark.asyncio
+async def test_host_down_suppresses_child_alert():
+    """§3.2: 父级 host 下线 → 子告警被抑制,不评估不触发(消除风暴)。"""
+    conn = MagicMock()
+    conn.fetch = AsyncMock(
+        side_effect=[
+            [{"hostname": "h1", "value": 0.0}],  # _host_liveness: h1 down
+            [{"value": 95.0, "hostname": "h1"}],  # _worst_series: 命中 h1
+        ]
+    )
+    eval_mock = AsyncMock()
+    with (
+        patch.object(
+            ae.AlertRuleRepository, "list_all_enabled", AsyncMock(return_value=[_rule(operator=">=")])
+        ),
+        patch.object(ae.AlertEngine, "evaluate_metric", eval_mock),
+    ):
+        stats = await ae.run_alert_evaluation(conn=conn, now=_NOW)
+
+    eval_mock.assert_not_awaited()  # host 下线 → 根本不评估
+    assert stats["suppressed"] == 1 and stats["fired"] == 0
+
+
+@pytest.mark.asyncio
+async def test_host_up_does_not_suppress():
+    """父级 host 在线 → 正常评估触发,不抑制。"""
+    captured = {}
+
+    async def fake_eval(*, rule, current_value, now):
+        captured["value"] = current_value
+        return AlertEvaluationResult(
+            rule_id=rule.rule_id, fired=True, throttled=False,
+            dedup_existed=False, severity="critical", fired_row=None, reason="x",
+        )
+
+    conn = MagicMock()
+    conn.fetch = AsyncMock(
+        side_effect=[
+            [{"hostname": "h1", "value": 1.0}],  # h1 up
+            [{"value": 95.0, "hostname": "h1"}],
+        ]
+    )
+    with (
+        patch.object(
+            ae.AlertRuleRepository, "list_all_enabled", AsyncMock(return_value=[_rule(operator=">=")])
+        ),
+        patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval),
+        patch.object(ae.AutoHealEventRepository, "insert", AsyncMock()),
+    ):
+        stats = await ae.run_alert_evaluation(conn=conn, now=_NOW)
+
+    assert captured["value"] == 95.0  # 正常评估
+    assert stats["fired"] == 1 and stats["suppressed"] == 0
