@@ -349,6 +349,13 @@ class AegisSettings(BaseSettings):
     backup_webdav_user: str = Field(default="")
     backup_webdav_password: str = Field(default="")
 
+    # §6 L1 外部死人开关:aegis 每 60s 向此 URL 发心跳;编排循环全健康才发,任一卡死则抑制
+    # → 外部 watcher(healthchecks.io 等)超时告警("谁看门人")。空=外部死人禁用(§11 degraded)。
+    deadman_heartbeat_url: str = Field(
+        default="", description="External dead-man heartbeat URL (§6 L1)"
+    )
+    deadman_heartbeat_timeout_sec: float = Field(default=5.0)
+
     @model_validator(mode="after")
     def resolve_backup_local_dir(self) -> AegisSettings:
         if self.backup_local_dir == _UNSET_PATH:

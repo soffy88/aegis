@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -35,11 +36,42 @@ _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probe
 _AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
 _RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
 _HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
+_DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
+_DEADMAN_STARTUP_GRACE_SEC = 180.0  # 不误报 boot 期尚未首轮 tick 的循环
 
 
 def _jittered(interval: float) -> float:
     """±10% jitter so multiple replicas don't synchronize onto the DB."""
     return interval * random.uniform(0.9, 1.1)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# §4.2/§6: 各编排循环每轮 tick 更新存活时刻(self-metrics 时间戳);_deadman_loop 据此评估卡死。
+_LOOP_LAST_SEEN: dict[str, datetime] = {}
+
+# 受死人监督的循环 → 其标称间隔(秒)。key 即 _tick(name) 的 name。
+_SUPERVISED_LOOPS: dict[str, float] = {
+    "correlator": _CORRELATOR_INTERVAL_SEC,
+    "capacity": _CAPACITY_INTERVAL_SEC,
+    "escalation": _ESCALATION_INTERVAL_SEC,
+    "scrape": _SCRAPE_INTERVAL_SEC,
+    "anomaly": _ANOMALY_INTERVAL_SEC,
+    "delivery": _DELIVERY_INTERVAL_SEC,
+    "recording": _RECORDING_INTERVAL_SEC,
+    "uptime": _UPTIME_INTERVAL_SEC,
+    "autoheal": _AUTOHEAL_INTERVAL_SEC,
+    "alert_eval": _ALERT_EVAL_INTERVAL_SEC,
+    "retention": _RETENTION_INTERVAL_SEC,
+}
+
+
+async def _tick(name: str, interval: float) -> None:
+    """标记 name 循环本轮存活 + 抖动睡眠。取代裸 sleep(_jittered(...))。"""
+    _LOOP_LAST_SEEN[name] = _utcnow()
+    await asyncio.sleep(_jittered(interval))
 
 
 async def _correlator_loop() -> None:
@@ -59,7 +91,7 @@ async def _correlator_loop() -> None:
             raise
         except Exception as exc:
             log.warning("correlator_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_CORRELATOR_INTERVAL_SEC))
+        await _tick("correlator", _CORRELATOR_INTERVAL_SEC)
 
 
 async def _capacity_loop(alerter: Any | None) -> None:
@@ -79,7 +111,7 @@ async def _capacity_loop(alerter: Any | None) -> None:
             raise
         except Exception as exc:
             log.warning("capacity_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_CAPACITY_INTERVAL_SEC))
+        await _tick("capacity", _CAPACITY_INTERVAL_SEC)
 
 
 def _build_webhook_dispatcher(conn: Any) -> Any:
@@ -115,7 +147,7 @@ async def _escalation_loop() -> None:
             raise
         except Exception as exc:
             log.warning("escalation_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_ESCALATION_INTERVAL_SEC))
+        await _tick("escalation", _ESCALATION_INTERVAL_SEC)
 
 
 async def _scrape_loop() -> None:
@@ -131,7 +163,7 @@ async def _scrape_loop() -> None:
             raise
         except Exception as exc:
             log.warning("scrape_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
+        await _tick("scrape", _SCRAPE_INTERVAL_SEC)
 
 
 async def _autoheal_policy_loop() -> None:
@@ -149,7 +181,7 @@ async def _autoheal_policy_loop() -> None:
             raise
         except Exception as exc:
             log.warning("autoheal_policy_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_AUTOHEAL_INTERVAL_SEC))
+        await _tick("autoheal", _AUTOHEAL_INTERVAL_SEC)
 
 
 async def _uptime_loop() -> None:
@@ -167,7 +199,7 @@ async def _uptime_loop() -> None:
             raise
         except Exception as exc:
             log.warning("uptime_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_UPTIME_INTERVAL_SEC))
+        await _tick("uptime", _UPTIME_INTERVAL_SEC)
 
 
 async def _recording_loop() -> None:
@@ -189,7 +221,7 @@ async def _recording_loop() -> None:
             raise
         except Exception as exc:
             log.warning("recording_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_RECORDING_INTERVAL_SEC))
+        await _tick("recording", _RECORDING_INTERVAL_SEC)
 
 
 async def _alert_eval_loop() -> None:
@@ -216,7 +248,7 @@ async def _alert_eval_loop() -> None:
             raise
         except Exception as exc:
             log.warning("alert_eval_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_ALERT_EVAL_INTERVAL_SEC))
+        await _tick("alert_eval", _ALERT_EVAL_INTERVAL_SEC)
 
 
 async def _delivery_loop() -> None:
@@ -243,7 +275,7 @@ async def _delivery_loop() -> None:
             raise
         except Exception as exc:
             log.warning("delivery_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_DELIVERY_INTERVAL_SEC))
+        await _tick("delivery", _DELIVERY_INTERVAL_SEC)
 
 
 async def _anomaly_loop() -> None:
@@ -259,7 +291,7 @@ async def _anomaly_loop() -> None:
             raise
         except Exception as exc:
             log.warning("anomaly_cron_error err=%s", exc)
-        await asyncio.sleep(_jittered(_ANOMALY_INTERVAL_SEC))
+        await _tick("anomaly", _ANOMALY_INTERVAL_SEC)
 
 
 async def _retention_loop() -> None:
@@ -315,7 +347,66 @@ async def _retention_loop() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("storage_guard_error err=%s", exc)
-        await asyncio.sleep(_jittered(_RETENTION_INTERVAL_SEC))
+        await _tick("retention", _RETENTION_INTERVAL_SEC)
+
+
+async def _deadman_loop() -> None:
+    """§6 死人开关:内部循环存活评估(deadman_evaluate) + L1 外部心跳(heartbeat_emit).
+
+    - 内部:对每个受监督循环,若曾见但现静默超 interval×factor+startup_grace ⇒ 卡死,大声 error。
+    - 外部(L1):仅当所有循环健康时才向 cfg.deadman_heartbeat_url 发心跳;任一卡死则**抑制**心跳
+      → 外部 watcher 超时告警("谁看门人":aegis 自身失能由平台外部发现,不自证清白)。
+    URL 空 = 外部死人禁用(degraded,仅内部 error 日志)。heartbeat_emit 是 sync → to_thread。"""
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+    from oprim import heartbeat_emit  # noqa: PLC0415
+    from oskill.deadman_evaluate import deadman_evaluate  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(45, 75))  # 让各循环有时间首轮 tick
+    while True:
+        now = _utcnow()
+        cfg = get_settings()
+        stalled: list[str] = []
+        for name, interval in _SUPERVISED_LOOPS.items():
+            try:
+                verdict = deadman_evaluate(
+                    subject=name,
+                    last_seen=_LOOP_LAST_SEEN.get(name),
+                    expected_interval_seconds=float(interval),
+                    now=now,
+                    grace_seconds=float(interval) * _DEADMAN_GRACE_FACTOR
+                    + _DEADMAN_STARTUP_GRACE_SEC,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("deadman_eval_error loop=%s err=%s", name, exc)
+                continue
+            # ever_seen 且 silent = 真卡死(曾运行后停摆);never_seen 由 startup_grace 兜住不误报
+            if verdict.silent and verdict.ever_seen:
+                stalled.append(f"{name}(overdue={verdict.overdue_seconds:.0f}s)")
+        if stalled:
+            log.error(
+                "loop_deadman_stalled loops=%s (编排循环停摆,MAPE-K 断链)", ", ".join(stalled)
+            )
+
+        url = cfg.deadman_heartbeat_url
+        if url:
+            if stalled:
+                log.warning(
+                    "deadman_heartbeat_suppressed reason=loops_stalled → 外部死人开关将触发"
+                )
+            else:
+                try:
+                    res = await asyncio.to_thread(
+                        heartbeat_emit, url=url, timeout_sec=cfg.deadman_heartbeat_timeout_sec
+                    )
+                    if not getattr(res, "delivered", False):
+                        log.warning(
+                            "deadman_heartbeat_undelivered status=%s err=%s",
+                            getattr(res, "status_code", None),
+                            getattr(res, "error", None),
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("deadman_heartbeat_error err=%s", exc)
+        await asyncio.sleep(_jittered(_HEARTBEAT_INTERVAL_SEC))
 
 
 _LOOP_RUNNER_ROLE = "aegis.loop_runner"
@@ -372,6 +463,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _autoheal_policy_loop(),
             _alert_eval_loop(),
             _retention_loop(),
+            _deadman_loop(),
             return_exceptions=True,
         )
     finally:
