@@ -260,20 +260,76 @@ async def _anomaly_loop() -> None:
         await asyncio.sleep(_jittered(_ANOMALY_INTERVAL_SEC))
 
 
+_LOOP_RUNNER_ROLE = "aegis.loop_runner"
+
+
+async def _acquire_loop_runner_role() -> Any | None:
+    """尝试成为 loop-runner —— 在专用长连接上取 PG advisory 角色锁 (DESIGN §4.1 / C-4.1).
+
+    用机制取缔"单 worker"纪律:多实例只有拿到锁的那个跑编排循环,其余只跑 API。锁随连接
+    存活(session 级),连接持有到进程退出,断开时 PG 自动释放。key 由 oprim.pg_advisory_lock_plan
+    从角色名稳定派生;SQL 用 aegis 的 asyncpg 占位符($1)。
+
+    Returns 持有的连接(赢得角色)或 None(未拿到 → 本实例只跑 API)。
+    """
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from oprim import pg_advisory_lock_plan  # noqa: PLC0415
+
+    plan = pg_advisory_lock_plan(name=_LOOP_RUNNER_ROLE)
+    try:
+        pool = get_pool()
+        conn = await pool.acquire()  # 专用连接,持有到进程退出(不归还池)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("loop_runner_pool_error err=%s (loops disabled)", exc)
+        return None
+    try:
+        got = await conn.fetchval("SELECT pg_try_advisory_lock($1)", plan.key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("loop_runner_lock_error err=%s", exc)
+        await pool.release(conn)
+        return None
+    if got:
+        return conn
+    await pool.release(conn)
+    return None
+
+
 async def _cron_main(alerter: Any | None) -> None:
-    await asyncio.gather(
-        _correlator_loop(),
-        _capacity_loop(alerter),
-        _escalation_loop(),
-        _scrape_loop(),
-        _anomaly_loop(),
-        _delivery_loop(),
-        _recording_loop(),
-        _uptime_loop(),
-        _autoheal_policy_loop(),
-        _alert_eval_loop(),
-        return_exceptions=True,
-    )
+    # §4.1: 只有拿到 loop-runner 角色锁的实例才跑编排循环(结构性取缔单 worker;多 worker 安全)。
+    runner_conn = await _acquire_loop_runner_role()
+    if runner_conn is None:
+        log.info("loop_runner_role_not_acquired instance=API-only (另一实例持锁)")
+        return
+    log.info("loop_runner_role_acquired starting orchestration loops")
+    try:
+        await asyncio.gather(
+            _correlator_loop(),
+            _capacity_loop(alerter),
+            _escalation_loop(),
+            _scrape_loop(),
+            _anomaly_loop(),
+            _delivery_loop(),
+            _recording_loop(),
+            _uptime_loop(),
+            _autoheal_policy_loop(),
+            _alert_eval_loop(),
+            return_exceptions=True,
+        )
+    finally:
+        from aegis.server.persistence import get_pool  # noqa: PLC0415
+        from oprim import pg_advisory_lock_plan  # noqa: PLC0415
+
+        try:
+            await runner_conn.fetchval(
+                "SELECT pg_advisory_unlock($1)",
+                pg_advisory_lock_plan(name=_LOOP_RUNNER_ROLE).key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await get_pool().release(runner_conn)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def start_orchestration_crons(alerter: Any | None = None) -> asyncio.Task:

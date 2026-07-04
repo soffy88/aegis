@@ -73,6 +73,8 @@ async def test_loop_registered_in_cron():
             scheduled.append(getattr(c, "__name__", str(c)))
             c.close()
 
-    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather):
+    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather), patch.object(
+        cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())
+    ):
         await cron._cron_main(alerter=None)
     assert "_autoheal_policy_loop" in scheduled

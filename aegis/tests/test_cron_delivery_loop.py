@@ -105,7 +105,9 @@ async def test_delivery_loop_registered_in_cron_main():
         for c in coros:
             _track(c)
 
-    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather):
+    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather), patch.object(
+        cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())
+    ):
         await cron._cron_main(alerter=None)
 
     assert "_delivery_loop" in scheduled
