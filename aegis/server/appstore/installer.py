@@ -29,9 +29,10 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from oprim import appstore_catalog_fetch, docker_compose_pull
-from oprim import compose_up as oprim_compose_up
-from oservice.engines.app_installer import AppInstallerEngine
+from obase.docker import docker_compose_pull
+from oprim import appstore_catalog_fetch
+from obase.docker import compose_up as oprim_compose_up
+from oservi.engines.app_installer import AppInstallerEngine
 from oskill import caddy_route_add as oskill_caddy_route_add
 from oskill import verify_health_after_action
 

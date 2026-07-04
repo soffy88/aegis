@@ -10,7 +10,7 @@ from unittest import mock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from oprim.url_safety_check import URLSafetyResult
+from oprim import URLSafetyResult
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import projects as projects_router

@@ -21,16 +21,10 @@ import logging
 from typing import Any
 
 from obase.notify import TelegramRequest, telegram_send
-from oprim import (
-    fs_disk_usage,
-    postgres_long_running_queries,
-    postgres_pool_status,
-    rabbitmq_consumer_count,
-    rabbitmq_queue_depth,
-    system_cpu_usage,
-    system_ram_usage,
-)
-from oservice.engines.alerter import AlerterEngine
+from oprim import postgres_pool_status, rabbitmq_consumer_count, rabbitmq_queue_depth, system_cpu_usage, system_ram_usage
+from oprim import disk_usage as fs_disk_usage
+from oprim import postgres_slow_queries as postgres_long_running_queries
+from oservi.engines.alerter import AlerterEngine
 
 from aegis.server.runtime.config import AegisSettings
 

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from oprim import docker_container_list
+from obase.docker import docker_container_list
 
 log = logging.getLogger(__name__)
 

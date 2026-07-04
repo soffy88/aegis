@@ -103,7 +103,7 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict]:
             ok = True
             err = None
         else:
-            from oprim import docker_container_restart  # noqa: PLC0415
+            from obase.docker import docker_container_restart  # noqa: PLC0415
 
             docker_host = p["docker_host"] or get_settings().docker_host
             try:

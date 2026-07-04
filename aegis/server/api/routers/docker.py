@@ -19,26 +19,7 @@ from fastapi import (
 )
 import asyncpg
 from obase.auth import jwt_verify_hs256
-from oprim import (
-    docker_container_exec,
-    docker_container_inspect,
-    docker_container_logs,
-    docker_container_restart,
-    docker_container_start,
-    docker_container_stats,
-    docker_container_stop,
-    docker_image_delete,
-    docker_image_list,
-    docker_image_pull,
-    docker_network_create,
-    docker_network_delete,
-    docker_network_list,
-    docker_ps,
-    docker_system_prune,
-    docker_volume_create,
-    docker_volume_delete,
-    docker_volume_list,
-)
+from obase.docker import docker_container_exec, docker_container_inspect, docker_container_logs, docker_container_restart, docker_container_start, docker_container_stats, docker_container_stop, docker_image_delete, docker_image_list, docker_image_pull, docker_network_create, docker_network_delete, docker_network_list, docker_ps, docker_system_prune, docker_volume_create, docker_volume_delete, docker_volume_list
 from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
@@ -242,7 +223,7 @@ async def search_logs(
 ) -> dict[str, Any]:
     """Aggregate + search recent logs across multiple containers (self-hosted log
     aggregation without an external Loki/ES stack)."""
-    from oprim import docker_container_list  # noqa: PLC0415
+    from obase.docker import docker_container_list  # noqa: PLC0415
 
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     names = [c.strip() for c in containers.split(",") if c.strip()]

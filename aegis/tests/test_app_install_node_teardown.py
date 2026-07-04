@@ -50,7 +50,7 @@ def _project_row():
 def test_uninstall_stops_container_before_delete():
     conn = mock.AsyncMock()
     conn.fetchrow.return_value = {"app_name": "grafana"}
-    with mock.patch("oprim.docker_container_stop") as stop:
+    with mock.patch("obase.docker.docker_container_stop") as stop:
         r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}")
     assert r.status_code == 204
     assert stop.call_args.kwargs["container_id"] == "grafana"

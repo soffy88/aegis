@@ -11,8 +11,8 @@ from collections.abc import Callable
 from typing import Any
 
 from obase import ProviderRegistry
-from oservice.assembler import ServiceManifest, assemble
-from oservice.engines.triage import TriageEngine
+from oservi.assembler import ServiceManifest, assemble
+from oservi.engines.triage import TriageEngine
 
 from aegis.server.runtime.config import AegisSettings
 
@@ -96,7 +96,9 @@ def _make_triage_llm_caller(
                 for e in events
             ]
 
-    _llm_caller.__module__ = "obase.aegis_bridge"
+    _llm_caller.__module__ = (
+        "oprim.aegis_bridge"  # oservi triage skeleton 要求 llm_caller kind=oprim
+    )
     return _llm_caller
 
 
@@ -107,7 +109,7 @@ def build_triage_service(cfg: AegisSettings) -> TriageEngine:
     """Assemble TriageEngine with on_signal trigger and LLM bridge."""
     has_provider = ProviderRegistry.has("llm", cfg.llm_provider)
     raw_caller: Callable[..., Any] | None = (
-        ProviderRegistry.get("llm", cfg.llm_provider) if has_provider else None
+        ProviderRegistry.get().llm(cfg.llm_provider) if has_provider else None
     )
 
     llm_caller = _make_triage_llm_caller(raw_caller, cfg.triage_llm_model, cfg.triage_max_tokens)

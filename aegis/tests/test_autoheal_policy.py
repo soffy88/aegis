@@ -35,7 +35,7 @@ def _conn(policy, metric_value):
 async def test_dry_run_logs_does_not_restart():
     conn = _conn(_policy(dry_run=True), metric_value=0.0)  # down (<1)
     with patch.object(ap.AutoHealEventRepository, "insert", AsyncMock()) as ins, \
-         patch("oprim.docker_container_restart") as restart:
+         patch("obase.docker.docker_container_restart") as restart:
         actions = await ap.run_autoheal_policies(conn)
     assert restart.call_count == 0                 # NEVER restarts in dry-run
     assert actions and actions[0]["dry_run"] is True
@@ -46,7 +46,7 @@ async def test_dry_run_logs_does_not_restart():
 async def test_real_restart_when_breached_and_not_dry_run():
     conn = _conn(_policy(dry_run=False), metric_value=0.0)  # down
     with patch.object(ap.AutoHealEventRepository, "insert", AsyncMock()), \
-         patch("oprim.docker_container_restart") as restart:
+         patch("obase.docker.docker_container_restart") as restart:
         actions = await ap.run_autoheal_policies(conn)
     restart.assert_called_once()
     assert restart.call_args.kwargs["container_id"] == "test-svc"
@@ -57,7 +57,7 @@ async def test_real_restart_when_breached_and_not_dry_run():
 async def test_no_action_when_not_breached():
     conn = _conn(_policy(dry_run=False), metric_value=1.0)  # up (not <1)
     with patch.object(ap.AutoHealEventRepository, "insert", AsyncMock()) as ins, \
-         patch("oprim.docker_container_restart") as restart:
+         patch("obase.docker.docker_container_restart") as restart:
         actions = await ap.run_autoheal_policies(conn)
     assert restart.call_count == 0 and not actions
     ins.assert_not_awaited()

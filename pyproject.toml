@@ -25,18 +25,18 @@ dependencies = [
     "anthropic>=0.40",
 
     # 3O 主库依赖 — VCS specifiers pin to exact git tag SHA (dependency-confusion-safe)
-    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.0",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
     # obase.migration 在 import 时 `from alembic import command`，但 obase 未声明该依赖。
     # aegis 自身不用 alembic，但不显式声明会导致 `import obase` 直接失败（之前被陈旧
     # uv.lock 掩盖）。这不是死依赖，勿删。
     "alembic>=1.13",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.1",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
     "python-frontmatter>=1.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
-    "oservice @ git+ssh://git@github.com/helios-plat/oservice.git@v0.4.3",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
+    "oservi @ git+ssh://git@github.com/helios-plat/oservi.git@v1.3.0",
     # AutoHeal 引擎 (aegis/server/autoheal/engine.py) import 此 SDK 的基类/类型。
     # 独立姊妹仓，与 3O 同样 git+ssh 锁 tag (HELIOS_DEPLOY_KEY 覆盖 helios-plat/*)。
     "aegis-autoheal-sdk @ git+ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git@v0.1.0",
@@ -101,17 +101,17 @@ python_version = "3.14"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "obase.*", "oprim.*", "oskill.*", "omodul.*", "oservice.*", "testcontainers.*", "docker.*", "redis.*"]
+module = ["asyncpg.*", "obase.*", "oprim.*", "oskill.*", "omodul.*", "oservi.*", "testcontainers.*", "docker.*", "redis.*"]
 ignore_missing_imports = true
 
 [tool.uv]
 # oservice v0.4.2 internally pins obase@v0.9.0; override forces full tree to v0.11.0
 # safe only if obase v0.11.0 is backward-compatible with oservice v0.4.2 API surface
 override-dependencies = [
-    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.11.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v2.35.1",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v2.15.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.22.0",
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
 ]
 
 [tool.ruff]

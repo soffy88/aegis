@@ -63,7 +63,7 @@ def _container_env(name: str, docker_host: str) -> dict[str, str]:
 
 def _exec(name: str, cmd: list[str], docker_host: str, env: dict[str, str] | None = None) -> str:
     """Run a command inside the container; raise 400 on non-zero exit."""
-    from oprim import docker_container_exec  # noqa: PLC0415
+    from obase.docker import docker_container_exec  # noqa: PLC0415
 
     res = docker_container_exec(
         container_id=name, command=cmd, env=env, timeout_sec=30, docker_host=docker_host

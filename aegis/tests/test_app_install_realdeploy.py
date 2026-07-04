@@ -40,9 +40,9 @@ async def test_run_install_creates_and_starts_container():
                              ports=[{"container_port": 80, "protocol": "tcp"}])
     with (
         mock.patch.object(apps_router, "get_pool", return_value=pool),
-        mock.patch("oprim.docker_image_pull") as pull,
-        mock.patch("oprim.docker_container_create") as create,
-        mock.patch("oprim.docker_container_start") as start,
+        mock.patch("obase.docker.docker_image_pull") as pull,
+        mock.patch("obase.docker.docker_container_create") as create,
+        mock.patch("obase.docker.docker_container_start") as start,
     ):
         await _run_install(uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), "trc", body)
 

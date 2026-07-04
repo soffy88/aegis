@@ -35,11 +35,8 @@ from aegis_autoheal_sdk import (
     Severity,
 )
 from omodul.rollback_app import RollbackAppConfig, RollbackAppInput, rollback_app
-from oprim import (
-    db_insert,
-    docker_container_restart,
-    http_request_once,
-)
+from obase.docker import docker_container_restart
+from oprim import http_request_once
 from oskill import circuit_breaker_check, diagnose_pattern_match
 
 from aegis.server.plugins.registry import get_plugin_callable
@@ -147,15 +144,15 @@ class AegisAutoHealContext(AutoHealContext):
     async def emit_trail_event(
         self, *, event_type: str, severity: str = "info", payload: dict[str, Any] | None = None
     ) -> None:
-        db_insert(
-            table="aegis_event_trail",
-            row={
-                "trace_id": self._trace_id,
-                "event_type": event_type,
-                "severity": severity,
-                "payload": payload or {},
-                "created_at": "NOW()",
-            },
+        # 旧实现 db_insert 到 aegis_event_trail —— 该表不存在于 schema(真表为 event_trail,
+        # 且 append_event 需 org/project 上下文,此 SDK context 无),等于静默失败的死路径。
+        # oprim v3 移除 db_insert;此处改 best-effort 日志(真 event_trail 写入在 orchestration 层)。
+        log.info(
+            "autoheal_trail_event trace=%s type=%s severity=%s payload=%s",
+            self._trace_id,
+            event_type,
+            severity,
+            payload or {},
         )
 
 

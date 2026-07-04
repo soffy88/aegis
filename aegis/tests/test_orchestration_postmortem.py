@@ -100,7 +100,7 @@ class TestGeneratePostmortem:
         ]
         conn.fetch.return_value = []  # events
 
-        with mock.patch("aegis.server.orchestration.postmortem.run_postmortem") as mock_run:
+        with mock.patch("aegis.server.api.routers.incidents.run_postmortem") as mock_run:
             mock_run.return_value = "# Postmortem\n\nRoot cause: ..."
             with TestClient(_make_app("operator", conn), raise_server_exceptions=False) as c:
                 r = c.post(f"/api/v1/orgs/{_ORG}/incidents/{_INCIDENT}/postmortem")
@@ -131,7 +131,7 @@ class TestGeneratePostmortem:
         conn.fetch.return_value = []
         conn.execute.return_value = "UPDATE 1"
 
-        with mock.patch("aegis.server.orchestration.postmortem.run_postmortem") as mock_run:
+        with mock.patch("aegis.server.api.routers.incidents.run_postmortem") as mock_run:
             mock_run.return_value = "# PM"
             with TestClient(_make_app("operator", conn), raise_server_exceptions=False) as c:
                 c.post(f"/api/v1/orgs/{_ORG}/incidents/{_INCIDENT}/postmortem")

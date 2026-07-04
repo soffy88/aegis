@@ -23,8 +23,8 @@ from collections.abc import Callable
 from typing import Any
 
 from obase import ProviderRegistry
-from oservice.assembler import ServiceManifest, assemble
-from oservice.engines.action_planner import ActionPlannerEngine
+from oservi.assembler import ServiceManifest, assemble
+from oservi.engines.action_planner import ActionPlannerEngine
 
 from aegis.server.brain.rca import _build_knowledge_retrieval_fn
 from aegis.server.plugins.registry import get_plugin_callable
@@ -116,7 +116,7 @@ def _make_planner_llm_provider(
 
 def build_planner_service(cfg: AegisSettings) -> ActionPlannerEngine:
     if ProviderRegistry.has("llm", cfg.llm_provider):
-        raw_caller: Callable[..., Any] | None = ProviderRegistry.get("llm", cfg.llm_provider)
+        raw_caller: Callable[..., Any] | None = ProviderRegistry.get().llm(cfg.llm_provider)
     else:
         log.warning(
             "planner_build: llm provider %r not registered — planning will use stub",

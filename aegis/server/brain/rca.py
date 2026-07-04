@@ -19,15 +19,8 @@ from collections.abc import Callable
 from typing import Any
 
 from obase import ProviderRegistry
+from obase.docker import docker_inspect, docker_logs, docker_stats
 from oprim import (
-    docker_inspect,
-    docker_logs,
-    docker_stats,
-    fs_disk_usage,
-    network_http_health,
-    network_port_check,
-    postgres_locks,
-    postgres_long_running_queries,
     postgres_pool_status,
     rabbitmq_consumer_count,
     rabbitmq_queue_depth,
@@ -35,8 +28,12 @@ from oprim import (
     system_load_avg,
     system_ram_usage,
 )
-from oservice.assembler import ServiceManifest, assemble
-from oservice.engines.agentic_loop import AgenticLoopEngine
+from oprim import disk_usage as fs_disk_usage
+from oprim import postgres_locks_status as postgres_locks
+from oprim import postgres_slow_queries as postgres_long_running_queries
+from oprim._network import network_http_health, network_port_check  # v3 not top-level
+from oservi.assembler import ServiceManifest, assemble
+from oservi.engines.agentic_loop import AgenticLoopEngine
 from oskill import retrieve_runbook
 
 from aegis.server.runtime.config import AegisSettings
@@ -48,16 +45,31 @@ from aegis.server.services.vector_store import (
 
 log = logging.getLogger(__name__)
 
-# 14 oprim RCA tools (advisor SPEC §1.2)
+
+def _as_oprim_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """oservi agentic_loop tools 注入要求 kind=oprim,但 docker 原语 v3 迁至 obase.docker
+    (kind=obase)。用 bridge 包裹使 __module__ 判定为 oprim,行为透传不变。
+    (更干净的修法是 oservi 放宽 tools kind 接受 obase.docker —— 属 3O 侧后续。)"""
+    import functools
+
+    @functools.wraps(fn)
+    def _tool(*args: Any, **kwargs: Any) -> Any:
+        return fn(*args, **kwargs)
+
+    _tool.__module__ = "oprim.aegis_bridge"
+    return _tool
+
+
+# 14 RCA tools (advisor SPEC §1.2); docker 三件套经 bridge 标记为 oprim kind
 _RCA_TOOLS: list[Callable[..., Any]] = [
     postgres_pool_status,
     postgres_long_running_queries,
     postgres_locks,
     rabbitmq_queue_depth,
     rabbitmq_consumer_count,
-    docker_logs,
-    docker_inspect,
-    docker_stats,
+    _as_oprim_tool(docker_logs),
+    _as_oprim_tool(docker_inspect),
+    _as_oprim_tool(docker_stats),
     network_http_health,
     network_port_check,
     system_cpu_usage,
@@ -145,7 +157,7 @@ def _make_react_llm_provider(
             log.warning("rca_llm_call_failed: %s", exc)
             return {"final_answer": f"LLM error: {exc}"}
 
-    _provider.__module__ = "obase.aegis_bridge"
+    _provider.__module__ = "oprim.aegis_bridge"  # oservi skeleton 要 llm kind=oprim
     return _provider
 
 
@@ -189,7 +201,7 @@ def _build_knowledge_retrieval_fn(cfg: AegisSettings) -> Callable[[str], Any]:
 
 def build_rca_service(cfg: AegisSettings) -> AgenticLoopEngine:
     if ProviderRegistry.has("llm", cfg.llm_provider):
-        raw_caller: Callable[..., Any] | None = ProviderRegistry.get("llm", cfg.llm_provider)
+        raw_caller: Callable[..., Any] | None = ProviderRegistry.get().llm(cfg.llm_provider)
     else:
         log.warning(
             "rca_build: llm provider %r not registered — investigation will use stub",
@@ -200,13 +212,24 @@ def build_rca_service(cfg: AegisSettings) -> AgenticLoopEngine:
     llm_provider = _make_react_llm_provider(raw_caller, cfg.rca_llm_model)
     knowledge_retrieval = _build_knowledge_retrieval_fn(cfg)
 
+    # oservi v1.3.0 agentic_loop 契约变化:llm_provider→llm_caller、knowledge_retrieval→retrieval(0..1)、
+    # 新增必需 turn_handler(omodul,预处理 prompt)。aegis 无预处理需求 → 注入 passthrough bridge。
+    def _passthrough_turn_handler(*, messages: list[Any], context: Any = None) -> dict[str, Any]:
+        return {"messages": messages}
+
+    _passthrough_turn_handler.__module__ = "omodul.aegis_bridge"
+
+    inject: dict[str, list[Any]] = {
+        "llm_caller": [llm_provider],
+        "tools": _RCA_TOOLS,
+        "turn_handler": [_passthrough_turn_handler],
+    }
+    if knowledge_retrieval is not None:
+        inject["retrieval"] = [knowledge_retrieval]  # 0..1:仅在 vector_db 就绪时注入
+
     manifest = ServiceManifest(
         skeleton="agentic_loop",
-        inject={
-            "llm_provider": [llm_provider],
-            "tools": _RCA_TOOLS,
-            "knowledge_retrieval": [knowledge_retrieval],
-        },
+        inject=inject,
         trigger={},
         config={"max_steps": cfg.rca_max_steps},
         name="aegis-rca",

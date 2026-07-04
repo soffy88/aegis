@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from oprim.vector_db.lancedb import LanceDBVectorDB, open_vector_db
-from oprim.vector_encode import vector_encode
+from oprim import LanceDBVectorDB, open_vector_db
+from oprim import vector_encode
 
 from aegis.server.runtime.config import AegisSettings
 

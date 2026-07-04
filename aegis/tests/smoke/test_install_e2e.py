@@ -125,7 +125,7 @@ async def test_install_demo_app_via_dispatcher(pg_conn: asyncpg.Connection) -> N
         findings = result.get("findings", {})
         container_id = findings.get("container_id") if isinstance(findings, dict) else None
         if container_id:
-            from oprim import docker_container_stop
+            from obase.docker import docker_container_stop
 
             docker_container_stop(container_id=container_id, timeout_sec=5)
 

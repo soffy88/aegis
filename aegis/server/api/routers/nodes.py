@@ -182,7 +182,7 @@ async def list_node_containers(
     user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
 ) -> list[dict[str, Any]]:
     """List containers running on a specific node."""
-    from oprim import docker_ps
+    from obase.docker import docker_ps
 
     row = await conn.fetchrow(
         "SELECT docker_host_url FROM aegis_nodes WHERE org_id = $1 AND node_id = $2",

@@ -175,7 +175,7 @@ async def execute_runbook(name: str, dry_run: bool = True) -> RunbookExecution:
             execution.steps[i].status = "running"
             try:
                 if step.type == StepType.docker:
-                    from oprim import docker_container_restart  # noqa: PLC0415
+                    from obase.docker import docker_container_restart  # noqa: PLC0415
 
                     parts = step.command.split()
                     if parts[0] == "restart" and len(parts) > 1:

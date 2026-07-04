@@ -35,9 +35,9 @@ def test_compose_install_materializes_and_generates_secrets(
         calls.append(kwargs)
         return {"ok": True}
 
-    import oprim
+    import obase.docker
 
-    monkeypatch.setattr(oprim, "docker_compose_up", fake_up)
+    monkeypatch.setattr(obase.docker, "docker_compose_up", fake_up)
 
     body = InstallAppRequest(
         app_name="demo",
@@ -94,9 +94,9 @@ def test_pick_free_host_port_falls_back_on_error(monkeypatch: pytest.MonkeyPatch
 def test_compose_install_env_stable_across_reinstall(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import oprim
+    import obase.docker
 
-    monkeypatch.setattr(oprim, "docker_compose_up", lambda **k: {})
+    monkeypatch.setattr(obase.docker, "docker_compose_up", lambda **k: {})
     body = InstallAppRequest(
         app_name="demo", compose=COMPOSE, compose_env={"DB_PASSWORD": "__RANDOM__"}
     )

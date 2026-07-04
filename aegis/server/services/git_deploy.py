@@ -88,7 +88,7 @@ async def build_and_deploy_from_git(
         _clone_and_build, repo_url, branch, app_name, subdir, build_root
     )
 
-    from oprim import docker_container_create, docker_container_start  # noqa: PLC0415
+    from obase.docker import docker_container_create, docker_container_start  # noqa: PLC0415
 
     # Publish each container port on an auto-assigned host port (None) to avoid
     # collisions with services already bound to the fixed number (e.g. 80/443).

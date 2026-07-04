@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from oprim.vector_db.lancedb import VectorRecord
-from oprim.vector_encode import vector_encode
+from oprim import VectorRecord
+from oprim import vector_encode
 
 from aegis.server.runtime.config import AegisSettings
 from aegis.server.services.runbook import list_runbooks

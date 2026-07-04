@@ -25,7 +25,7 @@ def test_make_vector_encode_fn_returns_list() -> None:
 
 def test_make_vector_search_fn_maps_records_to_dicts() -> None:
     """search fn 把 VectorRecord 映射成 retrieve_runbook 期望的 dict 格式."""
-    from oprim.vector_db.lancedb import VectorRecord
+    from oprim import VectorRecord
 
     mock_db = MagicMock()
     mock_db.search.return_value = [

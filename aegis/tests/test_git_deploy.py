@@ -43,8 +43,8 @@ async def test_build_and_deploy_happy_path(tmp_path):
     with (
         mock.patch("subprocess.run", side_effect=fake_clone),
         mock.patch("docker.from_env") as dfe,
-        mock.patch("oprim.docker_container_create") as create,
-        mock.patch("oprim.docker_container_start") as start,
+        mock.patch("obase.docker.docker_container_create") as create,
+        mock.patch("obase.docker.docker_container_start") as start,
     ):
         dfe.return_value.images.build.return_value = (fake_img, [])
         tag = await gd.build_and_deploy_from_git(

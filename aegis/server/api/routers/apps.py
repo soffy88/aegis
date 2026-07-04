@@ -120,7 +120,7 @@ def _compose_install(body: InstallAppRequest, data_dir: Path | None, docker_host
     and bring it up. Images are pulled on demand (compose pull='missing')."""
     import secrets  # noqa: PLC0415
 
-    from oprim import docker_compose_up  # noqa: PLC0415
+    from obase.docker import docker_compose_up  # noqa: PLC0415
 
     base = (data_dir or Path("/data/aegis")) / "apps" / body.app_name
     base.mkdir(parents=True, exist_ok=True)
@@ -181,11 +181,7 @@ async def _run_install(
             final_status = "completed"
             domain = body.domain
         else:
-            from oprim import (  # noqa: PLC0415
-                docker_container_create,
-                docker_container_start,
-                docker_image_pull,
-            )
+            from obase.docker import docker_container_create, docker_container_start, docker_image_pull
 
             image = body.image_to_pull
             if not image:
@@ -447,7 +443,7 @@ async def uninstall_app(
     if compose_file.exists():
         # Multi-container app: tear the whole stack down (containers + network).
         try:
-            from oprim import docker_compose_down  # noqa: PLC0415
+            from obase.docker import docker_compose_down  # noqa: PLC0415
 
             await asyncio.to_thread(
                 docker_compose_down,
@@ -459,7 +455,7 @@ async def uninstall_app(
             log.warning("uninstall_compose_down_failed app=%s err=%s", row["app_name"], exc)
     else:
         try:
-            from oprim import docker_container_stop  # noqa: PLC0415
+            from obase.docker import docker_container_stop  # noqa: PLC0415
 
             await asyncio.to_thread(
                 docker_container_stop, container_id=row["app_name"], docker_host=dh
@@ -521,7 +517,7 @@ async def update_compose(
     path.write_text(req.compose)
 
     def _redeploy() -> None:
-        from oprim import docker_compose_up  # noqa: PLC0415
+        from obase.docker import docker_compose_up  # noqa: PLC0415
 
         docker_compose_up(
             compose_file=str(path),

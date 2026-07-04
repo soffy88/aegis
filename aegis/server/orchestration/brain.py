@@ -101,7 +101,7 @@ async def run_brain_pipeline(
 
 def _hash(data: Any) -> str:
     """Hash using oprim utilities."""
-    from oprim import canonical_json, sha256_hash  # noqa: PLC0415
+    from oprim import canonical_json, sha256_hash
 
     if isinstance(data, (dict, list)):
         return sha256_hash(canonical_json(data))
