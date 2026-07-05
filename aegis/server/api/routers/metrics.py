@@ -184,6 +184,49 @@ async def query_metrics(
     }
 
 
+@router.get("/top-series")
+async def top_series(
+    metric_name: str = Query(..., min_length=1, max_length=200),
+    hours: float = Query(default=0.25, gt=0, le=24),
+    limit: int = Query(default=1, ge=1, le=20),
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Which cAdvisor container series currently holds the top value for *metric_name*
+    (e.g. "which container is the busiest CPU consumer right now").
+
+    /query aggregates across all series into one number and discards identity — this
+    keeps each series' most recent sample so the caller can show *who*, not just *how
+    much*. Excludes cAdvisor's whole-host "/" cgroup root (id='/'), which is a
+    host-wide aggregate, not a real container. Scoped to container metrics (which
+    always carry a cAdvisor `name`/`image` tag pair) — not a generic any-tag-shape API.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT ON (tags->>'name') tags->>'name' AS name, tags->>'image' AS image,
+               value, ts
+        FROM agent_metrics
+        WHERE metric_name = $1
+          AND ts > now() - ($2::double precision * interval '1 hour')
+          AND tags->>'name' IS NOT NULL
+          AND (tags->>'id' IS NULL OR tags->>'id' != '/')
+        ORDER BY tags->>'name', ts DESC
+        """,
+        metric_name,
+        float(hours),
+    )
+    top = sorted(rows, key=lambda r: r["value"], reverse=True)[:limit]
+    return [
+        {
+            "name": r["name"],
+            "image": r["image"],
+            "value": float(r["value"]),
+            "ts": r["ts"].isoformat(),
+        }
+        for r in top
+    ]
+
+
 @router.get("/anomaly")
 async def evaluate_anomaly(
     metric_name: str = Query(..., min_length=1, max_length=200),
@@ -208,8 +251,12 @@ async def evaluate_anomaly(
     )
     result = ewma_anomaly([float(r["value"]) for r in rows])
     if result is None:
-        return {"metric_name": metric_name, "hostname": hostname, "evaluated": False,
-                "reason": "not enough samples"}
+        return {
+            "metric_name": metric_name,
+            "hostname": hostname,
+            "evaluated": False,
+            "reason": "not enough samples",
+        }
     return {
         "metric_name": metric_name,
         "hostname": hostname,
