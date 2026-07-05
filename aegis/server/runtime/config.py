@@ -97,6 +97,20 @@ class AegisSettings(BaseSettings):
         default=None, description="Ollama API base URL (AEGIS_DESIGN 决策 2 双轨, 可选)"
     )
 
+    # === Ollama 网关(§5.2 单卡多项目共享)===
+    # 单张 GPU 被多个独立项目共享,各自直连会产生 NVML 抢占错误(2026-07-05 ocr-vllm
+    # 崩溃事故实证)。aegis 接管为唯一网关:其它项目 MUST 经此转发,由并发闸门serialize
+    # 对底层 Ollama 的实际调用,而非各自独立进程直接抢卡。
+    ollama_gateway_max_concurrency: int = Field(
+        default=1, description="同时穿透到 Ollama 的请求数上限(单卡默认串行=1)"
+    )
+    ollama_gateway_queue_timeout_sec: float = Field(
+        default=60.0, description="排队等待并发闸门的最长秒数,超时返回 503(GPU 繁忙)"
+    )
+    ollama_gateway_token: str = Field(
+        default="", description="调用网关所需的共享密钥(Bearer);空=不校验(仅限内网场景)"
+    )
+
     # === AutoHeal ===
     autoheal_enabled: bool = True
     autoheal_dry_run: bool = Field(
