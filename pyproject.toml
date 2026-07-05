@@ -32,7 +32,18 @@ dependencies = [
     # aegis 自身不用 alembic，但不显式声明会导致 `import obase` 直接失败（之前被陈旧
     # uv.lock 掩盖）。这不是死依赖，勿删。
     "alembic>=1.13",
+    # 同类坑：obase.docker.client 在 import 时 `import docker`（docker-py SDK），但 obase
+    # 未声明该依赖。此前只声明在 [smoke] 可选组，本地 dev/test venv 因此侥幸装了，直到
+    # 生产镜像（--no-dev 构建）才暴露 ModuleNotFoundError。aegis 编排层（autoheal 等）
+    # 无条件 import 依赖此链路，故必须是主依赖，非可选。
+    "docker>=6.0",
     "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
+    # 同类坑第三例:aegis.server.services.vector_store 无条件 import oprim.LanceDBVectorDB
+    # (Brain RCA runbook 检索链路),它需要 lancedb,但 oprim 只把 lancedb 声明在自己的
+    # [storage]/[full] 可选 extra 里(uv 0.11.26 对 VCS 依赖的 extras 解析不进 uv.lock,
+    # 试过 oprim[storage] 无效)。此前本地 dev venv 有 lancedb 全靠一次手动装的残留
+    # (未记入 uv.lock),生产镜像重建才暴露 ModuleNotFoundError。直接声明,绕开 extras。
+    "lancedb>=0.17",
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
