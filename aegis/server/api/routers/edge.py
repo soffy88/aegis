@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +11,16 @@ from pydantic import BaseModel
 
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
-from aegis.server.edge.caddy import CaddyEdge, get_caddy_edge
+from aegis.server.edge.caddy import (
+    CaddyEdge,
+    get_caddy_edge,
+)
+from aegis.server.edge.caddy import (
+    org_route_id as _org_route_id,
+)
+from aegis.server.edge.caddy import (
+    org_route_prefix as _org_prefix,
+)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/edge/routes", tags=["edge"])
 
@@ -28,17 +36,6 @@ def _edge() -> CaddyEdge:
             detail="CaddyEdge not initialized — check caddy_admin_url config",
         )
     return edge
-
-
-def _org_prefix(org_id: UUID) -> str:
-    """Org-scoped prefix for all Caddy route IDs owned by this org."""
-    return f"aegis-org-{org_id}-"
-
-
-def _org_route_id(org_id: UUID, domain: str) -> str:
-    """Generate a deterministic, org-namespaced route ID from a domain."""
-    slug = re.sub(r"[^a-z0-9]+", "-", domain.lower()).strip("-")
-    return f"{_org_prefix(org_id)}{slug}"
 
 
 class RouteCreateRequest(BaseModel):
