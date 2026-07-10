@@ -221,3 +221,66 @@ def test_list_containers_oprim_error_returns_502(client: TestClient) -> None:
         resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
     assert resp.status_code == 502
     assert "docker daemon not responding" in resp.json()["detail"]
+
+
+# ── privilege re-tiering: exec/terminal are admin+, host-shell is owner-only ────
+
+
+def _user_with_role(role: str):
+    async def _u() -> UserContext:
+        return UserContext(
+            user_id=_USER,
+            email=f"{role}@example.com",
+            orgs=[OrgInToken(org_id=_ORG, slug="test-org", role=role)],
+        )
+
+    return _u
+
+
+def test_exec_rejected_for_operator(client: TestClient) -> None:
+    """Arbitrary in-container exec must require admin+, not operator (host-RCE surface)."""
+    client.app.dependency_overrides[get_current_user] = _user_with_role("operator")
+    try:
+        resp = client.post(
+            f"/api/v1/orgs/{_ORG}/docker/containers/abc123/exec",
+            json={"command": ["cat", "/etc/passwd"]},
+        )
+        assert resp.status_code == 403
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_exec_allowed_for_admin(client: TestClient) -> None:
+    client.app.dependency_overrides[get_current_user] = _user_with_role("admin")
+    result = MagicMock()
+    result.model_dump.return_value = {"exit_code": 0, "output": "root"}
+    try:
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_exec",
+            return_value=result,
+        ):
+            resp = client.post(
+                f"/api/v1/orgs/{_ORG}/docker/containers/abc123/exec",
+                json={"command": ["id"]},
+            )
+        assert resp.status_code == 200
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_host_shell_rejected_for_admin(client: TestClient) -> None:
+    """host-shell mints a --privileged -v /:/host container → owner-only break-glass."""
+    client.app.dependency_overrides[get_current_user] = _user_with_role("admin")
+    try:
+        resp = client.post(f"/api/v1/orgs/{_ORG}/docker/host-shell")
+        assert resp.status_code == 403
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_host_shell_allowed_for_owner(client: TestClient) -> None:
+    already_running = MagicMock(stdout="containerid\n")
+    with mock.patch("subprocess.run", return_value=already_running):
+        resp = client.post(f"/api/v1/orgs/{_ORG}/docker/host-shell")  # _fake_user is owner
+    assert resp.status_code == 200
+    assert resp.json()["container"] == "aegis-host-shell"
