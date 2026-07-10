@@ -1033,6 +1033,53 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON runbook_vectors USING gin (content gin_trgm_ops);
         """,
     ),
+    (
+        # devplatform Phase 1: stale-task-reaper —— "PG 状态字段 + 异步 worker" 组合下
+        # worker 被硬杀导致任务永卡 processing 的通用回收器。项目声明 目标表/状态字段/
+        # 超时阈值/卡死后动作(标记 failed 或重新入队)，Aegis 到点扫描并处理，写 decision_trail。
+        # dry_run 默认 TRUE(先观察)；target_dsn_secret 为空则扫 Aegis 自身库，否则解析
+        # secrets vault 里的 DSN 连目标项目库(隔离库+专用 reaper 角色)。
+        "049_stale_task_policies",
+        """
+        CREATE TABLE IF NOT EXISTS stale_task_policies (
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id              UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name                TEXT NOT NULL,
+            target_dsn_secret   TEXT,
+            target_table        TEXT NOT NULL,
+            status_column       TEXT NOT NULL,
+            timestamp_column    TEXT NOT NULL,
+            id_column           TEXT,
+            processing_value    TEXT NOT NULL,
+            timeout_minutes     INT NOT NULL DEFAULT 30 CHECK (timeout_minutes > 0),
+            action              TEXT NOT NULL DEFAULT 'mark_failed'
+                                CHECK (action IN ('mark_failed', 'requeue')),
+            failed_value        TEXT NOT NULL DEFAULT 'failed',
+            requeue_value       TEXT NOT NULL DEFAULT 'pending',
+            max_actions_per_run INT NOT NULL DEFAULT 100 CHECK (max_actions_per_run > 0),
+            dry_run             BOOLEAN NOT NULL DEFAULT TRUE,
+            enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+            last_run_at         TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stale_task_policies_enabled
+            ON stale_task_policies (enabled) WHERE enabled = TRUE;
+
+        CREATE TABLE IF NOT EXISTS stale_task_reap_events (
+            id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            policy_id    UUID NOT NULL REFERENCES stale_task_policies(id) ON DELETE CASCADE,
+            org_id       UUID NOT NULL,
+            reaped_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+            stuck_count  INT NOT NULL,
+            action       TEXT NOT NULL,
+            dry_run      BOOLEAN NOT NULL,
+            detail       JSONB
+        );
+        CREATE INDEX IF NOT EXISTS idx_stale_task_reap_events_policy
+            ON stale_task_reap_events (policy_id, reaped_at DESC);
+        """,
+    ),
 ]
 
 
