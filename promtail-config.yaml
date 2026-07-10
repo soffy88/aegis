@@ -1,0 +1,34 @@
+# Aegis promtail —— 通过 Docker 服务发现采集所有容器 stdout/stderr 推到 Loki。
+# 打 container / stack / service 标签，使 loki.py 的 {container="aegis-backend"} 查询可用。
+# 版本对齐 grafana/promtail:2.9.8。
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://aegis-loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+    relabel_configs:
+      # 容器名 (去掉前导 /) → container 标签 (loki.py 查询主键)
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      # compose 项目/服务 → stack / service 标签
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: stack
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: service
+      # stdout / stderr
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream
+      - target_label: job
+        replacement: docker

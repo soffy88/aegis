@@ -1,0 +1,63 @@
+# Aegis Loki 配置 —— 单二进制 + filesystem，带保留期 (镜像默认 local-config 无保留会撑爆卷)。
+# 版本对齐 grafana/loki:2.9.8。挂载为 /etc/loki/loki-config.yaml (compose command 指向它)。
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    # 与镜像默认 local-config 一致 (v11 / 2020-10-24)，避免改动 aegis-loki-data 卷上已有
+    # 数据的 schema。仅在其上补 storage/limits/compactor 保留期。
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+    shared_store: filesystem
+  filesystem:
+    directory: /loki/chunks
+
+# 14 天保留，由 compactor 真正删除过期块。
+limits_config:
+  retention_period: 336h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_streams_per_user: 0
+  max_global_streams_per_user: 5000
+
+compactor:
+  working_directory: /loki/compactor
+  shared_store: filesystem
+  retention_enabled: true
+  retention_delete_delay: 2h
+  compaction_interval: 10m
+
+table_manager:
+  retention_deletes_enabled: false
+  retention_period: 0s
+
+analytics:
+  reporting_enabled: false

@@ -127,10 +127,21 @@ docker logs aegis-console -f
 docker logs aegis-caddy -f
 ```
 
-> ⚠️ 目前 prod 无聚合日志 / 无错误收件箱（Sentry 按设计在 prod 关闭以避免自监控死循环，
-> Loki 已部署但容器日志采集未接入），每容器仅保留 ~30MB×3 的 json-file 轮转。上线前若要
-> 事故取证能力，需接一个日志 shipper（promtail/json-file→Loki）。这是运维基建项，不在
-> 代码改动范围内。
+**聚合日志（Loki + promtail）**：`aegis-promtail` 经 Docker 服务发现 tail 所有容器
+stdout/stderr，打 `container`/`stack`/`service` 标签推到 `aegis-loki`（14 天保留，见
+`loki-config.yaml`）。在 Console 的 **/loki** 页用 LogQL 查询，例：
+
+```logql
+{container="aegis-backend"}
+{stack="aegis"} |= "error"
+```
+
+> 冷启动时 promtail 会尝试补推历史 json-file 日志，超过 7 天的会被 Loki 以
+> `timestamp too old` 拒绝（无害，新日志正常入库）；读取偏移持久化在
+> `aegis-promtail-positions` 卷，重启不会重读。
+>
+> ⚠️ 仍无独立错误收件箱：Sentry 在 prod 按设计关闭（避免自监控死循环），错误现经聚合
+> 日志检索（`|= "ERROR"`）。链路追踪（OTel/Jaeger）仍未接入。
 
 ### 数据备份
 

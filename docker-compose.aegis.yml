@@ -274,11 +274,39 @@ services:
     image: grafana/loki:2.9.8
     container_name: aegis-loki
     restart: unless-stopped
-    command: -config.file=/etc/loki/local-config.yaml
+    # 自带配置带 14 天 compactor 保留期 (镜像默认 local-config 无保留会撑爆卷)。
+    command: -config.file=/etc/loki/loki-config.yaml
     networks:
       - helios-net
     volumes:
       - aegis-loki-data:/loki
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 日志采集: 通过 Docker 服务发现 tail 所有容器 stdout/stderr → 打 container/stack/service
+  # 标签 → 推 aegis-loki。使 Console 的 /loki 页 (LogQL {container="..."}) 有数据。
+  aegis-promtail:
+    image: grafana/promtail:2.9.8
+    container_name: aegis-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - helios-net
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - aegis-promtail-positions:/tmp
+    # 需 docker.sock 属组才能经 Docker API 读容器日志 (非 root)。
+    group_add:
+      - "${AEGIS_DOCKER_GID:-988}"
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - aegis-loki
     logging:
       driver: json-file
       options:
@@ -333,6 +361,7 @@ volumes:
   aegis-caddy-config:
   aegis-data:          # 备份/向量库/Runbook YAML 持久化
   aegis-loki-data:     # Loki 日志块存储
+  aegis-promtail-positions: # promtail 读取偏移 (跨重启避免重读历史日志)
   aegis-pyroscope-data: # Pyroscope profile 存储
 
 networks:
