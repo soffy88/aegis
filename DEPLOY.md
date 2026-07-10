@@ -150,6 +150,20 @@ EOF
 
 重启后端后 Runbook 自动加载并索引到向量库。
 
+## 安全模型 / 信任边界（务必阅读）
+
+本部署采用**共享主机（可信租户）模型**：
+
+- **平台 Docker daemon 与主机指标是所有 org 共享的基础设施。** 平台主机（`node_id`
+  省略时）上的容器列表、日志、指标对本部署内任一 org 的用户可见；容器操作只按**角色**
+  分级，不按 org 归属细分。因此**只应接入你信任的 org**（自己/内部团队）。
+- **越权高危动作已按角色收紧**：容器内 `exec` 与交互终端需 **admin+**；
+  `host-shell`（特权 `-v /:/host` → 宿主机 root，break-glass）需 **owner**。
+- **要隔离互不信任的租户**，给该租户注册**它自己的 node**（独立 docker_host_url）——
+  node 上的操作按 `org_id` 严格作用域；不要让多个互不信任方共用平台 daemon。
+- 若未来确需在共享 daemon 上做硬隔离，容器已打 `aegis.org`/`aegis.project` 标签，
+  可据此加按标签的归属强制（当前信任模型下未启用）。
+
 ## 接入现有项目
 
 1. 进入 Aegis Console → Nodes → 注册节点（本机填 `unix:///var/run/docker.sock`）
