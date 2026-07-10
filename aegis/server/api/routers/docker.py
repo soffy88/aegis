@@ -19,7 +19,26 @@ from fastapi import (
 )
 import asyncpg
 from obase.auth import jwt_verify_hs256
-from obase.docker import docker_container_exec, docker_container_inspect, docker_container_logs, docker_container_restart, docker_container_start, docker_container_stats, docker_container_stop, docker_image_delete, docker_image_list, docker_image_pull, docker_network_create, docker_network_delete, docker_network_list, docker_ps, docker_system_prune, docker_volume_create, docker_volume_delete, docker_volume_list
+from obase.docker import (
+    docker_container_exec,
+    docker_container_inspect,
+    docker_container_logs,
+    docker_container_restart,
+    docker_container_start,
+    docker_container_stats,
+    docker_container_stop,
+    docker_image_delete,
+    docker_image_list,
+    docker_image_pull,
+    docker_network_create,
+    docker_network_delete,
+    docker_network_list,
+    docker_ps,
+    docker_system_prune,
+    docker_volume_create,
+    docker_volume_delete,
+    docker_volume_list,
+)
 from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
@@ -774,77 +793,84 @@ async def container_terminal(
     import docker.errors
 
     settings = get_settings()
+    client = None
     try:
-        client = docker.DockerClient(base_url=settings.docker_host)
-        container = client.containers.get(container_name)
-    except docker.errors.NotFound:
-        await websocket.send_text(
-            json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
-        )
-        await websocket.close()
-        return
-    except Exception as exc:
-        await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
-        await websocket.close()
-        return
-
-    # 3. Create exec instance (interactive PTY)
-    exec_id = client.api.exec_create(
-        container_name,
-        cmd="/bin/sh",
-        stdin=True,
-        stdout=True,
-        stderr=True,
-        tty=True,
-    )
-    sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
-    sock._sock.setblocking(False)
-
-    loop = asyncio.get_event_loop()
-
-    async def read_docker() -> None:
-        """Docker → WebSocket."""
         try:
-            while True:
-                data = await loop.run_in_executor(None, _read_socket, sock._sock)
-                if data is None:
-                    await asyncio.sleep(0.01)
-                    continue
-                if not data:  # EOF
-                    break
-                await websocket.send_text(
-                    json.dumps({"type": "output", "data": data.decode("utf-8", errors="replace")})
-                )
-        except Exception:
-            log.exception("terminal_read_docker_error")
-
-    async def read_ws() -> None:
-        """WebSocket → Docker."""
-        try:
-            while True:
-                msg = await websocket.receive_text()
-                payload = json.loads(msg)
-                if payload.get("type") == "input":
-                    await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
-                elif payload.get("type") == "resize":
-                    client.api.exec_resize(
-                        exec_id["Id"],
-                        height=payload.get("rows", 24),
-                        width=payload.get("cols", 80),
-                    )
-        except WebSocketDisconnect:
-            pass
-        except Exception:
-            log.exception("terminal_read_ws_error")
-
-    try:
-        await asyncio.gather(read_docker(), read_ws())
-    finally:
-        sock.close()
-        try:
+            client = docker.DockerClient(base_url=settings.docker_host)
+            container = client.containers.get(container_name)
+        except docker.errors.NotFound:
+            await websocket.send_text(
+                json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
+            )
             await websocket.close()
-        except Exception:
-            pass
+            return
+        except Exception as exc:
+            await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
+            await websocket.close()
+            return
+
+        # 3. Create exec instance (interactive PTY)
+        exec_id = client.api.exec_create(
+            container_name,
+            cmd="/bin/sh",
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            tty=True,
+        )
+        sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
+        sock._sock.setblocking(False)
+
+        loop = asyncio.get_event_loop()
+
+        async def read_docker() -> None:
+            """Docker → WebSocket."""
+            try:
+                while True:
+                    data = await loop.run_in_executor(None, _read_socket, sock._sock)
+                    if data is None:
+                        await asyncio.sleep(0.01)
+                        continue
+                    if not data:  # EOF
+                        break
+                    await websocket.send_text(
+                        json.dumps(
+                            {"type": "output", "data": data.decode("utf-8", errors="replace")}
+                        )
+                    )
+            except Exception:
+                log.exception("terminal_read_docker_error")
+
+        async def read_ws() -> None:
+            """WebSocket → Docker."""
+            try:
+                while True:
+                    msg = await websocket.receive_text()
+                    payload = json.loads(msg)
+                    if payload.get("type") == "input":
+                        await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
+                    elif payload.get("type") == "resize":
+                        client.api.exec_resize(
+                            exec_id["Id"],
+                            height=payload.get("rows", 24),
+                            width=payload.get("cols", 80),
+                        )
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                log.exception("terminal_read_ws_error")
+
+        try:
+            await asyncio.gather(read_docker(), read_ws())
+        finally:
+            sock.close()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+    finally:
+        if client is not None:
+            client.close()
 
 
 def _read_socket(sock: Any, size: int = 4096) -> bytes | None:

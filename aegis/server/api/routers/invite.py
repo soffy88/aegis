@@ -244,21 +244,28 @@ async def accept_invite(
         user_id,
     )
     if not existing:
-        await conn.execute(
-            """
-            INSERT INTO org_memberships (org_id, user_id, role)
-            VALUES ($1, $2, $3)
-            """,
-            org_id,
-            user_id,
-            role,
-        )
+        try:
+            await conn.execute(
+                """
+                INSERT INTO org_memberships (org_id, user_id, role)
+                VALUES ($1, $2, $3)
+                """,
+                org_id,
+                user_id,
+                role,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, "user already in this org") from exc
 
-    # Mark invite consumed
-    await conn.execute(
-        "UPDATE org_invites SET accepted_at = now() WHERE id = $1",
+    # Mark invite consumed — conditional on not-yet-accepted so two concurrent
+    # accepts of the same token can't both succeed (the loser sees 0 rows updated).
+    accepted = await conn.fetchval(
+        "UPDATE org_invites SET accepted_at = now() WHERE id = $1 AND accepted_at IS NULL"
+        " RETURNING id",
         invite_id,
     )
+    if accepted is None:
+        raise HTTPException(status.HTTP_410_GONE, "invite has already been accepted")
     await record_audit(
         conn,
         org_id=org_id,

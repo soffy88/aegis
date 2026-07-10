@@ -8,16 +8,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from aegis.server.services import gpu_lock
 from aegis.server.services import ollama_gateway as gw
 
 
 @pytest.fixture(autouse=True)
 def _reset_gate():
-    gw._gate = None
-    gw._gate_size = None
+    gpu_lock._gate = None
+    gpu_lock._gate_size = None
+    gpu_lock._holders.clear()
+    gpu_lock._expiry_tasks.clear()
     yield
-    gw._gate = None
-    gw._gate_size = None
+    gpu_lock._gate = None
+    gpu_lock._gate_size = None
+    gpu_lock._holders.clear()
+    gpu_lock._expiry_tasks.clear()
 
 
 def _mock_client(response: MagicMock | None = None, raise_exc: Exception | None = None):
@@ -124,6 +129,8 @@ async def test_concurrency_gate_serializes_requests():
             )
         )
         await asyncio.sleep(0.05)  # 确保 first 已经拿到闸门、正在"跑"
+        holders = gpu_lock.status()["holders"]
+        assert len(holders) == 1 and holders[0]["owner"] == "ollama:m"  # 持有方对gpu_lock可见
         second = asyncio.create_task(
             gw.generate(
                 base_url="http://ollama:11434",

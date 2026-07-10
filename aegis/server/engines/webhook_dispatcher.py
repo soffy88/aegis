@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from typing import Any
@@ -116,7 +117,8 @@ class WebhookDispatcher:
             signature = sign_payload(payload=d.payload, secret=secret) if secret else None
 
             try:
-                result = http_post_webhook(
+                result = await asyncio.to_thread(
+                    http_post_webhook,
                     url=sub.url,
                     payload=d.payload,
                     timeout_sec=10.0,

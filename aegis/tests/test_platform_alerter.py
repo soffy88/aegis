@@ -42,13 +42,14 @@ def test_init_platform_alerter_sets_singleton() -> None:
 # ── postgres_pool_evaluator ───────────────────────────────────────────────────
 
 
-def test_postgres_pool_evaluator_critical_on_connection_error() -> None:
+def test_postgres_pool_evaluator_evaluator_error_on_connection_error() -> None:
     with patch("aegis.server.alert.platform_alerter.postgres_pool_status") as mock_fn:
         mock_fn.side_effect = Exception("connection refused")
         events = postgres_pool_evaluator(config={"dsn": "postgresql://localhost/test"})
     assert len(events) == 1
     assert events[0]["entity_id"] == "postgres_pool"
-    assert events[0]["severity"] == "critical"
+    assert events[0]["severity"] == "warning"
+    assert events[0]["kind"] == "evaluator_error"
     assert "connection refused" in events[0]["message"]
 
 
@@ -118,11 +119,12 @@ def test_system_cpu_evaluator_critical_above_95() -> None:
     assert events[0]["severity"] == "critical"
 
 
-def test_system_cpu_evaluator_critical_on_exception() -> None:
+def test_system_cpu_evaluator_evaluator_error_on_exception() -> None:
     with patch("aegis.server.alert.platform_alerter.system_cpu_usage") as mock_fn:
         mock_fn.side_effect = RuntimeError("psutil unavailable")
         events = system_cpu_evaluator(config={})
-    assert events[0]["severity"] == "critical"
+    assert events[0]["severity"] == "warning"
+    assert events[0]["kind"] == "evaluator_error"
 
 
 # ── system_ram_evaluator ──────────────────────────────────────────────────────
@@ -187,11 +189,12 @@ def test_disk_usage_evaluator_critical_above_95() -> None:
     assert events[0]["entity_id"] == "disk_/data"
 
 
-def test_disk_usage_evaluator_critical_on_exception() -> None:
+def test_disk_usage_evaluator_evaluator_error_on_exception() -> None:
     with patch("aegis.server.alert.platform_alerter.fs_disk_usage") as mock_fn:
         mock_fn.side_effect = OSError("no such path")
         events = disk_usage_evaluator(config={"path": "/missing"})
-    assert events[0]["severity"] == "critical"
+    assert events[0]["severity"] == "warning"
+    assert events[0]["kind"] == "evaluator_error"
 
 
 # ── telegram_channel ──────────────────────────────────────────────────────────

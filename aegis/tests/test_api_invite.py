@@ -200,7 +200,6 @@ class TestAcceptInvite:
             None,  # user doesn't exist yet → create
             None,  # no existing membership
         ]
-        conn.fetchval.return_value = None  # INSERT user returns id via fetchrow
         new_user_row = {
             "id": new_user_id,
             "email": "new@example.com",

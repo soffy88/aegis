@@ -12,6 +12,7 @@ Responsibilities (additive to omodul, never replacing):
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import uuid
@@ -43,6 +44,10 @@ class OmodulDispatcher:
         self.dedup_cache = dedup_cache
         self.budget_tracker = budget_tracker
         self.data_dir = data_dir
+        # fingerprint -> in-flight execution task, so concurrent invoke() calls
+        # with the same fingerprint (e.g. a retried alert) join the first
+        # call's result instead of starting a duplicate (costly) execution.
+        self._inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     async def invoke(
         self,
@@ -74,6 +79,44 @@ class OmodulDispatcher:
             log.info("omodul_dedup_hit omodul=%s fp=%s", omodul_name, fp[:12])
             return cached
 
+        # 3b. In-flight join: a concurrent call with the same fingerprint is
+        # already executing — await its result instead of duplicating it.
+        inflight = self._inflight.get(fp)
+        if inflight is not None:
+            log.info("omodul_inflight_join omodul=%s fp=%s", omodul_name, fp[:12])
+            return await inflight
+
+        task = asyncio.ensure_future(
+            self._execute(
+                omodul_name=omodul_name,
+                omodul_fn=omodul_fn,
+                config_obj=config_obj,
+                input_obj=input_obj,
+                user_id=user_id,
+                on_step=on_step,
+                project_id=project_id,
+                fp=fp,
+            )
+        )
+        self._inflight[fp] = task
+        try:
+            return await task
+        finally:
+            self._inflight.pop(fp, None)
+
+    async def _execute(
+        self,
+        *,
+        omodul_name: str,
+        omodul_fn: Callable[..., dict[str, Any]],
+        config_obj: Any,
+        input_obj: Any,
+        user_id: str,
+        on_step: Callable[[dict[str, Any]], None] | None,
+        project_id: uuid.UUID | None,
+        fp: str,
+    ) -> dict[str, Any]:
+        """Budget-check, invoke, and persist a single omodul execution."""
         # 4. Budget check
         budget_usd = getattr(config_obj, "budget_usd", 5.0)
         if not await self.budget_tracker.has_budget(user_id, budget_usd):
@@ -83,9 +126,12 @@ class OmodulDispatcher:
         output_dir = Path(self.data_dir) / "omodul_output" / user_id / omodul_name / fp
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 6. Invoke omodul
+        # 6. Invoke omodul (sync, does LLM HTTP calls — offload to a thread so
+        # it doesn't block the event loop).
         log.info("omodul_invoke omodul=%s fp=%s user=%s", omodul_name, fp[:12], user_id)
-        result: dict[str, Any] = omodul_fn(config_obj, input_obj, output_dir, on_step=on_step)
+        result: dict[str, Any] = await asyncio.to_thread(
+            omodul_fn, config_obj, input_obj, output_dir, on_step=on_step
+        )
 
         # 7. Persist decision_trail (additive)
         from aegis.server.persistence.event_trail import save_decision_trail

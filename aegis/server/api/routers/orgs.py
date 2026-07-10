@@ -78,7 +78,10 @@ async def create_org(
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, f"slug '{req.slug}' already exists")
 
-    org = await org_repo.create(slug=req.slug, name=req.name, plan=req.plan)
+    try:
+        org = await org_repo.create(slug=req.slug, name=req.name, plan=req.plan)
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"slug '{req.slug}' already exists") from exc
     await membership_repo.add(user_id=user.user_id, org_id=org.id, role=Role.OWNER)
     await record_audit(
         conn,
@@ -229,7 +232,10 @@ async def invite_member(
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, "user already in this org")
 
-    await membership_repo.add(user_id=target.id, org_id=org_id, role=role)
+    try:
+        await membership_repo.add(user_id=target.id, org_id=org_id, role=role)
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "user already in this org") from exc
     await record_audit(
         conn,
         org_id=org_id,
@@ -261,14 +267,22 @@ async def remove_member(
         )
 
     if target.role == Role.OWNER:
-        owner_count = await membership_repo.count_owners_in_org(org_id)
-        if owner_count <= 1:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "cannot remove the only owner; transfer ownership first",
+        # Lock the org's owner rows so a concurrent remove/demote of another
+        # owner can't slip past this count check before both commit.
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT 1 FROM org_memberships WHERE org_id = $1 AND role = 'owner' FOR UPDATE",
+                org_id,
             )
-
-    await membership_repo.remove(user_id=member_user_id, org_id=org_id)
+            owner_count = await membership_repo.count_owners_in_org(org_id)
+            if owner_count <= 1:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "cannot remove the only owner; transfer ownership first",
+                )
+            await membership_repo.remove(user_id=member_user_id, org_id=org_id)
+    else:
+        await membership_repo.remove(user_id=member_user_id, org_id=org_id)
     await record_audit(
         conn,
         org_id=org_id,
@@ -311,13 +325,23 @@ async def change_member_role(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "admin cannot change owner's role")
 
     if target.role == Role.OWNER and new_role != Role.OWNER:
-        owner_count = await membership_repo.count_owners_in_org(org_id)
-        if owner_count <= 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "cannot demote the only owner")
-
-    updated = await membership_repo.update_role(
-        user_id=member_user_id, org_id=org_id, new_role=new_role
-    )
+        # Lock the org's owner rows so a concurrent remove/demote of another
+        # owner can't slip past this count check before both commit.
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT 1 FROM org_memberships WHERE org_id = $1 AND role = 'owner' FOR UPDATE",
+                org_id,
+            )
+            owner_count = await membership_repo.count_owners_in_org(org_id)
+            if owner_count <= 1:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "cannot demote the only owner")
+            updated = await membership_repo.update_role(
+                user_id=member_user_id, org_id=org_id, new_role=new_role
+            )
+    else:
+        updated = await membership_repo.update_role(
+            user_id=member_user_id, org_id=org_id, new_role=new_role
+        )
     await record_audit(
         conn,
         org_id=org_id,

@@ -987,6 +987,19 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE uptime_targets ADD COLUMN IF NOT EXISTS last_tls_days_remaining DOUBLE PRECISION;
         """,
     ),
+    (
+        # 安全修复: aegis_spans/aegis_rum 此前没有 org_id, 摄取全部走无 org 的固定 URL,
+        # 导致任意 org 的 viewer 都能读到其他 org 的 trace/RUM 数据 (跨租户泄露)。
+        # 新增可空 org_id 列 (旧行保持 NULL, 查询端一律 WHERE org_id = $N 使旧行对所有人不可见,
+        # 而不是继续对所有人可见), 并加 (org_id, ingested_at) 索引维持按 org 查询/保留删除的性能。
+        "046_telemetry_org_scoping",
+        """
+        ALTER TABLE aegis_spans ADD COLUMN IF NOT EXISTS org_id UUID;
+        ALTER TABLE aegis_rum ADD COLUMN IF NOT EXISTS org_id UUID;
+        CREATE INDEX IF NOT EXISTS idx_spans_org_ingested ON aegis_spans (org_id, ingested_at);
+        CREATE INDEX IF NOT EXISTS idx_rum_org_ingested ON aegis_rum (org_id, ingested_at);
+        """,
+    ),
 ]
 
 

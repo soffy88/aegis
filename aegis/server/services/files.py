@@ -260,7 +260,8 @@ def extract(path: str, dest_dir: str) -> dict[str, Any]:
     root = d.resolve()
 
     def _inside(name: str) -> bool:
-        return str((d / name).resolve()).startswith(str(root))
+        target = (d / name).resolve()
+        return target == root or target.is_relative_to(root)
 
     if str(p).endswith(".zip"):
         with _zip.ZipFile(p) as z:

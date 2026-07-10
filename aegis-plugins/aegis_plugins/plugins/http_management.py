@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from aegis_autoheal_sdk import ActionResult, AutoHealContext, AutoHealPlugin
 
+from aegis_plugins._url_safety import UrlNotAllowed, check_url_allowed
+
 
 class HttpManagementPlugin(AutoHealPlugin):
     """Base for remediations that hit an operator-provided management endpoint."""
@@ -28,17 +30,27 @@ class HttpManagementPlugin(AutoHealPlugin):
         base = ctx.alert_payload.get(self.url_key, "")
         if not base:
             return ActionResult.failed(f"{self.url_key} not in alert_payload")
-        result = await ctx.http_get(base + self.action_path)
+        url = base + self.action_path
+        try:
+            check_url_allowed(url)
+        except UrlNotAllowed as exc:
+            return ActionResult.failed(str(exc))
+        result = await ctx.http_get(url)
         code = result.get("status_code", 500)
         if code >= 400:
             return ActionResult.failed(f"{self.name}: endpoint returned HTTP {code}")
-        return ActionResult.ok(f"{self.name}: {base + self.action_path} returned {code}")
+        return ActionResult.ok(f"{self.name}: {url} returned {code}")
 
     async def post_verify(self, ctx: AutoHealContext) -> bool:
         base = ctx.alert_payload.get(self.url_key, "")
         if not base:
             return True
-        result = await ctx.http_get(base + self.health_path)
+        url = base + self.health_path
+        try:
+            check_url_allowed(url)
+        except UrlNotAllowed:
+            return False
+        result = await ctx.http_get(url)
         return result.get("status_code", 0) == 200
 
     async def rollback(self, ctx: AutoHealContext) -> ActionResult:

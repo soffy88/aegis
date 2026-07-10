@@ -12,7 +12,7 @@ resolution-markers = [
 
 [manifest]
 overrides = [
-    { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.0" },
+    { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.1" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.38.0" },
     { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.19.0" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v4.11.0" },
@@ -93,7 +93,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
     { name = "lancedb", specifier = ">=0.17" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.0" },
+    { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.1" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.38.0" },
     { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.19.0" },
     { name = "oservi", git = "ssh://git@github.com/helios-plat/oservi.git?rev=v1.3.0" },
@@ -1476,8 +1476,8 @@ wheels = [
 
 [[package]]
 name = "obase"
-version = "0.19.0"
-source = { git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.0#ef227a69c8d3a2acb5748afe024b9708c32e853c" }
+version = "0.19.1"
+source = { git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.1#87be8400b05284e1ba347cdec56dfbd55eadc511" }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "asyncpg" },

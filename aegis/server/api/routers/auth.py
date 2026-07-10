@@ -143,27 +143,30 @@ async def register(
     user_id = uuid4()
 
     # 所有写操作放在一个事务里，保证原子性
-    async with conn.transaction():
-        await conn.execute(
-            """INSERT INTO orgs (id, slug, name, plan, created_at)
-               VALUES ($1, $2, $3, 'enterprise', now())""",
-            org_id,
-            req.org_slug,
-            req.org_name,
-        )
-        await conn.execute(
-            """INSERT INTO users (id, email, password_hash, is_active, created_at)
-               VALUES ($1, $2, $3, true, now())""",
-            user_id,
-            req.email,
-            pw_hash,
-        )
-        await conn.execute(
-            """INSERT INTO org_memberships (user_id, org_id, role, joined_at)
-               VALUES ($1, $2, 'owner', now())""",
-            user_id,
-            org_id,
-        )
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                """INSERT INTO orgs (id, slug, name, plan, created_at)
+                   VALUES ($1, $2, $3, 'enterprise', now())""",
+                org_id,
+                req.org_slug,
+                req.org_name,
+            )
+            await conn.execute(
+                """INSERT INTO users (id, email, password_hash, is_active, created_at)
+                   VALUES ($1, $2, $3, true, now())""",
+                user_id,
+                req.email,
+                pw_hash,
+            )
+            await conn.execute(
+                """INSERT INTO org_memberships (user_id, org_id, role, joined_at)
+                   VALUES ($1, $2, 'owner', now())""",
+                user_id,
+                org_id,
+            )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "email or org slug already taken") from exc
 
     # 自动登录（在事务外，避免 token 签发失败导致回滚）
     orgs_for_token = [{"org_id": str(org_id), "slug": req.org_slug, "role": "owner"}]

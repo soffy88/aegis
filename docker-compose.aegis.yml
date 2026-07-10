@@ -99,6 +99,9 @@ services:
       # 文件管理器白名单根（同路径挂载，读写）——须与 AEGIS_FILE_MANAGER_ROOTS 一致
       - /data:/data
       - /mnt/d:/mnt/d
+      # 宿主机 /proc 只读 —— 仅用于把 nvidia-smi 报告的 GPU 进程 PID 解析回容器名
+      # (读 /proc/<pid>/cgroup),不用于其它用途。见 services/gpu_processes.py。
+      - /proc:/host/proc:ro
 
     networks:
       # Extra stack networks so the uptime prober can reach those stacks' health
@@ -112,6 +115,12 @@ services:
     # the host-level systemd `ollama` service (GPU, port 11434) for the LLM gateway.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+    # 仅回环可达 —— 让 host 上原生进程(如 stratum/aii 的 ensure_container())能调 GPU 锁
+    # API(/api/v1/gpu/lock/*),不对外网暴露(公网入口仍只有 aegis-caddy 的 80/443)。
+    # 容器内仍监听 8000;host 侧用 8010,因为 8000 已被 mneme-api-1 占用。
+    ports:
+      - "127.0.0.1:8010:8000"
 
     depends_on:
       aegis-caddy:
@@ -284,6 +293,10 @@ services:
     image: utkuozdemir/nvidia_gpu_exporter:1.3.1
     container_name: aegis-gpu-exporter
     restart: unless-stopped
+    # 共享宿主机 PID namespace —— nvidia-smi 的 --query-compute-apps 进程级查询依赖
+    # PID namespace 匹配,没有 pid: host 时驱动能看到显存/利用率(设备级,无关 PID
+    # namespace)但看不到任何 GPU 计算进程(见 aegis/server/services/gpu_processes.py)。
+    pid: host
     command:
       - "--query-field-names=index,name,uuid,utilization.gpu,utilization.memory,memory.total,memory.used,memory.free,temperature.gpu,power.draw"
     deploy:

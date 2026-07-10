@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from aegis_autoheal_sdk import ActionResult, AutoHealContext, AutoHealPlugin
 
+from aegis_plugins._url_safety import UrlNotAllowed, check_url_allowed
+
 
 class ClearQueuePlugin(AutoHealPlugin):
     name = "clear-queue"
@@ -21,7 +23,12 @@ class ClearQueuePlugin(AutoHealPlugin):
         base = ctx.alert_payload["rabbitmq_mgmt_url"].rstrip("/")
         vhost = ctx.alert_payload.get("vhost", "%2F")
         queue = ctx.alert_payload["queue_name"]
-        result = await ctx.http_get(f"{base}/api/queues/{vhost}/{queue}/contents")
+        url = f"{base}/api/queues/{vhost}/{queue}/contents"
+        try:
+            check_url_allowed(url)
+        except UrlNotAllowed as exc:
+            return ActionResult.failed(str(exc))
+        result = await ctx.http_get(url)
         code = result.get("status_code", 500)
         if code not in (200, 204):
             return ActionResult.failed(f"queue purge returned HTTP {code}")
@@ -31,7 +38,12 @@ class ClearQueuePlugin(AutoHealPlugin):
         base = ctx.alert_payload["rabbitmq_mgmt_url"].rstrip("/")
         vhost = ctx.alert_payload.get("vhost", "%2F")
         queue = ctx.alert_payload["queue_name"]
-        result = await ctx.http_get(f"{base}/api/queues/{vhost}/{queue}")
+        url = f"{base}/api/queues/{vhost}/{queue}"
+        try:
+            check_url_allowed(url)
+        except UrlNotAllowed:
+            return False
+        result = await ctx.http_get(url)
         depth = (
             result.get("body", {}).get("messages", -1)
             if isinstance(result.get("body"), dict)

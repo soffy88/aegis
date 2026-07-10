@@ -21,8 +21,14 @@ import logging
 from typing import Any
 
 from obase.notify import TelegramRequest, telegram_send
-from oprim import postgres_pool_status, rabbitmq_consumer_count, rabbitmq_queue_depth, system_cpu_usage, system_ram_usage
 from oprim import disk_usage as fs_disk_usage
+from oprim import (
+    postgres_pool_status,
+    rabbitmq_consumer_count,
+    rabbitmq_queue_depth,
+    system_cpu_usage,
+    system_ram_usage,
+)
 from oprim import postgres_slow_queries as postgres_long_running_queries
 from oservi.engines.alerter import AlerterEngine
 
@@ -33,6 +39,10 @@ log = logging.getLogger(__name__)
 # ── Evaluator wrappers ────────────────────────────────────────────────────────
 # Protocol (AlerterEngine._call_evaluator): evaluator(config=dict) → list[dict]
 # Each dict must contain: entity_id, severity, message
+# On an unhandled exception in the evaluator itself (bug/DNS blip/etc, as opposed
+# to a genuine threshold breach), the dict also carries "kind": "evaluator_error"
+# and severity is capped at "warning" so a broken evaluator can't page at
+# "critical" and can't be confused with a real incident downstream.
 
 
 def postgres_pool_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -53,7 +63,14 @@ def postgres_pool_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "postgres_pool", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "postgres_pool",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def postgres_slow_queries_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -77,7 +94,14 @@ def postgres_slow_queries_evaluator(*, config: dict[str, Any]) -> list[dict[str,
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "postgres_slow_query", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "postgres_slow_query",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def rabbitmq_queue_depth_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,7 +122,14 @@ def rabbitmq_queue_depth_evaluator(*, config: dict[str, Any]) -> list[dict[str, 
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "rabbitmq_queue_depth", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "rabbitmq_queue_depth",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def rabbitmq_consumer_count_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -119,7 +150,14 @@ def rabbitmq_consumer_count_evaluator(*, config: dict[str, Any]) -> list[dict[st
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "rabbitmq_consumers", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "rabbitmq_consumers",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def system_cpu_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -137,7 +175,14 @@ def system_cpu_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "system_cpu", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "system_cpu",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def system_ram_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -156,7 +201,14 @@ def system_ram_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         ]
     except Exception as exc:
-        return [{"entity_id": "system_ram", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": "system_ram",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 def disk_usage_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -175,7 +227,14 @@ def disk_usage_evaluator(*, config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         ]
     except Exception as exc:
-        return [{"entity_id": f"disk_{path}", "severity": "critical", "message": str(exc)}]
+        return [
+            {
+                "entity_id": f"disk_{path}",
+                "severity": "warning",
+                "kind": "evaluator_error",
+                "message": str(exc),
+            }
+        ]
 
 
 # ── Channel wrapper ───────────────────────────────────────────────────────────

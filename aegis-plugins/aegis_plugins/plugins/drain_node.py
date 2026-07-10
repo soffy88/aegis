@@ -23,8 +23,12 @@ class DrainNodePlugin(AutoHealPlugin):
         inspect = await ctx.http_get(f"{docker_url}/nodes/{node_id}")
         if inspect.get("status_code", 500) != 200:
             return ActionResult.failed(f"cannot inspect node {node_id}")
+        body = inspect.get("body", {})
+        version_index = body.get("Version", {}).get("Index") if isinstance(body, dict) else None
+        if version_index is None:
+            return ActionResult.failed(f"node {node_id} inspect response missing Version.Index")
         update = await ctx.http_get(
-            f"{docker_url}/nodes/{node_id}/update?version=0",
+            f"{docker_url}/nodes/{node_id}/update?version={version_index}",
         )
         code = update.get("status_code", 500)
         if code >= 400:

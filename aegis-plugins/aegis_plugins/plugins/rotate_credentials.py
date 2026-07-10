@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from aegis_autoheal_sdk import ActionResult, AutoHealContext, AutoHealPlugin, Severity
 
+from aegis_plugins._url_safety import UrlNotAllowed, check_url_allowed
+
 
 class RotateCredentialsPlugin(AutoHealPlugin):
     name = "rotate-credentials"
@@ -18,7 +20,12 @@ class RotateCredentialsPlugin(AutoHealPlugin):
 
     async def execute(self, ctx: AutoHealContext) -> ActionResult:
         webhook = ctx.alert_payload["rotation_webhook_url"]
-        result = await ctx.http_get(f"{webhook}?service={ctx.service.name}&action=rotate")
+        url = f"{webhook}?service={ctx.service.name}&action=rotate"
+        try:
+            check_url_allowed(url)
+        except UrlNotAllowed as exc:
+            return ActionResult.failed(str(exc))
+        result = await ctx.http_get(url)
         code = result.get("status_code", 500)
         if code >= 400:
             return ActionResult.failed(f"rotation webhook returned HTTP {code}")
@@ -28,6 +35,10 @@ class RotateCredentialsPlugin(AutoHealPlugin):
         status_url = ctx.alert_payload.get("rotation_status_url", "")
         if not status_url:
             return True
+        try:
+            check_url_allowed(status_url)
+        except UrlNotAllowed:
+            return False
         result = await ctx.http_get(status_url)
         body = result.get("body", {})
         return isinstance(body, dict) and body.get("status") == "rotated"
