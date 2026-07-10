@@ -1000,6 +1000,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_rum_org_ingested ON aegis_rum (org_id, ingested_at);
         """,
     ),
+    (
+        # 安全: RBAC 撤权即时生效。角色取自 JWT claim, 降权/移除/停用/改密前滞后一个 access
+        # TTL。给 users 加 token_epoch, 签进 access token, get_current_user 每请求回查比对,
+        # 上述敏感变更时自增该值 → 立即作废该用户全部已签发 access token (旧 token 无 epoch
+        # claim 也会因不等于 DB 的 0 而失效, 部署后各用户被强制重新认证一次)。
+        "047_users_token_epoch",
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 

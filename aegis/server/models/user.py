@@ -17,6 +17,7 @@ class User:
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None
+    token_epoch: int = 0
 
     @classmethod
     def from_row(cls, row: dict) -> User:
@@ -29,6 +30,7 @@ class User:
             is_active=row.get("is_active", True),
             created_at=row["created_at"],
             last_login_at=row.get("last_login_at"),
+            token_epoch=row.get("token_epoch", 0),
         )
 
     def to_api_dict(self) -> dict:

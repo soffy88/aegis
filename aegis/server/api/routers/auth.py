@@ -59,13 +59,25 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
-def _issue_access_token(user_id: UUID, email: str, orgs: list[dict]) -> tuple[str, datetime]:
-    """Sign an access token; returns (token, expires_at)."""
+def _issue_access_token(
+    user_id: UUID, email: str, orgs: list[dict], epoch: int
+) -> tuple[str, datetime]:
+    """Sign an access token; returns (token, expires_at).
+
+    `epoch` is the user's token_epoch — get_current_user rejects the token if it no
+    longer matches the DB value, giving immediate revocation on role/removal/deactivate.
+    """
     settings = get_settings()
     ttl_seconds = settings.jwt_access_ttl_minutes * 60
     expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     token = jwt_sign_hs256(
-        payload={"sub": str(user_id), "email": email, "orgs": orgs, "type": "access"},
+        payload={
+            "sub": str(user_id),
+            "email": email,
+            "orgs": orgs,
+            "epoch": epoch,
+            "type": "access",
+        },
         secret=settings.jwt_secret,
         expires_in_seconds=ttl_seconds,
     )
@@ -106,7 +118,7 @@ async def login(
         if org:
             orgs_for_token.append({"org_id": str(org.id), "slug": org.slug, "role": m.role.value})
 
-    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token)
+    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token, user.token_epoch)
     refresh = _issue_refresh_token(user.id)
 
     await user_repo.update_last_login(user.id)
@@ -170,7 +182,8 @@ async def register(
 
     # 自动登录（在事务外，避免 token 签发失败导致回滚）
     orgs_for_token = [{"org_id": str(org_id), "slug": req.org_slug, "role": "owner"}]
-    access, access_exp = _issue_access_token(user_id, req.email, orgs_for_token)
+    # Brand-new user → token_epoch starts at 0.
+    access, access_exp = _issue_access_token(user_id, req.email, orgs_for_token, 0)
     refresh = _issue_refresh_token(user_id)
     _set_refresh_cookie(response, refresh)
 
@@ -223,7 +236,7 @@ async def refresh(
         if org:
             orgs_for_token.append({"org_id": str(org.id), "slug": org.slug, "role": m.role.value})
 
-    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token)
+    access, access_exp = _issue_access_token(user.id, user.email, orgs_for_token, user.token_epoch)
 
     # Rotate: revoke the consumed JTI and issue a fresh refresh token.
     await revoked_repo.revoke(

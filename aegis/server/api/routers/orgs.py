@@ -283,6 +283,9 @@ async def remove_member(
             await membership_repo.remove(user_id=member_user_id, org_id=org_id)
     else:
         await membership_repo.remove(user_id=member_user_id, org_id=org_id)
+    # Revoke the removed member's outstanding access tokens at once (they still carry
+    # this org's membership+role in their claims until it expires otherwise).
+    await UserRepository(conn).bump_token_epoch(member_user_id)
     await record_audit(
         conn,
         org_id=org_id,
@@ -353,6 +356,9 @@ async def change_member_role(
     )
 
     user_repo = UserRepository(conn)
+    # A role change (usually a downgrade) must take effect at once: invalidate the
+    # member's current access token so the new role is enforced on their next request.
+    await user_repo.bump_token_epoch(member_user_id)
     target_user = await user_repo.get_by_id(member_user_id)
 
     return MemberResponse(
@@ -385,6 +391,11 @@ async def transfer_ownership(
         await membership_repo.update_role(
             user_id=req.new_owner_user_id, org_id=org_id, new_role=Role.OWNER
         )
+    # Both users' roles changed (the acting owner is demoted to admin) — invalidate
+    # both of their access tokens so neither keeps stale owner/role claims.
+    user_repo = UserRepository(conn)
+    await user_repo.bump_token_epoch(user.user_id)
+    await user_repo.bump_token_epoch(req.new_owner_user_id)
     await record_audit(
         conn,
         org_id=org_id,
