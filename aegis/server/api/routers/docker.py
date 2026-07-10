@@ -8,6 +8,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+import asyncpg
 from fastapi import (
     APIRouter,
     Depends,
@@ -17,7 +18,6 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-import asyncpg
 from obase.auth import jwt_verify_hs256
 from obase.docker import (
     docker_container_exec,
