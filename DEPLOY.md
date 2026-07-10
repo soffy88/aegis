@@ -106,6 +106,19 @@ docker build -f Dockerfile.hotpatch -t aegis-backend:latest .
 docker compose -f docker-compose.aegis.yml --env-file .env.aegis up -d aegis-backend
 ```
 
+### 升级与回滚（重要）
+
+- **数据库迁移是只进不退的**：`apply_migrations` 在启动时自动运行（advisory-lock 保护、
+  逐条事务），但**没有 down 迁移**，且个别迁移含破坏性/不可重放操作。因此：
+  **任何带新迁移的部署前，先给 aegis 库做一次快照**：
+  ```bash
+  docker exec platform-postgres pg_dump -U helios -d aegis -Fc -f /tmp/aegis-pre-deploy.dump
+  docker cp platform-postgres:/tmp/aegis-pre-deploy.dump ./aegis-pre-deploy-$(date +%Y%m%d).dump
+  ```
+- **pin 镜像版本以便回滚**：生产不要用 `AEGIS_VERSION=latest`。用 git sha/tag 打标并写进
+  `.env.aegis`（`AEGIS_VERSION=<sha>`），回滚就是把它改回上一版再 `up -d`。DB 侧因迁移
+  只进不退，回滚镜像时若新版加过迁移，需要用上面的快照 restore。
+
 ### 查看日志
 
 ```bash
@@ -113,6 +126,11 @@ docker logs aegis-backend -f
 docker logs aegis-console -f
 docker logs aegis-caddy -f
 ```
+
+> ⚠️ 目前 prod 无聚合日志 / 无错误收件箱（Sentry 按设计在 prod 关闭以避免自监控死循环，
+> Loki 已部署但容器日志采集未接入），每容器仅保留 ~30MB×3 的 json-file 轮转。上线前若要
+> 事故取证能力，需接一个日志 shipper（promtail/json-file→Loki）。这是运维基建项，不在
+> 代码改动范围内。
 
 ### 数据备份
 
@@ -125,6 +143,13 @@ docker run --rm \
   -v $(pwd):/backup \
   alpine tar czf /backup/aegis-data-$(date +%Y%m%d).tar.gz -C /data .
 ```
+
+> ⚠️ **异地备份**：内置的 `self_backup`（pg_dump）默认落在**同一台主机的 aegis-data 卷**内，
+> 宿主机丢失即备份一起丢；且应用级备份功能的 S3 上传目前仍是 omodul 桩，`backup_key` 未必
+> 指向真对象。上线前请二选一配置真正的异地目标：
+> - `AEGIS_BACKUP_S3_*` / `AWS_*`（S3/兼容对象存储），或 `AEGIS_BACKUP_WEBDAV_*`；
+> - 或用上面的 volume-tar + 上一节的 `pg_dump` 做外部 cron，推到另一台主机/对象存储。
+> 只配一个也比只落本机强。
 
 ## 配置 Runbook
 
