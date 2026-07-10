@@ -34,6 +34,7 @@ _ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
 _RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
 _UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probes
 _AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
+_REAPER_INTERVAL_SEC = 300  # 5 min: reap stuck "processing" tasks per declared policies
 _RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
 _ROLLUP_INTERVAL_SEC = 3600  # 60 min: downsample raw metrics into hourly rollups (§4.2)
 _ROLLUP_LOOKBACK_HOURS = 3  # re-aggregate last N hours each run (idempotent upsert 兜迟到点)
@@ -67,6 +68,7 @@ _SUPERVISED_LOOPS: dict[str, float] = {
     "recording": _RECORDING_INTERVAL_SEC,
     "uptime": _UPTIME_INTERVAL_SEC,
     "autoheal": _AUTOHEAL_INTERVAL_SEC,
+    "reaper": _REAPER_INTERVAL_SEC,
     "alert_eval": _ALERT_EVAL_INTERVAL_SEC,
     "retention": _RETENTION_INTERVAL_SEC,
     "rollup": _ROLLUP_INTERVAL_SEC,
@@ -187,6 +189,25 @@ async def _autoheal_policy_loop() -> None:
         except Exception as exc:
             log.warning("autoheal_policy_cron_error err=%s", exc)
         await _tick("autoheal", _AUTOHEAL_INTERVAL_SEC)
+
+
+async def _stale_task_reaper_loop() -> None:
+    """Reap stuck 'processing' tasks per declared stale_task_policies (devplatform
+    Phase 1). dry_run default + per-policy max cap mean real writes only happen for
+    explicitly-enabled, non-dry-run policies."""
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services.stale_task_reaper import run_stale_task_reaper  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(30, 60))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                await run_stale_task_reaper(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("stale_task_reaper_cron_error err=%s", exc)
+        await _tick("reaper", _REAPER_INTERVAL_SEC)
 
 
 async def _uptime_loop() -> None:
@@ -586,6 +607,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _recording_loop(),
             _uptime_loop(),
             _autoheal_policy_loop(),
+            _stale_task_reaper_loop(),
             _alert_eval_loop(),
             _retention_loop(),
             _rollup_loop(),
