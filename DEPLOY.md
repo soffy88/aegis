@@ -141,7 +141,31 @@ stdout/stderr，打 `container`/`stack`/`service` 标签推到 `aegis-loki`（14
 > `aegis-promtail-positions` 卷，重启不会重读。
 >
 > ⚠️ 仍无独立错误收件箱：Sentry 在 prod 按设计关闭（避免自监控死循环），错误现经聚合
-> 日志检索（`|= "ERROR"`）。链路追踪（OTel/Jaeger）仍未接入。
+> 日志检索（`|= "ERROR"`）。
+
+### 链路追踪（opt-in）
+
+摄取 + 存储 + 查询 UI 已就绪：服务把 OTLP trace 发到 aegis，落 `aegis_spans`，在
+Console 的 **APM / Service Map** 页看 per-service RED 与 trace 瀑布。缺的是采集前门与
+各服务埋点，按需启用：
+
+1. **启用 collector**（把各服务的标准 OTLP 翻译成摄取端点要的 OTLP/JSON）：
+   ```bash
+   # .env.aegis 设:
+   #   AEGIS_TRACE_INGEST_ENDPOINT=http://aegis-backend:8000/api/v1/telemetry/<org uuid>/v1/traces
+   #   AEGIS_TELEMETRY_INGEST_KEY=<与后端一致的 key>
+   docker run --rm -v $PWD/otel-collector-config.yaml:/c.yaml:ro \
+     otel/opentelemetry-collector:0.116.0 validate --config=/c.yaml   # 先校验
+   docker compose -f docker-compose.aegis.yml --env-file .env.aegis --profile tracing up -d aegis-otel-collector
+   ```
+2. **让服务埋点**：把服务的 OpenTelemetry OTLP exporter 指向 collector
+   （`OTEL_EXPORTER_OTLP_ENDPOINT=http://aegis-otel-collector:4318`，HTTP；或 `:4317` gRPC），
+   `OTEL_SERVICE_NAME=<服务名>`。span 即经 collector → aegis 摄取 → APM 页。
+
+> 说明：aegis 后端自身尚未内置 OTel 自动埋点（避免默认镜像引入 OTel 依赖）——推荐用上面
+> 的标准 OTLP 环境变量给需要追踪的服务逐个开启，而不是手写 exporter。摄取端的 OTLP/JSON
+> 契约有测试锁定（`test_telemetry_router.py`）；collector 配置为标准 otelcol schema，务必
+> 用上面的 `validate` 在部署前校验一次。
 
 ### 数据备份
 
