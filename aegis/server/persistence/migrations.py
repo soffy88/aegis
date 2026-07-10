@@ -1010,6 +1010,29 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    (
+        # 轻量化: runbook RAG 从 LanceDB 迁到已有的 Postgres —— 去掉 lancedb/pyarrow(~290MB
+        # 镜像)。语义检索走 pgvector(<=>)，无 embedding provider 时走 pg_trgm 词法保底，
+        # AI 自愈在无 GPU/无模型的机器上也能跑。embedding 列变长(不同 provider 维度不同)、
+        # 语料小(几十~几百条)故不建向量索引，seqscan 足够；content 上建 trgm GIN 索引。
+        "048_runbook_vectors_pg",
+        """
+        CREATE EXTENSION IF NOT EXISTS vector;
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE TABLE IF NOT EXISTS runbook_vectors (
+            runbook_name      TEXT PRIMARY KEY,
+            title             TEXT NOT NULL,
+            content           TEXT NOT NULL,
+            tags              TEXT[] NOT NULL DEFAULT '{}',
+            requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+            content_hash      TEXT NOT NULL,
+            embedding         vector,
+            updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_runbook_vectors_trgm
+            ON runbook_vectors USING gin (content gin_trgm_ops);
+        """,
+    ),
 ]
 
 

@@ -228,23 +228,17 @@ class AegisSettings(BaseSettings):
     triage_throttle_seconds: int = 60
 
     # === Vector Store / RAG (BACKLOG-073) ===
-    runbook_vector_db_path: Path = Field(
-        default=_UNSET_PATH,
-        description="LanceDB runbook vector store 路径 (默认: data_dir/vector/runbooks)",
-    )
-    runbook_vector_dim: int = Field(
-        default=1024,
-        description=(
-            "Embedding 维度，需与 embedding provider 匹配 "
-            "(bge-m3=1024, text-embedding-3-small=1536)"
-        ),
-    )
-    runbook_vector_collection: str = "runbooks"
     runbook_top_k: int = 5
     runbook_min_score: float = 0.5
-    embedding_provider: str = Field(
-        default="default",
-        description="obase ProviderRegistry 中注册的 embedding provider 名",
+    # Runbook RAG embedding provider (存储在 Postgres runbook_vectors, 见 services/
+    # runbook_store.py):
+    #   fastembed — 进程内 CPU (ONNX), 需可选依赖 aegis[embed]; 装不上则退化为词法
+    #   ollama    — 甩给 AEGIS_OLLAMA_BASE_URL 的 /api/embeddings (CPU/GPU, 非常驻)
+    #   fts/none  — 纯 pg_trgm 词法检索, 零依赖零内存无 GPU (AI-RCA 的保底)
+    embedding_provider: str = Field(default="fastembed", description="fastembed / ollama / fts")
+    embedding_model: str = Field(
+        default="BAAI/bge-small-en-v1.5",
+        description="embedding 模型名 (fastembed 的 ONNX 模型 / ollama 的模型名)",
     )
 
     # === Rate limiting ===
@@ -352,12 +346,6 @@ class AegisSettings(BaseSettings):
                 "AEGIS_JWT_SECRET must be set to a strong secret when AEGIS_ENV != 'dev'. "
                 "Generate one with: openssl rand -hex 32"
             )
-        return self
-
-    @model_validator(mode="after")
-    def resolve_runbook_vector_db_path(self) -> AegisSettings:
-        if self.runbook_vector_db_path == _UNSET_PATH:
-            self.runbook_vector_db_path = self.data_dir / "vector" / "runbooks"
         return self
 
     # === Backup / S3 ===

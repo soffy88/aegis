@@ -38,12 +38,9 @@ dependencies = [
     # 无条件 import 依赖此链路，故必须是主依赖，非可选。
     "docker>=6.0",
     "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
-    # 同类坑第三例:aegis.server.services.vector_store 无条件 import oprim.LanceDBVectorDB
-    # (Brain RCA runbook 检索链路),它需要 lancedb,但 oprim 只把 lancedb 声明在自己的
-    # [storage]/[full] 可选 extra 里(uv 0.11.26 对 VCS 依赖的 extras 解析不进 uv.lock,
-    # 试过 oprim[storage] 无效)。此前本地 dev venv 有 lancedb 全靠一次手动装的残留
-    # (未记入 uv.lock),生产镜像重建才暴露 ModuleNotFoundError。直接声明,绕开 extras。
-    "lancedb>=0.17",
+    # runbook RAG 已迁到 Postgres (pgvector/pg_trgm, 见 services/runbook_store.py),
+    # 去掉 lancedb + 其 pyarrow/pandas 传递依赖 (~290MB 镜像)。语义 embedding 走可选
+    # extra `aegis[embed]` (fastembed CPU) 或 ollama; 不装则纯 pg_trgm 词法保底。
     "python-frontmatter>=1.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
@@ -54,6 +51,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 语义 runbook 检索 (可选): 进程内 CPU ONNX embedding。不装则走 pg_trgm 词法保底,
+# AI-RCA 仍可用。GPU-less / 极简部署可不装。
+embed = [
+    "fastembed>=0.3",
+]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
