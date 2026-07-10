@@ -1,0 +1,40 @@
+# Aegis OTel Collector —— 接收各服务的 OTLP，翻译成 aegis 摄取端点要的 OTLP/JSON 转发。
+# 服务把 OTLP exporter 指向本 collector (grpc :4317 / http :4318)，collector 用
+# otlphttp(encoding=json) 推到 aegis 的 /api/v1/telemetry/<org>/v1/traces。
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # traces_endpoint 是完整 URL (原样使用，不追加路径)，所以要含 /v1/traces，例:
+  #   http://aegis-backend:8000/api/v1/telemetry/<ORG_UUID>/v1/traces
+  otlphttp/aegis:
+    traces_endpoint: ${env:AEGIS_TRACE_INGEST_ENDPOINT}
+    encoding: json
+    headers:
+      X-Aegis-Ingest-Key: ${env:AEGIS_TELEMETRY_INGEST_KEY}
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/aegis]

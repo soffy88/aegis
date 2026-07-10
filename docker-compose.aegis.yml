@@ -327,6 +327,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # === 链路追踪采集前门 (opt-in, profile=tracing) ===
+  # 收各服务的 OTLP (grpc :4317 / http :4318) → 翻译成 aegis 摄取端点要的 OTLP/JSON 转发。
+  # 默认不随 `up` 启动；启用: `docker compose --profile tracing up -d aegis-otel-collector`
+  # 并在 .env.aegis 设 AEGIS_TRACE_INGEST_ENDPOINT(含 org uuid) + AEGIS_TELEMETRY_INGEST_KEY。
+  # 部署前用 `docker run --rm ... otel/opentelemetry-collector:0.116.0 validate` 校验配置。
+  aegis-otel-collector:
+    image: otel/opentelemetry-collector:0.116.0
+    container_name: aegis-otel-collector
+    profiles: ["tracing"]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      AEGIS_TRACE_INGEST_ENDPOINT: ${AEGIS_TRACE_INGEST_ENDPOINT:-}
+      AEGIS_TELEMETRY_INGEST_KEY: ${AEGIS_TELEMETRY_INGEST_KEY:-}
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - helios-net
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # §3.2 GPU 观测 — 此前 aegis 对 GPU 完全无可见性；多项目共享单张卡时抢占导致的
   # NVML "Unknown Error"（见 2026-07-05 ocr-vllm 崩溃事故）此前无信号可查。
   # --query-field-names 显式指定，避免此驱动版本(595.71)不支持的字段(kmd_version 等)

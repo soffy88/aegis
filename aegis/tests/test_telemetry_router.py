@@ -125,6 +125,65 @@ def test_ingest_traces_stamps_org_id(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rows[0][-1] == _ORG_A
 
 
+# A payload shaped exactly like what an OTel Collector's otlphttp exporter emits
+# with encoding=json (hex trace/span ids, parentSpanId, kind, string nanos). This
+# pins the wire contract the collector + instrumented services rely on.
+_OTLP_JSON_COLLECTOR_BODY = {
+    "resourceSpans": [
+        {
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": "aegis-backend"}},
+                    {"key": "host.name", "value": {"stringValue": "node-1"}},
+                ]
+            },
+            "scopeSpans": [
+                {
+                    "scope": {"name": "opentelemetry.instrumentation.fastapi"},
+                    "spans": [
+                        {
+                            "traceId": "5b8efff798038103d269b633813fc60c",
+                            "spanId": "eee19b7ec3c1b174",
+                            "parentSpanId": "eee19b7ec3c1b173",
+                            "name": "GET /api/v1/health",
+                            "kind": 2,
+                            "startTimeUnixNano": "1700000000000000000",
+                            "endTimeUnixNano": "1700000000012000000",
+                            "status": {"code": 2},
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+}
+
+
+def test_ingest_parses_realistic_otlp_json_collector_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full field mapping for a collector-style OTLP/JSON span → aegis_spans row."""
+    conn = mock.AsyncMock()
+    monkeypatch.setattr(router_mod, "get_pool", lambda: _mock_pool(conn))
+    r = _ingest_client().post(
+        f"/api/v1/telemetry/{_ORG_A}/v1/traces", json=_OTLP_JSON_COLLECTOR_BODY
+    )
+    assert r.status_code == 200
+    assert r.json()["accepted"] == 1
+    _sql, rows = conn.executemany.call_args[0]
+    (trace_id, span_id, parent, service, name, kind, start_ns, dur_ns, status_code, org) = rows[0]
+    assert trace_id == "5b8efff798038103d269b633813fc60c"
+    assert span_id == "eee19b7ec3c1b174"
+    assert parent == "eee19b7ec3c1b173"
+    assert service == "aegis-backend"  # from resource service.name
+    assert name == "GET /api/v1/health"
+    assert kind == 2
+    assert start_ns == 1700000000000000000
+    assert dur_ns == 12000000  # end - start
+    assert status_code == 2
+    assert org == _ORG_A
+
+
 def test_ingest_rum_stamps_org_id(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = mock.AsyncMock()
     monkeypatch.setattr(router_mod, "get_pool", lambda: _mock_pool(conn))
