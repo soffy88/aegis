@@ -54,6 +54,11 @@ services:
       # MUST 经 aegis /api/v1/llm/ollama/* 调用，不得各自直连 GPU（避免多进程抢卡）。
       AEGIS_OLLAMA_BASE_URL: ${AEGIS_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       AEGIS_OLLAMA_GATEWAY_MAX_CONCURRENCY: ${AEGIS_OLLAMA_GATEWAY_MAX_CONCURRENCY:-1}
+      # Shared secret for the GPU-lock / Ollama gateway exposed on 127.0.0.1:8010.
+      # REQUIRED in prod: while empty the gateway fails closed (503) — set it in
+      # .env.aegis (openssl rand -hex 32) and have host-native callers send
+      # Authorization: Bearer $AEGIS_OLLAMA_GATEWAY_TOKEN.
+      AEGIS_OLLAMA_GATEWAY_TOKEN: ${AEGIS_OLLAMA_GATEWAY_TOKEN:-}
 
       # === AutoHeal ===
       AEGIS_AUTOHEAL_ENABLED: ${AEGIS_AUTOHEAL_ENABLED:-true}

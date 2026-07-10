@@ -5,7 +5,7 @@
 - Docker + Docker Compose v2
 - `helios-net` 已创建：`docker network create helios-net`
 - `platform-postgres` 已在 helios-net 运行，数据库 `aegis` 已创建
-- `helios-redis` 已在 helios-net 运行
+- `infisical-redis` 已在 helios-net 运行（compose 里 `AEGIS_REDIS_URL` 指向它）
 - Cloudflare Tunnel token 已准备好
 
 ## 首次部署
@@ -21,8 +21,12 @@ nano .env.aegis
 必填项清单：
 - `POSTGRES_PASSWORD`
 - `AEGIS_JWT_SECRET`（`openssl rand -hex 32` 生成）
+- `AEGIS_OLLAMA_GATEWAY_TOKEN`（`openssl rand -hex 32`；prod 下留空则 GPU/Ollama 网关 fail-closed 返回 503）
 - `CLOUDFLARED_TOKEN`
 - `AEGIS_DOCKER_GID`（后端以非 root 运行，需 docker.sock 的属组：`stat -c '%g' /var/run/docker.sock`）
+
+> 建议同时设置 `AEGIS_SECRETS_MASTER_KEY`（独立 32 字节 key）——留空则金库密钥派生自
+> `AEGIS_JWT_SECRET`，日后轮换 JWT 会孤立所有已加密的 org secrets。设定后请勿再改。
 
 > 升级到非 root 镜像后，**已存在的 `aegis-data` volume 仍属 root**。一次性修正属主：
 > ```bash
@@ -70,9 +74,17 @@ docker compose -f docker-compose.aegis.yml ps
 # 检查后端日志（迁移是否成功）
 docker logs aegis-backend --tail 50
 
-# 测试 API
-curl http://localhost/api/v1/health
+# 测试 API — 后端/caddy 端口都不发布到宿主，所以用以下两种之一：
+# ① 端到端（经 Cloudflare 隧道 → caddy:8080 → backend）
+curl https://aegis.uex.hk/api/v1/health
+# ② 本机内部（容器内直连后端，含 DB 就绪探针）
+docker exec aegis-backend python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/v1/health/ready').read())"
 ```
+
+> 拓扑：`cloudflared → aegis-caddy:8080 → /api/* 到 aegis-backend、其余到 aegis-console`。
+> caddy 另发布 `:80/:443` 仅用于运行时动态添加的客户网站/域名路由（自动 HTTPS），
+> **应用本身不在 :80**，因此 `curl http://localhost/...` 不会命中 API。
 
 ## 日常运维
 
@@ -154,4 +166,4 @@ EOF
 | 迁移失败 | `docker logs aegis-backend | grep migration` |
 | Brain Agent 未初始化 | `curl /api/v1/orgs/{id}/brain/status` |
 | 容器管理不可用 | 检查 `/var/run/docker.sock` 挂载是否存在 |
-| Redis 连接失败 | `docker exec aegis-backend python -c "import redis; redis.from_url('redis://helios-redis:6379/2').ping()"` |
+| Redis 连接失败 | `docker exec aegis-backend python -c "import redis; redis.from_url('redis://infisical-redis:6379/2').ping()"` |

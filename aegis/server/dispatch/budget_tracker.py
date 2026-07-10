@@ -34,6 +34,9 @@ class BudgetTracker:
         user can't both act on a stale read and jointly exceed monthly_limit_usd — a
         conflicting concurrent write aborts the EXEC and we retry. Returns False (no
         deduction applied) if the budget is exhausted.
+
+        Used as a *reservation* before an omodul run (reserve the call's max
+        budget_usd atomically; reconcile to actual spend afterwards via settle()).
         """
         if used_usd <= 0:
             return True
@@ -54,3 +57,20 @@ class BudgetTracker:
                     return True
                 except aioredis.WatchError:
                     continue
+
+    async def settle(self, user_id: str, reserved_usd: float, actual_usd: float) -> None:
+        """Reconcile a prior deduct() reservation to the actual spend.
+
+        Call after a reserved execution finishes: adjusts the counter by
+        (actual - reserved). A negative delta refunds the unused reservation; a
+        positive delta (actual > reserved) charges the overage even past the limit,
+        since the money is already spent. On a failed run pass actual_usd=0 to
+        refund the whole reservation. No-op when the reservation was 0 (deduct
+        early-returned) or nothing needs adjusting.
+        """
+        delta = actual_usd - reserved_usd
+        if reserved_usd <= 0 or delta == 0:
+            return
+        key = self._key(user_id)
+        await self.redis.incrbyfloat(key, delta)
+        await self.redis.expire(key, _BUDGET_TTL_SEC)

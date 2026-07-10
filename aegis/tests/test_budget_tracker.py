@@ -115,6 +115,51 @@ async def test_deduct_concurrent_requests_never_exceed_limit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_settle_refunds_unused_reservation() -> None:
+    """reserve 5.0 then settle to actual 0.5 → counter reflects real spend (0.5)."""
+    redis = fake_aioredis.FakeRedis()
+    tracker = BudgetTracker(redis, monthly_limit_usd=50.0)
+
+    assert await tracker.deduct("u", 5.0) is True  # reservation
+    await tracker.settle("u", reserved_usd=5.0, actual_usd=0.5)
+
+    assert float(await redis.get(tracker._key("u"))) == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_settle_zero_actual_full_refund() -> None:
+    """A failed run (actual 0) refunds the entire reservation → counter back to 0."""
+    redis = fake_aioredis.FakeRedis()
+    tracker = BudgetTracker(redis, monthly_limit_usd=50.0)
+
+    await tracker.deduct("u", 5.0)
+    await tracker.settle("u", reserved_usd=5.0, actual_usd=0.0)
+
+    assert float(await redis.get(tracker._key("u"))) == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_settle_charges_overage_past_limit() -> None:
+    """actual > reserved charges the difference even though it exceeds the reservation."""
+    redis = fake_aioredis.FakeRedis()
+    tracker = BudgetTracker(redis, monthly_limit_usd=50.0)
+
+    await tracker.deduct("u", 5.0)
+    await tracker.settle("u", reserved_usd=5.0, actual_usd=7.5)
+
+    assert float(await redis.get(tracker._key("u"))) == pytest.approx(7.5)
+
+
+@pytest.mark.asyncio
+async def test_settle_noop_when_nothing_reserved() -> None:
+    """reserved 0 (deduct early-returned) → settle does not touch Redis."""
+    redis = _mock_redis()
+    tracker = BudgetTracker(redis)
+    await tracker.settle("u", reserved_usd=0.0, actual_usd=0.0)
+    redis.incrbyfloat.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_monthly_key_format() -> None:
     """Key includes user_id and current YYYYMM."""
     redis = _mock_redis()

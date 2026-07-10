@@ -24,7 +24,7 @@ def _make_dispatcher(
         dedup.get.return_value = None
     if budget is None:
         budget = mock.AsyncMock(spec=BudgetTracker)
-        budget.has_budget.return_value = True
+        budget.deduct.return_value = True  # reservation succeeds
     return OmodulDispatcher(dedup, budget, data_dir=data_dir)
 
 
@@ -107,10 +107,10 @@ async def test_dispatcher_dedup_hit_skips_omodul(tmp_path: Path, _patch_omodul: 
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_budget_exceeded_raises(tmp_path: Path) -> None:
-    """Budget exceeded raises BudgetExceededError."""
+async def test_dispatcher_budget_exceeded_raises(tmp_path: Path, _patch_omodul: Any) -> None:
+    """Reservation (deduct) failing raises BudgetExceededError and never invokes omodul."""
     budget = mock.AsyncMock(spec=BudgetTracker)
-    budget.has_budget.return_value = False
+    budget.deduct.return_value = False  # reservation rejected → over budget
 
     dispatcher = _make_dispatcher(budget=budget, data_dir=str(tmp_path))
 
@@ -121,6 +121,56 @@ async def test_dispatcher_budget_exceeded_raises(tmp_path: Path) -> None:
             input_data={"app_config": {}},
             user_id="user_1",
         )
+    _patch_omodul.assert_not_called()  # gated BEFORE spending money
+    budget.settle.assert_not_awaited()  # nothing reserved → nothing to reconcile
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_reserves_then_settles_actual_cost(
+    tmp_path: Path, _patch_omodul: Any
+) -> None:
+    """Happy path reserves budget_usd up front, then settles to the real cost_usd."""
+    budget = mock.AsyncMock(spec=BudgetTracker)
+    budget.deduct.return_value = True
+
+    dispatcher = _make_dispatcher(budget=budget, data_dir=str(tmp_path))
+
+    await dispatcher.invoke(
+        omodul_name="install_self_hosted_app",
+        config={"app_slug": "nginx", "budget_usd": 5.0},
+        input_data={"app_config": {}},
+        user_id="user_1",
+    )
+
+    budget.deduct.assert_awaited_once_with("user_1", 5.0)  # reserved the cap
+    budget.settle.assert_awaited_once_with(
+        "user_1", reserved_usd=5.0, actual_usd=0.02
+    )  # reconciled to real spend (_mock_omodul_result cost_usd)
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_settles_zero_on_failure(tmp_path: Path) -> None:
+    """A failed omodul run refunds the whole reservation (settle actual=0)."""
+    budget = mock.AsyncMock(spec=BudgetTracker)
+    budget.deduct.return_value = True
+    fake_fn = mock.MagicMock(side_effect=RuntimeError("boom"))
+
+    with (
+        mock.patch.object(omodul, "install_self_hosted_app", fake_fn, create=True),
+        mock.patch.object(omodul, "InstallSelfHostedAppConfig", _FakeConfig, create=True),
+        mock.patch.object(omodul, "InstallSelfHostedAppInput", _FakeInput, create=True),
+        mock.patch.object(omodul, "compute_fingerprint_for", return_value="fp_x", create=True),
+    ):
+        dispatcher = _make_dispatcher(budget=budget, data_dir=str(tmp_path))
+        with pytest.raises(RuntimeError):
+            await dispatcher.invoke(
+                omodul_name="install_self_hosted_app",
+                config={"app_slug": "nginx", "budget_usd": 5.0},
+                input_data={"app_config": {}},
+                user_id="user_1",
+            )
+
+    budget.settle.assert_awaited_once_with("user_1", reserved_usd=5.0, actual_usd=0.0)
 
 
 @pytest.mark.asyncio
@@ -219,7 +269,7 @@ async def test_dispatcher_omodul_failure_no_dedup_but_persists(tmp_path: Path) -
 
 @pytest.mark.xfail(
     reason="主库 omodul __version__ 缺失 (Wiki 已知, 待主库 PATCH bump 修复). "
-           "Aegis 测试此处显式标记为 xfail, 不阻塞 PR. 主库修复后此测试转 xpass.",
+    "Aegis 测试此处显式标记为 xfail, 不阻塞 PR. 主库修复后此测试转 xpass.",
     strict=False,
 )
 def test_omodul_exposes_version() -> None:

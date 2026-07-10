@@ -48,9 +48,24 @@ async def _record_call(
 
 
 def _verify_gateway_token(cfg: AegisSettings, authorization: str | None) -> None:
-    """校验共享密钥。未配置 ollama_gateway_token → 跳过校验(仅限内网场景)。"""
+    """校验共享密钥。
+
+    未配置 ollama_gateway_token 时:
+    - dev: 跳过校验(便于本地/局域网直连)。
+    - 非 dev(prod): fail-closed 拒绝。网关现暴露在 127.0.0.1:8010 供宿主原生进程
+      调用 GPU 锁/推理,无 token 等于对本机任意进程开放该能力(可抢占/griefing 唯一
+      GPU 锁),故 prod 下必须显式配置 AEGIS_OLLAMA_GATEWAY_TOKEN。
+    """
     if not cfg.ollama_gateway_token:
-        return
+        if cfg.env == "dev":
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Ollama gateway is unauthenticated: set AEGIS_OLLAMA_GATEWAY_TOKEN "
+                "(required when AEGIS_ENV != 'dev')"
+            ),
+        )
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
