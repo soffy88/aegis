@@ -1,33 +1,48 @@
-"""Domain registration API — forwards to aegis-edge."""
+"""Domain registration API — creates real Caddy routes via CaddyEdge.
+
+Converged with the /edge/routes path (STATUS #18): registering a domain here adds
+an org-namespaced Caddy route (auto-HTTPS via ACME) using the same route-id scheme
+as edge.py, instead of the old best-effort forward to a phantom aegis-edge service.
+DNS record hosting stays external (point the domain's DNS at the tunnel/host at your
+registrar); Caddy then provisions the TLS cert automatically once DNS resolves.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 import asyncpg
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
-from aegis.server.runtime.config import get_settings
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.edge.caddy import get_caddy_edge, org_route_id
 from aegis.server.repositories.project_repo import ProjectRepository
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/domains", tags=["domains"])
 
-_EDGE_TIMEOUT = 10.0
-
 
 class DomainRegisterRequest(BaseModel):
     domain: str
     target_url: str
     tls_mode: str = "auto"
+
+
+def _upstream_from_target(target_url: str) -> tuple[str, str]:
+    """Split a target like 'http://host:3000' or 'host:3000' into
+    (dial_address, service_url) for CaddyEdge.add_route."""
+    parsed = urlparse(target_url if "//" in target_url else f"//{target_url}")
+    dial = parsed.netloc or target_url
+    service_url = target_url if parsed.scheme else f"http://{dial}"
+    return dial, service_url
 
 
 @router.get("")
@@ -98,8 +113,6 @@ async def list_certificates(
 ) -> list[dict[str, Any]]:
     """TLS certificate status for each registered domain — probes the live cert
     served on :443 and reports issuer, expiry and days remaining."""
-    import asyncio  # noqa: PLC0415
-
     rows = await conn.fetch(
         """
         SELECT domain FROM domains
@@ -128,27 +141,30 @@ async def register_domain(
             status_code=status.HTTP_404_NOT_FOUND, detail="project not found in this org"
         )
 
-    # Forward to aegis-edge (best-effort — dev may not have edge running)
+    # Create the real Caddy route (auto-HTTPS via ACME). Best-effort so a dev host
+    # without a running Caddy still records the domain; the response reports the
+    # route status so callers can surface a failure.
+    route_id = org_route_id(org_id, req.domain)
+    upstream, service_url = _upstream_from_target(req.target_url)
     edge_ok = False
     edge_error: str | None = None
-    try:
-        async with httpx.AsyncClient(timeout=_EDGE_TIMEOUT) as client:
-            r = await client.post(
-                f"{get_settings().domain_edge_url}/api/v1/domains",
-                json={
-                    "domain": req.domain,
-                    "target_url": req.target_url,
-                    "tls_mode": req.tls_mode,
-                },
+    edge = get_caddy_edge()
+    if edge is None:
+        edge_error = "CaddyEdge not initialized (caddy_admin_url unset?)"
+        log.warning("domain route not created: %s", edge_error)
+    else:
+        try:
+            await asyncio.to_thread(
+                edge.add_route,
+                req.domain,
+                upstream,
+                route_id=route_id,
+                service_url=service_url,
             )
-        if r.is_success:
             edge_ok = True
-        else:
-            edge_error = f"edge HTTP {r.status_code}: {r.text[:200]}"
-            log.warning("aegis-edge domain registration failed: %s", edge_error)
-    except httpx.RequestError as exc:
-        edge_error = f"edge unreachable: {exc}"
-        log.warning("aegis-edge not reachable (dev mode?): %s", exc)
+        except Exception as exc:  # noqa: BLE001 — best-effort; DB row still recorded
+            edge_error = f"caddy route add failed: {exc}"
+            log.warning("domain route creation failed for %s: %s", req.domain, exc)
 
     await conn.execute(
         """
@@ -168,6 +184,7 @@ async def register_domain(
     return {
         "domain": req.domain,
         "target_url": req.target_url,
+        "route_id": route_id,
         "edge_registered": edge_ok,
         "edge_error": edge_error,
     }
@@ -188,3 +205,11 @@ async def delete_domain(
     )
     if result == "DELETE 0":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain not found")
+
+    # Remove the Caddy route too (best-effort — the DB row is already gone).
+    edge = get_caddy_edge()
+    if edge is not None:
+        try:
+            await asyncio.to_thread(edge.remove_route, org_route_id(org_id, domain))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("caddy route removal failed for %s: %s", domain, exc)

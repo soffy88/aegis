@@ -427,62 +427,54 @@ class TestDomainsRouter:
         assert r.status_code == 200
         assert r.json() == []
 
-    def test_register_domain_edge_success(self, domains_client: TestClient) -> None:
-        edge_resp = mock.MagicMock()
-        edge_resp.is_success = True
-        edge_resp.status_code = 201
-
-        with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
+    def test_register_domain_creates_caddy_route(self, domains_client: TestClient) -> None:
+        """Register now adds a real org-namespaced Caddy route via CaddyEdge (#18)."""
+        edge = mock.MagicMock()
+        with mock.patch("aegis.server.api.routers.domains.get_caddy_edge", return_value=edge):
             r = domains_client.post(
                 f"/api/v1/orgs/{_ORG}/domains?project_id={_PROJ}",
-                json={
-                    "domain": "ha.example.com",
-                    "target_url": "http://localhost:8123",
-                },
+                json={"domain": "ha.example.com", "target_url": "http://localhost:8123"},
             )
-
         assert r.status_code == 201
         body = r.json()
         assert body["domain"] == "ha.example.com"
         assert body["edge_registered"] is True
+        assert body["route_id"] == f"aegis-org-{_ORG}-ha-example-com"
+        # upstream dial derived from target_url, org-namespaced route id
+        edge.add_route.assert_called_once()
+        _args, kw = edge.add_route.call_args
+        assert edge.add_route.call_args.args[:2] == ("ha.example.com", "localhost:8123")
+        assert kw["route_id"] == f"aegis-org-{_ORG}-ha-example-com"
 
-    def test_register_domain_edge_unavailable(self, domains_client: TestClient) -> None:
-        with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.side_effect = httpx_request_error()
+    def test_register_domain_edge_add_fails_best_effort(self, domains_client: TestClient) -> None:
+        edge = mock.MagicMock()
+        edge.add_route.side_effect = RuntimeError("caddy down")
+        with mock.patch("aegis.server.api.routers.domains.get_caddy_edge", return_value=edge):
             r = domains_client.post(
                 f"/api/v1/orgs/{_ORG}/domains?project_id={_PROJ}",
-                json={
-                    "domain": "ha.example.com",
-                    "target_url": "http://localhost:8123",
-                },
+                json={"domain": "ha.example.com", "target_url": "http://localhost:8123"},
             )
-
-        # Still 201 — DB write proceeds even if edge is unreachable
+        # Still 201 — DB row recorded even if the route couldn't be created
         assert r.status_code == 201
         body = r.json()
         assert body["edge_registered"] is False
         assert body["edge_error"] is not None
 
-    def test_register_domain_edge_error_response(self, domains_client: TestClient) -> None:
-        edge_resp = mock.MagicMock()
-        edge_resp.is_success = False
-        edge_resp.status_code = 400
-        edge_resp.text = "bad domain"
-
-        with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
+    def test_register_domain_edge_uninitialized(self, domains_client: TestClient) -> None:
+        with mock.patch("aegis.server.api.routers.domains.get_caddy_edge", return_value=None):
             r = domains_client.post(
                 f"/api/v1/orgs/{_ORG}/domains?project_id={_PROJ}",
-                json={"domain": "bad", "target_url": "http://x"},
+                json={"domain": "bad.example.com", "target_url": "http://x:1"},
             )
-
         assert r.status_code == 201
         assert r.json()["edge_registered"] is False
 
-    def test_delete_domain_ok(self, domains_client: TestClient) -> None:
-        r = domains_client.delete(f"/api/v1/orgs/{_ORG}/domains/ha.example.com")
+    def test_delete_domain_removes_caddy_route(self, domains_client: TestClient) -> None:
+        edge = mock.MagicMock()
+        with mock.patch("aegis.server.api.routers.domains.get_caddy_edge", return_value=edge):
+            r = domains_client.delete(f"/api/v1/orgs/{_ORG}/domains/ha.example.com")
         assert r.status_code == 204
+        edge.remove_route.assert_called_once_with(f"aegis-org-{_ORG}-ha-example-com")
 
     def test_delete_domain_not_found(
         self, domains_client: TestClient, domains_conn: mock.AsyncMock
@@ -492,11 +484,8 @@ class TestDomainsRouter:
         assert r.status_code == 404
 
     def test_register_tls_off(self, domains_client: TestClient) -> None:
-        edge_resp = mock.MagicMock()
-        edge_resp.is_success = True
-        edge_resp.status_code = 201
-        with mock.patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__.return_value.post.return_value = edge_resp
+        edge = mock.MagicMock()
+        with mock.patch("aegis.server.api.routers.domains.get_caddy_edge", return_value=edge):
             r = domains_client.post(
                 f"/api/v1/orgs/{_ORG}/domains?project_id={_PROJ}",
                 json={
@@ -506,9 +495,3 @@ class TestDomainsRouter:
                 },
             )
         assert r.status_code == 201
-
-
-def httpx_request_error() -> Exception:
-    import httpx  # noqa: PLC0415
-
-    return httpx.ConnectError("refused")

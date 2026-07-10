@@ -12,7 +12,9 @@ Design: AEGIS_DESIGN v1.1.0 §8.5
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
+from uuid import UUID
 
 from oprim import caddy_admin_reload, caddy_route_remove_atomic, caddy_routes_list
 from oskill import caddy_route_add
@@ -20,6 +22,22 @@ from oskill import caddy_route_add
 from aegis.server.runtime.config import AegisSettings
 
 log = logging.getLogger(__name__)
+
+
+def org_route_prefix(org_id: UUID) -> str:
+    """Prefix for all Caddy route @ids owned by an org (used for ownership checks)."""
+    return f"aegis-org-{org_id}-"
+
+
+def org_route_id(org_id: UUID, domain: str) -> str:
+    """Deterministic, org-namespaced Caddy route @id for a domain.
+
+    Single source of truth shared by the /edge/routes and /domains routers so a
+    domain registered via either path maps to the same route (STATUS #18 — dual
+    path convergence).
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", domain.lower()).strip("-")
+    return f"{org_route_prefix(org_id)}{slug}"
 
 
 def _build_route(domain: str, upstream: str, route_id: str | None = None) -> dict[str, Any]:
