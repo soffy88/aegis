@@ -47,7 +47,7 @@ docker build -f Dockerfile.prod -t aegis-backend:latest --ssh default .
 # Console (aegis-console 子目录)
 cd aegis-console
 docker build -f Dockerfile.prod -t aegis-console:latest \
-    --build-arg NEXT_PUBLIC_API_BASE_URL=https://aegis.uex.hk .
+    --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.uex.hk .
 cd ..
 ```
 
@@ -160,7 +160,7 @@ docker exec platform-postgres psql -U postgres -d aegis -c \
 | aegis.uex.hk 502 | aegis-caddy logs, verify Caddyfile :8080 内部反代正常 |
 | aegis.uex.hk 加载但报 CORS | backend AEGIS_CORS_ORIGINS=https://aegis.uex.hk verify |
 | backend 启动报 platform-postgres 连不上 | helios-net external 存在 (docker network ls), POSTGRES_PASSWORD verify |
-| console 502 | aegis-console 容器 logs, NEXT_PUBLIC_API_BASE_URL build-time verify |
+| console 502 | aegis-console 容器 logs, NEXT_PUBLIC_AEGIS_API build-time verify |
 | 自监控不上报 | AEGIS_SENTRY_DSN env var verify, aegis-backend logs grep sentry verify |
 
 ### M3+ 扩展 (Aegis 给其他项目公网发布)

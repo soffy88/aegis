@@ -52,6 +52,7 @@ from aegis.server.api.routers import incidents as incidents_router
 from aegis.server.api.routers import invite as invite_router
 from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import nodes as nodes_router
+from aegis.server.api.routers import gpu_lock as gpu_lock_router
 from aegis.server.api.routers import ollama_gateway as ollama_gateway_router
 from aegis.server.api.routers import oncall as oncall_router
 from aegis.server.api.routers import orgs as orgs_router
@@ -374,6 +375,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(metrics_router.router)
     app.include_router(ollama_gateway_router.router)
+    app.include_router(gpu_lock_router.router)
     app.include_router(scrape_targets_router.router)
     app.include_router(uptime_targets_router.router)
     app.include_router(autoheal_policies_router.router)

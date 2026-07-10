@@ -26,21 +26,31 @@ def _rank(sev: str) -> int:
     return _SEVERITY_RANK.get((sev or "").lower(), 0)
 
 
+_SEVERITY_RANK_SQL = (
+    "CASE lower({col}) WHEN 'critical' THEN 30 WHEN 'high' THEN 20"
+    " WHEN 'warning' THEN 10 WHEN 'warn' THEN 10 WHEN 'info' THEN 0 ELSE 0 END"
+)
+
+
 async def _attach(
     conn: asyncpg.Connection,
     *,
     incident_id: uuid.UUID,
     new_severity: str,
-    current_severity: str,
     event_id: uuid.UUID | None,
 ) -> None:
-    bump = _rank(new_severity) > _rank(current_severity)
+    # Rank comparison happens in SQL against the live row, not a Python-side value read
+    # earlier — otherwise two concurrent signals can both read a stale low severity, both
+    # decide to bump, and whichever UPDATE commits second clobbers a just-set higher one.
     await conn.execute(
         "UPDATE incidents SET event_count = event_count + 1, last_event_at = now(),"
-        " severity = CASE WHEN $2 THEN $3 ELSE severity END"
+        " severity = CASE WHEN "
+        + _SEVERITY_RANK_SQL.format(col="severity")
+        + " < "
+        + _SEVERITY_RANK_SQL.format(col="$2::text")
+        + " THEN $2 ELSE severity END"
         " WHERE id = $1",
         incident_id,
-        bump,
         new_severity,
     )
     if event_id is not None:
@@ -67,8 +77,7 @@ async def cluster_signal(
     is bumped and the optional event_id is linked.
     """
     existing = await conn.fetchrow(
-        "SELECT id, severity FROM incidents"
-        " WHERE org_id = $1 AND dedup_key = $2 AND status = 'open'",
+        "SELECT id FROM incidents WHERE org_id = $1 AND dedup_key = $2 AND status = 'open'",
         org_id,
         dedup_key,
     )
@@ -77,7 +86,6 @@ async def cluster_signal(
             conn,
             incident_id=existing["id"],
             new_severity=severity,
-            current_severity=existing["severity"],
             event_id=event_id,
         )
         return existing["id"], False
@@ -104,8 +112,7 @@ async def cluster_signal(
     except asyncpg.UniqueViolationError:
         # Race: another signal opened the incident between our SELECT and INSERT.
         row = await conn.fetchrow(
-            "SELECT id, severity FROM incidents"
-            " WHERE org_id = $1 AND dedup_key = $2 AND status = 'open'",
+            "SELECT id FROM incidents WHERE org_id = $1 AND dedup_key = $2 AND status = 'open'",
             org_id,
             dedup_key,
         )
@@ -115,7 +122,6 @@ async def cluster_signal(
             conn,
             incident_id=row["id"],
             new_severity=severity,
-            current_severity=row["severity"],
             event_id=event_id,
         )
         return row["id"], False

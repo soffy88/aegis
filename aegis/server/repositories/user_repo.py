@@ -36,13 +36,36 @@ class UserRepository:
     async def update_last_login(self, user_id: UUID) -> None:
         await self.conn.execute("UPDATE users SET last_login_at = NOW() WHERE id = $1", user_id)
 
-    async def update_password(self, user_id: UUID, password_hash: str) -> None:
+    async def bump_token_epoch(self, user_id: UUID) -> None:
+        """Invalidate all of a user's outstanding access tokens immediately.
+
+        Access tokens carry an `epoch` claim compared against this column on every
+        request (see get_current_user); incrementing it makes existing tokens stale
+        at once. Call on privilege-reducing changes: role change, org removal,
+        deactivation, password change.
+        """
         await self.conn.execute(
-            "UPDATE users SET password_hash = $1 WHERE id = $2", password_hash, user_id
+            "UPDATE users SET token_epoch = token_epoch + 1 WHERE id = $1", user_id
+        )
+
+    async def update_password(self, user_id: UUID, password_hash: str) -> None:
+        # Bump epoch: a password change should not leave older sessions valid.
+        await self.conn.execute(
+            "UPDATE users SET password_hash = $1, token_epoch = token_epoch + 1 WHERE id = $2",
+            password_hash,
+            user_id,
         )
 
     async def set_active(self, user_id: UUID, *, is_active: bool) -> None:
-        await self.conn.execute("UPDATE users SET is_active = $1 WHERE id = $2", is_active, user_id)
+        # Deactivation revokes existing access tokens at once (refresh is already
+        # blocked by the is_active check); reactivation leaves the epoch untouched.
+        if is_active:
+            await self.conn.execute("UPDATE users SET is_active = TRUE WHERE id = $1", user_id)
+        else:
+            await self.conn.execute(
+                "UPDATE users SET is_active = FALSE, token_epoch = token_epoch + 1 WHERE id = $1",
+                user_id,
+            )
 
     async def update_display_name(self, user_id: UUID, display_name: str) -> User | None:
         row = await self.conn.fetchrow(
@@ -65,15 +88,13 @@ class UserRepository:
         default_org_id: UUID | None = None,
     ) -> User:
         """Partial profile update. None = leave unchanged."""
-        current = await self.get_by_id(user_id)
-        if not current:
-            raise ValueError(f"user {user_id} not found")
-        new_display_name = display_name if display_name is not None else current.display_name
-        new_default_org = default_org_id if default_org_id is not None else current.default_org_id
         row = await self.conn.fetchrow(
-            "UPDATE users SET display_name = $1, default_org_id = $2 WHERE id = $3 RETURNING *",
-            new_display_name,
-            new_default_org,
+            "UPDATE users SET display_name = COALESCE($1, display_name),"
+            " default_org_id = COALESCE($2, default_org_id) WHERE id = $3 RETURNING *",
+            display_name,
+            default_org_id,
             user_id,
         )
+        if row is None:
+            raise ValueError(f"user {user_id} not found")
         return User.from_row(row)

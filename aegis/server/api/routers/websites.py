@@ -4,6 +4,7 @@ static (nginx) or PHP (php:apache) site in a container on an auto-freed host por
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import uuid
 from typing import Any
@@ -14,6 +15,8 @@ from pydantic import BaseModel, Field
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.runtime.config import get_settings
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/websites", tags=["websites"])
 
@@ -202,8 +205,13 @@ async def delete_website(
 def _list_website_domains() -> list[tuple[str, str]]:
     """[(name, domain), ...] for running website containers that have a domain."""
     r = _dcmd(
-        ["ps", "--filter", f"label={_LABEL}", "--format",
-         '{{.Names}}\t{{.Label "aegis.website.domain"}}']
+        [
+            "ps",
+            "--filter",
+            f"label={_LABEL}",
+            "--format",
+            '{{.Names}}\t{{.Label "aegis.website.domain"}}',
+        ]
     )
     out: list[tuple[str, str]] = []
     for line in r.stdout.strip().splitlines():

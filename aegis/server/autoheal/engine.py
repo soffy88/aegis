@@ -107,11 +107,10 @@ class AegisAutoHealContext(AutoHealContext):
         return self._trace_id
 
     async def systemctl_restart(self, service: str) -> None:
-        log.info("ctx_systemctl_restart service=%s", service)
-        # Stub: systemd integration not in oprim yet
+        raise NotImplementedError("systemctl_restart is not implemented yet (BACKLOG-074)")
 
     async def kill_process(self, *, name: str | None = None, pid: int | None = None) -> None:
-        log.info("ctx_kill_process name=%s pid=%s", name, pid)
+        raise NotImplementedError("kill_process is not implemented yet (BACKLOG-074)")
 
     async def docker_restart(self, container: str) -> None:
         log.info("ctx_docker_restart container=%s", container)
@@ -120,7 +119,7 @@ class AegisAutoHealContext(AutoHealContext):
         )
 
     async def k8s_pod_delete(self, *, namespace: str, pod: str) -> None:
-        log.info("ctx_k8s_pod_delete ns=%s pod=%s", namespace, pod)
+        raise NotImplementedError("k8s_pod_delete is not implemented yet (BACKLOG-074)")
 
     async def http_get(self, url: str, **kwargs: Any) -> dict[str, Any]:
         log.info("ctx_http_get url=%s", url)
@@ -136,10 +135,10 @@ class AegisAutoHealContext(AutoHealContext):
         }
 
     async def alert_human(self, message: str, *, channel: str = "slack") -> None:
-        log.info("ctx_alert_human channel=%s msg=%s", channel, message)
+        raise NotImplementedError("alert_human is not implemented yet (BACKLOG-074)")
 
     async def get_secret(self, path: str) -> str:
-        return "stub-secret"
+        raise NotImplementedError("get_secret is not implemented yet (BACKLOG-074)")
 
     async def emit_trail_event(
         self, *, event_type: str, severity: str = "info", payload: dict[str, Any] | None = None
@@ -215,6 +214,11 @@ class AutoHealEngine:
 
         # ── Circuit breaker guard ────────────────────────────────────────────
         if circuit_breaker_thresholds:
+            if not health_samples:
+                log.warning(
+                    "circuit breaker check skipped — no health samples provided, "
+                    "defaulting to not-tripped"
+                )
             cb_result = circuit_breaker_check(
                 samples=health_samples or [],
                 thresholds=circuit_breaker_thresholds,
@@ -342,7 +346,7 @@ class AutoHealEngine:
                     app_slug=app_slug,
                     instance_name=instance_name,
                     rollback_to_version=rollback_to_version,
-                    restore_data=action_plan.get("restore_data", True),
+                    restore_data=action_plan.get("restore_data", False),
                 )
                 input_data = RollbackAppInput(
                     docker_host=action_plan.get("docker_host", "unix:///var/run/docker.sock"),
@@ -352,10 +356,21 @@ class AutoHealEngine:
                 )
 
                 with tempfile.TemporaryDirectory() as tmp:
-                    await asyncio.get_event_loop().run_in_executor(
-                        None, rollback_app, config, input_data, Path(tmp)
+                    # rollback_app has no internal timeout and may hang on a stalled
+                    # backup restore (e.g. network hang); bound it here so this
+                    # last-resort recovery path can't block forever.
+                    await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            None, rollback_app, config, input_data, Path(tmp)
+                        ),
+                        timeout=300,
                     )
                 self._log("rollback_done")
+            except TimeoutError:
+                self.state = AutoHealState.failed
+                self._log("rollback_timed_out", timeout_sec=300)
+                log.error("autoheal_engine rollback_app timed out after 300s")
+                return self.state
             except Exception as exc:
                 self._log("rollback_failed", error=str(exc))
         else:
@@ -379,9 +394,21 @@ class AutoHealEngine:
     ) -> None:
         elapsed = 0
         while elapsed < max_wait_sec:
-            gate = await self.release_gate_service.repo.get(
-                gate_id=gate_id, org_id=org_id, lazy_expire=True
-            )
+            try:
+                gate = await asyncio.wait_for(
+                    self.release_gate_service.repo.get(
+                        gate_id=gate_id, org_id=org_id, lazy_expire=True
+                    ),
+                    timeout=8,
+                )
+            except TimeoutError:
+                log.warning(
+                    "autoheal_engine wait_for_decision poll timed out gate_id=%s, retrying",
+                    gate_id,
+                )
+                await asyncio.sleep(poll_interval_sec)
+                elapsed += poll_interval_sec
+                continue
             if not gate or gate.state != "pending":
                 return
             await asyncio.sleep(poll_interval_sec)

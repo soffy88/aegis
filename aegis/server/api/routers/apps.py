@@ -181,7 +181,11 @@ async def _run_install(
             final_status = "completed"
             domain = body.domain
         else:
-            from obase.docker import docker_container_create, docker_container_start, docker_image_pull
+            from obase.docker import (
+                docker_container_create,
+                docker_container_start,
+                docker_image_pull,
+            )
 
             image = body.image_to_pull
             if not image:
@@ -203,7 +207,14 @@ async def _run_install(
                     docker_container_create,
                     image=image,
                     name=body.app_name,
-                    labels={"aegis.managed": "true", "aegis.app": body.app_name},
+                    labels={
+                        "aegis.managed": "true",
+                        "aegis.app": body.app_name,
+                        # org/project ownership stamp — lets container-addressed
+                        # docker endpoints verify tenant ownership by label.
+                        "aegis.org": str(org_id),
+                        "aegis.project": str(project_id),
+                    },
                     restart_policy="unless-stopped",
                     network=cfg.app_install_network or None,
                     docker_host=dh,

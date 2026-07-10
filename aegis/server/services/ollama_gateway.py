@@ -9,30 +9,22 @@
 serialize 对底层 Ollama 的实际调用(默认 1 = 同一时刻全平台只有一个请求真正触达 GPU),
 排队超时则拒绝(503)而不是让多个请求一起砸向驱动。aegis-backend 以单 worker 运行
 (见 Dockerfile.prod 注释),故一个进程内的 asyncio.Semaphore 就是全局的、正确的。
+
+这把闸门与 services/gpu_lock.py 共用同一个 asyncio.Semaphore 实例(见 gpu_lock.get_gate)——
+不经此网关、自己直连 GPU 的外部消费方(如 ocr-vllm 容器启动)通过 gpu_lock 的 HTTP 端点拿
+同一把锁,才能真正与 Ollama 调用互斥,而不只是 Ollama 请求之间互斥。
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 import httpx
 
+from aegis.server.services import gpu_lock
+
 log = logging.getLogger(__name__)
-
-# 进程级并发闸门。在模块加载时按当前配置的上限创建一次；aegis-backend 单 worker 运行,
-# 故这就是全平台唯一的一把闸门,不存在多进程各自持有互不可见的信号量的问题。
-_gate: asyncio.Semaphore | None = None
-_gate_size: int | None = None
-
-
-def _get_gate(max_concurrency: int) -> asyncio.Semaphore:
-    global _gate, _gate_size
-    if _gate is None or _gate_size != max_concurrency:
-        _gate = asyncio.Semaphore(max_concurrency)
-        _gate_size = max_concurrency
-    return _gate
 
 
 class GatewayBusyError(Exception):
@@ -74,11 +66,19 @@ async def _proxy_gated(
     闸门持有时长覆盖整次生成(强制 stream=false),这正是我们要的语义——闸门必须罩住
     GPU 实际忙碌的整个区间,而不是提前释放。排队超时 → GatewayBusyError(503);
     Ollama 返回非 2xx 或不可达 → GatewayUpstreamError。
+
+    经 gpu_lock.acquire/release 拿锁(而非直接摸信号量),带上 owner=ollama:{model} ——
+    这样控制台的 GPU 状态面板才能看到 Ollama 也是持有方之一,不只是外部消费方可见。
     """
-    gate = _get_gate(max_concurrency)
+    model = payload.get("model", "?")
     try:
-        await asyncio.wait_for(gate.acquire(), timeout=queue_timeout_sec)
-    except TimeoutError as exc:
+        lease = await gpu_lock.acquire(
+            max_concurrency=max_concurrency,
+            queue_timeout_sec=queue_timeout_sec,
+            lease_sec=request_timeout_sec + 30,
+            owner=f"ollama:{model}",
+        )
+    except gpu_lock.GpuBusyError as exc:
         raise GatewayBusyError(
             f"GPU busy: queued > {queue_timeout_sec}s waiting for the shared Ollama gate"
         ) from exc
@@ -94,7 +94,7 @@ async def _proxy_gated(
     except httpx.HTTPError as exc:
         raise GatewayUpstreamError(f"ollama unreachable: {exc}") from exc
     finally:
-        gate.release()
+        gpu_lock.release(lease.token)
 
 
 async def generate(

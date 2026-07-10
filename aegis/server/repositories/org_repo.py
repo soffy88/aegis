@@ -42,15 +42,11 @@ class OrgRepository:
     async def update(
         self, org_id: UUID, *, name: str | None = None, plan: str | None = None
     ) -> Org | None:
-        org = await self.get_by_id(org_id)
-        if not org:
-            return None
-        new_name = name if name is not None else org.name
-        new_plan = plan if plan is not None else org.plan
         row = await self.conn.fetchrow(
-            "UPDATE orgs SET name = $1, plan = $2 WHERE id = $3 RETURNING *",
-            new_name,
-            new_plan,
+            "UPDATE orgs SET name = COALESCE($1, name), plan = COALESCE($2, plan)"
+            " WHERE id = $3 RETURNING *",
+            name,
+            plan,
             org_id,
         )
         return Org.from_row(row) if row else None

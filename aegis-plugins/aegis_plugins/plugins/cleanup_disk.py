@@ -2,9 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 import subprocess
+from pathlib import Path
 
 from aegis_autoheal_sdk import ActionResult, AutoHealContext, AutoHealPlugin
+
+logger = logging.getLogger(__name__)
+
+# Whitelist of host directories the "truncate stale log" action may touch.
+# Colon- or comma-separated. Empty falls back to the /var/log default (rather
+# than disabling the check) so a forged alert can't truncate arbitrary files.
+_ALLOWED_ROOTS_ENV = "AEGIS_CLEANUP_DISK_ALLOWED_ROOTS"
+_DEFAULT_ALLOWED_ROOTS = "/var/log"
+
+
+def _allowed_roots() -> list[Path]:
+    raw = os.environ.get(_ALLOWED_ROOTS_ENV) or _DEFAULT_ALLOWED_ROOTS
+    parts = [p.strip() for chunk in raw.split(":") for p in chunk.split(",")]
+    return [Path(p) for p in parts if p]
+
+
+def _resolve_within_allowed_roots(log_path: str) -> Path | None:
+    """Resolve *log_path* and return it only if contained in an allowed root."""
+    p = Path(log_path).resolve()
+    for root in _allowed_roots():
+        root = root.resolve()
+        if p == root or p.is_relative_to(root):
+            return p
+    return None
 
 
 class CleanupDiskPlugin(AutoHealPlugin):
@@ -20,7 +48,8 @@ class CleanupDiskPlugin(AutoHealPlugin):
     async def execute(self, ctx: AutoHealContext) -> ActionResult:
         cleaned: list[str] = []
         try:
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["find", "/tmp", "-maxdepth", "2", "-mtime", "+1", "-delete"],
                 check=True,
                 capture_output=True,
@@ -33,13 +62,25 @@ class CleanupDiskPlugin(AutoHealPlugin):
         if log_path:
             if log_path.startswith("-"):
                 return ActionResult.failed("invalid log_path: must not start with '-'")
-            try:
-                subprocess.run(
-                    ["truncate", "-s", "0", "--", log_path], check=True, capture_output=True
+            safe_path = _resolve_within_allowed_roots(log_path)
+            if safe_path is None:
+                return ActionResult.failed(
+                    f"invalid log_path: {log_path!r} is outside the allowed roots "
+                    f"({_ALLOWED_ROOTS_ENV})"
                 )
-                cleaned.append(f"truncated {log_path}")
-            except subprocess.CalledProcessError:
-                pass
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["truncate", "-s", "0", "--", str(safe_path)],
+                    check=True,
+                    capture_output=True,
+                )
+                cleaned.append(f"truncated {safe_path}")
+            except subprocess.CalledProcessError as exc:
+                logger.error("truncate failed for %s: %s", safe_path, exc.stderr.decode()[:200])
+                return ActionResult.failed(
+                    f"truncate {safe_path} failed: {exc.stderr.decode()[:200]}"
+                )
 
         return ActionResult.ok(f"disk cleanup: {', '.join(cleaned)}")
 

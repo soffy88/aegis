@@ -54,6 +54,11 @@ services:
       # MUST 经 aegis /api/v1/llm/ollama/* 调用，不得各自直连 GPU（避免多进程抢卡）。
       AEGIS_OLLAMA_BASE_URL: ${AEGIS_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       AEGIS_OLLAMA_GATEWAY_MAX_CONCURRENCY: ${AEGIS_OLLAMA_GATEWAY_MAX_CONCURRENCY:-1}
+      # Shared secret for the GPU-lock / Ollama gateway exposed on 127.0.0.1:8010.
+      # REQUIRED in prod: while empty the gateway fails closed (503) — set it in
+      # .env.aegis (openssl rand -hex 32) and have host-native callers send
+      # Authorization: Bearer $AEGIS_OLLAMA_GATEWAY_TOKEN.
+      AEGIS_OLLAMA_GATEWAY_TOKEN: ${AEGIS_OLLAMA_GATEWAY_TOKEN:-}
 
       # === AutoHeal ===
       AEGIS_AUTOHEAL_ENABLED: ${AEGIS_AUTOHEAL_ENABLED:-true}
@@ -99,6 +104,9 @@ services:
       # 文件管理器白名单根（同路径挂载，读写）——须与 AEGIS_FILE_MANAGER_ROOTS 一致
       - /data:/data
       - /mnt/d:/mnt/d
+      # 宿主机 /proc 只读 —— 仅用于把 nvidia-smi 报告的 GPU 进程 PID 解析回容器名
+      # (读 /proc/<pid>/cgroup),不用于其它用途。见 services/gpu_processes.py。
+      - /proc:/host/proc:ro
 
     networks:
       # Extra stack networks so the uptime prober can reach those stacks' health
@@ -113,17 +121,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+    # 仅回环可达 —— 让 host 上原生进程(如 stratum/aii 的 ensure_container())能调 GPU 锁
+    # API(/api/v1/gpu/lock/*),不对外网暴露(公网入口仍只有 aegis-caddy 的 80/443)。
+    # 容器内仍监听 8000;host 侧用 8010,因为 8000 已被 mneme-api-1 占用。
+    ports:
+      - "127.0.0.1:8010:8000"
+
     depends_on:
       aegis-caddy:
         condition: service_healthy
 
+    # Readiness (not liveness): /health/ready does a real SELECT 1, so dependents
+    # gated on service_healthy only start once the backend can actually serve DB
+    # traffic. (The Dockerfile HEALTHCHECK stays on liveness /health so a transient
+    # DB blip doesn't trigger a container restart.)
     healthcheck:
       test: ["CMD", "python", "-c",
-        "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3).read()"]
+        "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3).read()"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 30s
       retries: 3
+
+    # Give the lifespan shutdown (cancel cron/website loops → drain in-flight →
+    # close_pool) time to finish before SIGKILL. Pairs with uvicorn's
+    # --timeout-graceful-shutdown in the Dockerfile CMD.
+    stop_grace_period: 30s
 
     # 非 root 用户 (uid 10001) 需要 docker.sock 的属组才能管理容器。
     # 设为宿主机的: stat -c '%g' /var/run/docker.sock
@@ -284,6 +307,10 @@ services:
     image: utkuozdemir/nvidia_gpu_exporter:1.3.1
     container_name: aegis-gpu-exporter
     restart: unless-stopped
+    # 共享宿主机 PID namespace —— nvidia-smi 的 --query-compute-apps 进程级查询依赖
+    # PID namespace 匹配,没有 pid: host 时驱动能看到显存/利用率(设备级,无关 PID
+    # namespace)但看不到任何 GPU 计算进程(见 aegis/server/services/gpu_processes.py)。
+    pid: host
     command:
       - "--query-field-names=index,name,uuid,utilization.gpu,utilization.memory,memory.total,memory.used,memory.free,temperature.gpu,power.draw"
     deploy:

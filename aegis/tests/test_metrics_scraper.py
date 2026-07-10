@@ -10,7 +10,18 @@ import pytest
 
 from aegis.server.services import metrics_scraper
 
-_PROM = "node_up 1\nhttp_requests_total{code=\"200\"} 5\n"
+_PROM = 'node_up 1\nhttp_requests_total{code="200"} 5\n'
+
+
+@pytest.fixture(autouse=True)
+def _allow_ssrf_guard():
+    """These tests use non-resolvable fake hosts and exercise parsing, not the SSRF
+    guard (covered by test_ssrf.py) — neutralize the guard's real DNS lookup."""
+    from types import SimpleNamespace
+
+    safe = SimpleNamespace(is_safe=True, reason="", resolved_ips=[], failed_check=None)
+    with mock.patch("aegis.server.lib.ssrf.url_safety_check", return_value=safe):
+        yield
 
 
 def _httpx_returning(text: str, status_code: int = 200):
@@ -60,7 +71,13 @@ async def test_scrape_due_targets_stores_and_marks_ok() -> None:
 async def test_scrape_due_targets_records_failure_and_continues() -> None:
     conn = mock.AsyncMock()
     conn.fetch.return_value = [
-        {"id": uuid.uuid4(), "name": "bad", "url": "http://x/metrics", "interval_seconds": 30, "labels": {}}
+        {
+            "id": uuid.uuid4(),
+            "name": "bad",
+            "url": "http://x/metrics",
+            "interval_seconds": 30,
+            "labels": {},
+        }
     ]
     with _httpx_returning("x", status_code=500):
         summary = await metrics_scraper.scrape_due_targets(conn)
@@ -74,8 +91,13 @@ async def test_scrape_due_targets_records_failure_and_continues() -> None:
 async def test_static_labels_merged_into_samples() -> None:
     conn = mock.AsyncMock()
     conn.fetch.return_value = [
-        {"id": uuid.uuid4(), "name": "node", "url": "http://x/metrics",
-         "interval_seconds": 30, "labels": {"env": "prod"}}
+        {
+            "id": uuid.uuid4(),
+            "name": "node",
+            "url": "http://x/metrics",
+            "interval_seconds": 30,
+            "labels": {"env": "prod"},
+        }
     ]
     with _httpx_returning("up 1\n"):
         await metrics_scraper.scrape_due_targets(conn)

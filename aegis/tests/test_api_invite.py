@@ -31,15 +31,15 @@ def _user_with_role(role: str) -> UserContext:
 
 def _invite_row(
     *,
-    token: str = _TOKEN,
     email: str = "new@example.com",
     role: str = "member",
     accepted_at: datetime | None = None,
     expires_at: datetime | None = None,
 ) -> dict:
+    # NB: token is no longer a returned column — only sha256(token) is stored, and the
+    # create endpoint injects the freshly-minted plaintext into its own response.
     return {
         "id": _INVITE_ID,
-        "token": token,
         "org_id": _ORG,
         "email": email,
         "role": role,
@@ -200,7 +200,6 @@ class TestAcceptInvite:
             None,  # user doesn't exist yet → create
             None,  # no existing membership
         ]
-        conn.fetchval.return_value = None  # INSERT user returns id via fetchrow
         new_user_row = {
             "id": new_user_id,
             "email": "new@example.com",

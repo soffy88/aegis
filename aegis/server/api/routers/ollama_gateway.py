@@ -9,13 +9,17 @@ agent_token 模式。
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
+import time
 from typing import Any
 
+import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.runtime.config import AegisSettings, get_settings
 from aegis.server.services import ollama_gateway as gw
 
@@ -24,10 +28,44 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/llm/ollama", tags=["ollama-gateway"])
 
 
+async def _record_call(
+    conn: asyncpg.Connection, *, method: str, outcome: str, duration_ms: float | None
+) -> None:
+    """Best-effort instrumentation — a metrics write must never break the gateway response."""
+    try:
+        tags = json.dumps({"method": method})
+        rows = [("ollama-gateway", f"ollama_gateway_requests_{outcome}", 1.0, "", tags)]
+        if duration_ms is not None:
+            rows.append(
+                ("ollama-gateway", "ollama_gateway_request_duration_ms", duration_ms, "ms", tags)
+            )
+        await conn.executemany(
+            "INSERT INTO agent_metrics (hostname, metric_name, value, unit, tags) VALUES ($1, $2, $3, $4, $5::jsonb)",
+            rows,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("failed to record ollama gateway metrics", exc_info=True)
+
+
 def _verify_gateway_token(cfg: AegisSettings, authorization: str | None) -> None:
-    """校验共享密钥。未配置 ollama_gateway_token → 跳过校验(仅限内网场景)。"""
+    """校验共享密钥。
+
+    未配置 ollama_gateway_token 时:
+    - dev: 跳过校验(便于本地/局域网直连)。
+    - 非 dev(prod): fail-closed 拒绝。网关现暴露在 127.0.0.1:8010 供宿主原生进程
+      调用 GPU 锁/推理,无 token 等于对本机任意进程开放该能力(可抢占/griefing 唯一
+      GPU 锁),故 prod 下必须显式配置 AEGIS_OLLAMA_GATEWAY_TOKEN。
+    """
     if not cfg.ollama_gateway_token:
-        return
+        if cfg.env == "dev":
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Ollama gateway is unauthenticated: set AEGIS_OLLAMA_GATEWAY_TOKEN "
+                "(required when AEGIS_ENV != 'dev')"
+            ),
+        )
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -80,20 +118,28 @@ async def generate(
     body: GenerateRequest,
     authorization: str | None = Header(default=None),
     cfg: AegisSettings = Depends(get_settings),
+    conn: asyncpg.Connection = Depends(get_db_conn),
 ) -> dict[str, Any]:
     """转发 /api/generate,经并发闸门 serialize(单卡多项目共享,§5.2)。"""
     _verify_gateway_token(cfg, authorization)
     base_url = _require_configured(cfg)
+    start = time.monotonic()
     try:
-        return await gw.generate(
+        result = await gw.generate(
             base_url=base_url,
             payload=body.model_dump(exclude_none=True),
             max_concurrency=cfg.ollama_gateway_max_concurrency,
             queue_timeout_sec=cfg.ollama_gateway_queue_timeout_sec,
         )
+        await _record_call(
+            conn, method="generate", outcome="ok", duration_ms=(time.monotonic() - start) * 1000
+        )
+        return result
     except gw.GatewayBusyError as exc:
+        await _record_call(conn, method="generate", outcome="busy", duration_ms=None)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except gw.GatewayUpstreamError as exc:
+        await _record_call(conn, method="generate", outcome="error", duration_ms=None)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
 
@@ -102,18 +148,26 @@ async def chat(
     body: ChatRequest,
     authorization: str | None = Header(default=None),
     cfg: AegisSettings = Depends(get_settings),
+    conn: asyncpg.Connection = Depends(get_db_conn),
 ) -> dict[str, Any]:
     """转发 /api/chat,经并发闸门 serialize(单卡多项目共享,§5.2)。"""
     _verify_gateway_token(cfg, authorization)
     base_url = _require_configured(cfg)
+    start = time.monotonic()
     try:
-        return await gw.chat(
+        result = await gw.chat(
             base_url=base_url,
             payload=body.model_dump(exclude_none=True),
             max_concurrency=cfg.ollama_gateway_max_concurrency,
             queue_timeout_sec=cfg.ollama_gateway_queue_timeout_sec,
         )
+        await _record_call(
+            conn, method="chat", outcome="ok", duration_ms=(time.monotonic() - start) * 1000
+        )
+        return result
     except gw.GatewayBusyError as exc:
+        await _record_call(conn, method="chat", outcome="busy", duration_ms=None)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except gw.GatewayUpstreamError as exc:
+        await _record_call(conn, method="chat", outcome="error", duration_ms=None)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

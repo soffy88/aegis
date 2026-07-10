@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,17 +10,22 @@ from oprim import docker_stats, fs_disk_usage, system_cpu_usage, system_ram_usag
 
 log = logging.getLogger(__name__)
 
+_CALL_TIMEOUT = 5.0
 
-def _safe(fn: Any, **kwargs: Any) -> Any:
-    """Call fn(**kwargs), return None on any exception."""
+
+async def _safe(fn: Any, timeout: float = _CALL_TIMEOUT, **kwargs: Any) -> Any:
+    """Call fn(**kwargs) in a worker thread, return None on exception or timeout."""
     try:
-        return fn(**kwargs)
+        return await asyncio.wait_for(asyncio.to_thread(fn, **kwargs), timeout=timeout)
+    except TimeoutError:
+        log.warning("collector_timeout fn=%s timeout=%ss", getattr(fn, "__name__", fn), timeout)
+        return None
     except Exception as exc:  # noqa: BLE001
         log.warning("collector_error fn=%s: %s", getattr(fn, "__name__", fn), exc)
         return None
 
 
-def collect_metrics(docker_host: str = "unix:///var/run/docker.sock") -> list[dict[str, Any]]:
+async def collect_metrics(docker_host: str = "unix:///var/run/docker.sock") -> list[dict[str, Any]]:
     """Collect host and container metrics using oprim.
 
     Returns a list of metric point dicts compatible with MetricPoint schema:
@@ -27,19 +33,19 @@ def collect_metrics(docker_host: str = "unix:///var/run/docker.sock") -> list[di
     """
     points: list[dict[str, Any]] = []
 
-    cpu = _safe(system_cpu_usage)
+    cpu = await _safe(system_cpu_usage)
     if cpu is not None:
         cpu_val = getattr(cpu, "cpu_percent", None) or getattr(cpu, "percent", None)
         if cpu_val is not None:
             points.append({"name": "cpu_percent", "value": float(cpu_val), "unit": "%", "tags": {}})
 
-    ram = _safe(system_ram_usage)
+    ram = await _safe(system_ram_usage)
     if ram is not None:
         ram_val = getattr(ram, "ram_percent", None) or getattr(ram, "percent", None)
         if ram_val is not None:
             points.append({"name": "ram_percent", "value": float(ram_val), "unit": "%", "tags": {}})
 
-    disk = _safe(fs_disk_usage, path="/")
+    disk = await _safe(fs_disk_usage, path="/")
     if disk is not None:
         disk_val = getattr(disk, "disk_percent", None) or getattr(disk, "percent", None)
         if disk_val is not None:
@@ -52,7 +58,7 @@ def collect_metrics(docker_host: str = "unix:///var/run/docker.sock") -> list[di
                 }
             )
 
-    stats = _safe(docker_stats, docker_host=docker_host)
+    stats = await _safe(docker_stats, docker_host=docker_host)
     if stats is not None:
         containers = stats if isinstance(stats, list) else getattr(stats, "containers", [])
         for c in containers:

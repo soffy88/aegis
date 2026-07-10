@@ -26,7 +26,13 @@ async def scrape_url(url: str, *, timeout: float = 10.0) -> list[tuple[str, floa
     """Fetch + parse one target. Returns (metric_name, value, labels) tuples.
 
     Raises httpx errors / ValueError(non-200) — callers record them on the target.
+    SSRF guard: private/loopback exporters are allowed (that's the whole point of
+    scraping), but cloud-metadata / link-local / reserved targets are rejected so a
+    scrape target can't be pointed at 169.254.169.254 to exfiltrate IAM creds.
     """
+    from aegis.server.lib.ssrf import guard_scrape  # noqa: PLC0415
+
+    guard_scrape(url)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(url, headers={"Accept": "text/plain"})
     if resp.status_code != 200:
@@ -75,9 +81,7 @@ async def scrape_due_targets(conn: asyncpg.Connection) -> dict[str, int]:
         static_labels = t["labels"] if isinstance(t["labels"], dict) else json.loads(t["labels"])
         try:
             samples = await scrape_url(t["url"])
-            n = await _store(
-                conn, hostname=t["name"], samples=samples, static_labels=static_labels
-            )
+            n = await _store(conn, hostname=t["name"], samples=samples, static_labels=static_labels)
             samples_total += n
             scraped += 1
             await conn.execute(
@@ -96,7 +100,5 @@ async def scrape_due_targets(conn: asyncpg.Connection) -> dict[str, int]:
                 str(exc)[:500],
             )
     if scraped or failed:
-        log.info(
-            "scrape_cycle scraped=%d failed=%d samples=%d", scraped, failed, samples_total
-        )
+        log.info("scrape_cycle scraped=%d failed=%d samples=%d", scraped, failed, samples_total)
     return {"scraped": scraped, "failed": failed, "samples": samples_total}

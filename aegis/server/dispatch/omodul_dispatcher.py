@@ -12,6 +12,7 @@ Responsibilities (additive to omodul, never replacing):
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import uuid
@@ -43,6 +44,10 @@ class OmodulDispatcher:
         self.dedup_cache = dedup_cache
         self.budget_tracker = budget_tracker
         self.data_dir = data_dir
+        # fingerprint -> in-flight execution task, so concurrent invoke() calls
+        # with the same fingerprint (e.g. a retried alert) join the first
+        # call's result instead of starting a duplicate (costly) execution.
+        self._inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     async def invoke(
         self,
@@ -74,51 +79,103 @@ class OmodulDispatcher:
             log.info("omodul_dedup_hit omodul=%s fp=%s", omodul_name, fp[:12])
             return cached
 
-        # 4. Budget check
+        # 3b. In-flight join: a concurrent call with the same fingerprint is
+        # already executing — await its result instead of duplicating it.
+        inflight = self._inflight.get(fp)
+        if inflight is not None:
+            log.info("omodul_inflight_join omodul=%s fp=%s", omodul_name, fp[:12])
+            return await inflight
+
+        task = asyncio.ensure_future(
+            self._execute(
+                omodul_name=omodul_name,
+                omodul_fn=omodul_fn,
+                config_obj=config_obj,
+                input_obj=input_obj,
+                user_id=user_id,
+                on_step=on_step,
+                project_id=project_id,
+                fp=fp,
+            )
+        )
+        self._inflight[fp] = task
+        try:
+            return await task
+        finally:
+            self._inflight.pop(fp, None)
+
+    async def _execute(
+        self,
+        *,
+        omodul_name: str,
+        omodul_fn: Callable[..., dict[str, Any]],
+        config_obj: Any,
+        input_obj: Any,
+        user_id: str,
+        on_step: Callable[[dict[str, Any]], None] | None,
+        project_id: uuid.UUID | None,
+        fp: str,
+    ) -> dict[str, Any]:
+        """Budget-gate, invoke, and persist a single omodul execution."""
+        # 4. Budget gate — atomically RESERVE this call's max budget BEFORE running.
+        #    deduct() is the enforcement point: it check-and-increments in one
+        #    WATCH/MULTI/EXEC transaction, so N concurrent invokes for a user at the
+        #    limit can't all slip through (the old has_budget() read-then-act pre-check
+        #    was racy and its result was the only gate). We reserve budget_usd (the
+        #    call's cap) up front and reconcile to the real cost in the finally block.
         budget_usd = getattr(config_obj, "budget_usd", 5.0)
-        if not await self.budget_tracker.has_budget(user_id, budget_usd):
+        if not await self.budget_tracker.deduct(user_id, budget_usd):
             raise BudgetExceededError(f"user {user_id} budget exceeded")
 
-        # 5. Build output_dir with user_id
-        output_dir = Path(self.data_dir) / "omodul_output" / user_id / omodul_name / fp
-        output_dir.mkdir(parents=True, exist_ok=True)
+        result: dict[str, Any] | None = None
+        try:
+            # 5. Build output_dir with user_id
+            output_dir = Path(self.data_dir) / "omodul_output" / user_id / omodul_name / fp
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 6. Invoke omodul
-        log.info("omodul_invoke omodul=%s fp=%s user=%s", omodul_name, fp[:12], user_id)
-        result: dict[str, Any] = omodul_fn(config_obj, input_obj, output_dir, on_step=on_step)
+            # 6. Invoke omodul (sync, does LLM HTTP calls — offload to a thread so
+            # it doesn't block the event loop).
+            log.info("omodul_invoke omodul=%s fp=%s user=%s", omodul_name, fp[:12], user_id)
+            result = await asyncio.to_thread(
+                omodul_fn, config_obj, input_obj, output_dir, on_step=on_step
+            )
 
-        # 7. Persist decision_trail (additive)
-        from aegis.server.persistence.event_trail import save_decision_trail
+            # 7. Persist decision_trail (additive)
+            from aegis.server.persistence.event_trail import save_decision_trail
 
-        await save_decision_trail(
-            omodul_name=omodul_name,
-            fingerprint=fp,
-            decision_trail=result.get("decision_trail", {}),
-            user_id=user_id,
-            status=result.get("status", "unknown"),
-            error=result.get("error"),
-            project_id=project_id,
-        )
+            await save_decision_trail(
+                omodul_name=omodul_name,
+                fingerprint=fp,
+                decision_trail=result.get("decision_trail", {}),
+                user_id=user_id,
+                status=result.get("status", "unknown"),
+                error=result.get("error"),
+                project_id=project_id,
+            )
 
-        # 8. Dedup cache (only on success)
-        if result.get("status") == "completed":
-            await self.dedup_cache.set(fp, result)
+            # 8. Dedup cache (only on success)
+            if result.get("status") == "completed":
+                await self.dedup_cache.set(fp, result)
 
-        # 9. Budget deduct
-        cost_usd = result.get("cost_usd", 0.0)
-        await self.budget_tracker.deduct(user_id, cost_usd)
+            # 8b. Persist the charge to the per-org cost ledger (best-effort).
+            from aegis.server.services.llm_cost import record_cost  # noqa: PLC0415
 
-        # 9b. Persist the charge to the per-org cost ledger (best-effort).
-        from aegis.server.services.llm_cost import record_cost  # noqa: PLC0415
+            await record_cost(
+                principal=user_id,
+                omodul_name=omodul_name,
+                model=result.get("model", ""),
+                cost_usd=result.get("cost_usd", 0.0),
+            )
 
-        await record_cost(
-            principal=user_id,
-            omodul_name=omodul_name,
-            model=result.get("model", ""),
-            cost_usd=cost_usd,
-        )
-
-        return result
+            return result
+        finally:
+            # 9. Reconcile the reservation to actual spend: refund the unused
+            #    portion (or charge overage). On failure result is None → actual 0,
+            #    fully refunding the reservation so a crashed run costs nothing.
+            actual_cost = float(result.get("cost_usd", 0.0)) if result else 0.0
+            await self.budget_tracker.settle(
+                user_id, reserved_usd=budget_usd, actual_usd=actual_cost
+            )
 
     def _resolve_class(self, omodul_name: str, suffix: str) -> type:
         """Resolve Config/Input class from omodul submodule."""

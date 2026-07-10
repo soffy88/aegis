@@ -105,7 +105,7 @@ def _make_planner_llm_provider(
             return _parse_plan_response(_extract_text(resp))
         except Exception as exc:
             log.warning("planner_llm_call_failed: %s", exc)
-            return {"steps": []}
+            return []
 
     _provider.__module__ = "obase.aegis_bridge"
     return _provider

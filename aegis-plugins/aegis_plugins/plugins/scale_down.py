@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from aegis_autoheal_sdk import ActionResult, AutoHealContext, AutoHealPlugin, Severity
 
+from aegis_plugins._url_safety import UrlNotAllowed, check_url_allowed
+
 
 class ScaleDownPlugin(AutoHealPlugin):
     name = "scale-down"
@@ -25,9 +27,12 @@ class ScaleDownPlugin(AutoHealPlugin):
         target = max(1, current - 1)
 
         if docker_url:
-            result = await ctx.http_get(
-                f"{docker_url}/services/{service_id}/update?replicas={target}",
-            )
+            url = f"{docker_url}/services/{service_id}/update?replicas={target}"
+            try:
+                check_url_allowed(url)
+            except UrlNotAllowed as exc:
+                return ActionResult.failed(str(exc))
+            result = await ctx.http_get(url)
             code = result.get("status_code", 500)
             if code >= 400:
                 return ActionResult.failed(f"scale-down API returned HTTP {code}")
@@ -38,6 +43,10 @@ class ScaleDownPlugin(AutoHealPlugin):
         health_url = ctx.alert_payload.get("health_url", "")
         if not health_url:
             return True
+        try:
+            check_url_allowed(health_url)
+        except UrlNotAllowed:
+            return False
         result = await ctx.http_get(health_url)
         return result.get("status_code", 0) == 200
 
@@ -47,6 +56,11 @@ class ScaleDownPlugin(AutoHealPlugin):
         service_id = ctx.alert_payload.get("service_id", ctx.service.name)
         original = int(ctx.alert_payload.get("current_replicas", 2))
         if docker_url:
-            await ctx.http_get(f"{docker_url}/services/{service_id}/update?replicas={original}")
+            url = f"{docker_url}/services/{service_id}/update?replicas={original}"
+            try:
+                check_url_allowed(url)
+            except UrlNotAllowed as exc:
+                return ActionResult.failed(str(exc))
+            await ctx.http_get(url)
             return ActionResult.ok(f"restored {service_id} to {original} replicas")
         return ActionResult.failed("cannot restore replicas: docker_api_url missing")

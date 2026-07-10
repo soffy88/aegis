@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.api.routers import ollama_gateway as router_mod
 from aegis.server.runtime.config import AegisSettings, get_settings
 
@@ -26,16 +28,30 @@ def _client(cfg: AegisSettings) -> TestClient:
     fa = FastAPI()
     fa.include_router(router_mod.router)
     fa.dependency_overrides[get_settings] = lambda: cfg
+
+    async def _conn() -> AsyncIterator[AsyncMock]:
+        yield AsyncMock()
+
+    fa.dependency_overrides[get_db_conn] = _conn
     return TestClient(fa, raise_server_exceptions=False)
 
 
 def test_no_token_configured_allows_any_request():
+    """dev (default env): unconfigured token skips auth for local/LAN convenience."""
     with patch(
         "aegis.server.services.ollama_gateway.list_models",
         AsyncMock(return_value={"models": []}),
     ):
         r = _client(_cfg()).get("/api/v1/llm/ollama/tags")
     assert r.status_code == 200
+
+
+def test_no_token_in_prod_fails_closed():
+    """prod: an unconfigured gateway token must reject, not silently allow — the
+    gateway is exposed on 127.0.0.1:8010 to any host-local process."""
+    r = _client(_cfg(env="prod")).get("/api/v1/llm/ollama/tags")
+    assert r.status_code == 503
+    assert "AEGIS_OLLAMA_GATEWAY_TOKEN" in r.json()["detail"]
 
 
 def test_token_configured_rejects_missing_header():

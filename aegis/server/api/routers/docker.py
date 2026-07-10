@@ -8,6 +8,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+import asyncpg
 from fastapi import (
     APIRouter,
     Depends,
@@ -17,16 +18,34 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-import asyncpg
 from obase.auth import jwt_verify_hs256
-from obase.docker import docker_container_exec, docker_container_inspect, docker_container_logs, docker_container_restart, docker_container_start, docker_container_stats, docker_container_stop, docker_image_delete, docker_image_list, docker_image_pull, docker_network_create, docker_network_delete, docker_network_list, docker_ps, docker_system_prune, docker_volume_create, docker_volume_delete, docker_volume_list
+from obase.docker import (
+    docker_container_exec,
+    docker_container_inspect,
+    docker_container_logs,
+    docker_container_restart,
+    docker_container_start,
+    docker_container_stats,
+    docker_container_stop,
+    docker_image_delete,
+    docker_image_list,
+    docker_image_pull,
+    docker_network_create,
+    docker_network_delete,
+    docker_network_list,
+    docker_ps,
+    docker_system_prune,
+    docker_volume_create,
+    docker_volume_delete,
+    docker_volume_list,
+)
 from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
-from aegis.server.auth.rbac import PERMISSIONS_BY_ROLE, Permission, require_permission
-from aegis.server.models import Role
+from aegis.server.auth.rbac import Permission, require_min_role, require_permission
+from aegis.server.models import ROLE_HIERARCHY, Role
 from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -641,9 +660,14 @@ async def exec_container(
     req: ContainerExecRequest,
     node_id: UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+    user: UserContext = Depends(require_min_role(Role.ADMIN)),
 ) -> dict[str, Any]:
-    """Execute a command in a container."""
+    """Execute a command in a container.
+
+    Arbitrary in-container command execution is a host-operator capability (it can
+    read another workload's secrets / spawn processes), so it is gated at admin+
+    rather than operator — not every on-call operator should hold shell access.
+    """
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
@@ -664,13 +688,15 @@ async def exec_container(
 @router.post("/host-shell", status_code=status.HTTP_200_OK)
 async def ensure_host_shell(
     org_id: UUID,
-    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+    user: UserContext = Depends(require_min_role(Role.OWNER)),
 ) -> dict[str, Any]:
     """Ensure a privileged host-access helper container is running, then return it.
 
     The container shares the host PID namespace and bind-mounts the host root at
     /host, so the standard container terminal into it reaches the host (run
-    `chroot /host bash`). Powerful — gated on INSTALL_APP.
+    `chroot /host bash`) — i.e. full host root. This is a break-glass capability
+    gated on org owner only; combined with the admin+ gate on the terminal, a
+    member/operator can no longer reach the host.
     """
     import subprocess  # noqa: PLC0415
 
@@ -734,9 +760,12 @@ async def container_terminal(
     #    so we verify the token query-param manually — but must still enforce the
     #    same authz as the REST exec endpoint, not just signature validity:
     #    holder must present a valid *access* token, be a member of org_id, and
-    #    hold container-exec permission (TRIGGER_AUTOHEAL, mirrors exec_container).
-    #    NOTE: container_name is not yet scoped to org_id (containers are global in
-    #    this design); acceptable in self-hosted single-tenant, revisit for multi-tenant.
+    #    be admin+ (mirrors exec_container's require_min_role(ADMIN) — an interactive
+    #    shell is a host-operator capability, not an on-call operator one).
+    #    NOTE: container_name is not yet scoped to org_id (containers are global on
+    #    the platform daemon in this design). Cross-tenant container ownership
+    #    enforcement is tracked separately; the admin+ gate limits the blast radius
+    #    to trusted org admins in the meantime.
     try:
         payload = jwt_verify_hs256(
             token=token,
@@ -763,8 +792,8 @@ async def container_terminal(
     except (KeyError, ValueError):
         await websocket.close(code=1008)
         return
-    if Permission.TRIGGER_AUTOHEAL not in PERMISSIONS_BY_ROLE[role]:
-        await websocket.close(code=1008)  # insufficient permission for container exec
+    if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[Role.ADMIN]:
+        await websocket.close(code=1008)  # interactive shell requires admin+
         return
 
     await websocket.accept()
@@ -774,77 +803,84 @@ async def container_terminal(
     import docker.errors
 
     settings = get_settings()
+    client = None
     try:
-        client = docker.DockerClient(base_url=settings.docker_host)
-        container = client.containers.get(container_name)
-    except docker.errors.NotFound:
-        await websocket.send_text(
-            json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
-        )
-        await websocket.close()
-        return
-    except Exception as exc:
-        await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
-        await websocket.close()
-        return
-
-    # 3. Create exec instance (interactive PTY)
-    exec_id = client.api.exec_create(
-        container_name,
-        cmd="/bin/sh",
-        stdin=True,
-        stdout=True,
-        stderr=True,
-        tty=True,
-    )
-    sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
-    sock._sock.setblocking(False)
-
-    loop = asyncio.get_event_loop()
-
-    async def read_docker() -> None:
-        """Docker → WebSocket."""
         try:
-            while True:
-                data = await loop.run_in_executor(None, _read_socket, sock._sock)
-                if data is None:
-                    await asyncio.sleep(0.01)
-                    continue
-                if not data:  # EOF
-                    break
-                await websocket.send_text(
-                    json.dumps({"type": "output", "data": data.decode("utf-8", errors="replace")})
-                )
-        except Exception:
-            log.exception("terminal_read_docker_error")
-
-    async def read_ws() -> None:
-        """WebSocket → Docker."""
-        try:
-            while True:
-                msg = await websocket.receive_text()
-                payload = json.loads(msg)
-                if payload.get("type") == "input":
-                    await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
-                elif payload.get("type") == "resize":
-                    client.api.exec_resize(
-                        exec_id["Id"],
-                        height=payload.get("rows", 24),
-                        width=payload.get("cols", 80),
-                    )
-        except WebSocketDisconnect:
-            pass
-        except Exception:
-            log.exception("terminal_read_ws_error")
-
-    try:
-        await asyncio.gather(read_docker(), read_ws())
-    finally:
-        sock.close()
-        try:
+            client = docker.DockerClient(base_url=settings.docker_host)
+            container = client.containers.get(container_name)
+        except docker.errors.NotFound:
+            await websocket.send_text(
+                json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
+            )
             await websocket.close()
-        except Exception:
-            pass
+            return
+        except Exception as exc:
+            await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
+            await websocket.close()
+            return
+
+        # 3. Create exec instance (interactive PTY)
+        exec_id = client.api.exec_create(
+            container_name,
+            cmd="/bin/sh",
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            tty=True,
+        )
+        sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
+        sock._sock.setblocking(False)
+
+        loop = asyncio.get_event_loop()
+
+        async def read_docker() -> None:
+            """Docker → WebSocket."""
+            try:
+                while True:
+                    data = await loop.run_in_executor(None, _read_socket, sock._sock)
+                    if data is None:
+                        await asyncio.sleep(0.01)
+                        continue
+                    if not data:  # EOF
+                        break
+                    await websocket.send_text(
+                        json.dumps(
+                            {"type": "output", "data": data.decode("utf-8", errors="replace")}
+                        )
+                    )
+            except Exception:
+                log.exception("terminal_read_docker_error")
+
+        async def read_ws() -> None:
+            """WebSocket → Docker."""
+            try:
+                while True:
+                    msg = await websocket.receive_text()
+                    payload = json.loads(msg)
+                    if payload.get("type") == "input":
+                        await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
+                    elif payload.get("type") == "resize":
+                        client.api.exec_resize(
+                            exec_id["Id"],
+                            height=payload.get("rows", 24),
+                            width=payload.get("cols", 80),
+                        )
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                log.exception("terminal_read_ws_error")
+
+        try:
+            await asyncio.gather(read_docker(), read_ws())
+        finally:
+            sock.close()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+    finally:
+        if client is not None:
+            client.close()
 
 
 def _read_socket(sock: Any, size: int = 4096) -> bytes | None:

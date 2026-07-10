@@ -105,15 +105,21 @@ async def create_project(
             detail=f"slug '{req.slug}' already exists in this org",
         )
 
-    project = await project_repo.create(
-        org_id=org_id,
-        slug=req.slug,
-        name=req.name,
-        display_name=req.display_name,
-        environment=req.environment,
-        docker_labels=req.docker_labels,
-        config=req.config,
-    )
+    try:
+        project = await project_repo.create(
+            org_id=org_id,
+            slug=req.slug,
+            name=req.name,
+            display_name=req.display_name,
+            environment=req.environment,
+            docker_labels=req.docker_labels,
+            config=req.config,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"slug '{req.slug}' already exists in this org",
+        ) from exc
     await record_audit(
         conn,
         org_id=org_id,

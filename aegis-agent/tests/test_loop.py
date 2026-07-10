@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,7 +17,7 @@ async def test_loop_calls_collect_and_report_once() -> None:
     stop = asyncio.Event()
     stop.set()
 
-    collect = MagicMock(return_value=[{"name": "cpu_percent", "value": 10.0}])
+    collect = AsyncMock(return_value=[{"name": "cpu_percent", "value": 10.0}])
     report = MagicMock(return_value=True)
 
     await run_loop(collect_fn=collect, report_fn=report, interval_seconds=0, stop_event=stop)
@@ -32,7 +32,7 @@ async def test_loop_passes_metrics_to_reporter() -> None:
     stop.set()
 
     metrics = [{"name": "ram_percent", "value": 55.0, "unit": "%", "tags": {}}]
-    collect = MagicMock(return_value=metrics)
+    collect = AsyncMock(return_value=metrics)
     report = MagicMock(return_value=True)
 
     await run_loop(collect_fn=collect, report_fn=report, interval_seconds=0, stop_event=stop)
@@ -46,7 +46,7 @@ async def test_loop_does_not_raise_on_collect_error() -> None:
     stop = asyncio.Event()
     stop.set()
 
-    collect = MagicMock(side_effect=RuntimeError("oprim unavailable"))
+    collect = AsyncMock(side_effect=RuntimeError("oprim unavailable"))
     report = MagicMock(return_value=True)
 
     await run_loop(collect_fn=collect, report_fn=report, interval_seconds=0, stop_event=stop)
@@ -60,7 +60,7 @@ async def test_loop_does_not_raise_on_report_error() -> None:
     stop = asyncio.Event()
     stop.set()
 
-    collect = MagicMock(return_value=[{"name": "cpu_percent", "value": 1.0}])
+    collect = AsyncMock(return_value=[{"name": "cpu_percent", "value": 1.0}])
     report = MagicMock(side_effect=RuntimeError("backend down"))
 
     await run_loop(collect_fn=collect, report_fn=report, interval_seconds=0, stop_event=stop)
@@ -73,7 +73,7 @@ async def test_loop_runs_multiple_cycles() -> None:
     """Without stop_event, loop runs until cancelled after N cycles."""
     call_count = 0
 
-    def _collect() -> list:
+    async def _collect() -> list:
         nonlocal call_count
         call_count += 1
         return []
@@ -82,7 +82,7 @@ async def test_loop_runs_multiple_cycles() -> None:
         while call_count < 2:
             await asyncio.sleep(0)
 
-    collect = MagicMock(side_effect=_collect)
+    collect = AsyncMock(side_effect=_collect)
     report = MagicMock(return_value=True)
 
     task = asyncio.create_task(run_loop(collect_fn=collect, report_fn=report, interval_seconds=0))

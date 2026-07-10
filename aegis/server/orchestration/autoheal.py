@@ -233,7 +233,8 @@ class AutoHealEngine:
         if exec_result.requires_restart_verify:
             self.state = EngineState.post_verify
             self._log("post_verify_start", container_id=exec_result.container_id)
-            self.outcome = restart_and_verify(
+            self.outcome = await asyncio.to_thread(
+                restart_and_verify,
                 container_id=exec_result.container_id,
                 health_check_url=exec_result.health_check_url,
                 timeout_sec=60,
@@ -300,11 +301,22 @@ class AutoHealEngine:
         async def _poll() -> None:
             elapsed = 0
             while elapsed < max_wait_sec:
-                gate = await self.release_gate_service.repo.get(
-                    gate_id=gate_id, org_id=org_id, lazy_expire=True
-                )
-                if not gate or gate.state != "pending":
-                    return
+                try:
+                    gate = await asyncio.wait_for(
+                        self.release_gate_service.repo.get(
+                            gate_id=gate_id, org_id=org_id, lazy_expire=True
+                        ),
+                        timeout=8,
+                    )
+                except TimeoutError:
+                    log.warning(
+                        "autoheal_wait_decision_poll_timeout gate_id=%s org_id=%s",
+                        gate_id,
+                        org_id,
+                    )
+                else:
+                    if not gate or gate.state != "pending":
+                        return
                 await asyncio.sleep(poll_interval_sec)
                 elapsed += poll_interval_sec
 

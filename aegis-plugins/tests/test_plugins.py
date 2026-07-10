@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import importlib.metadata
+import subprocess
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aegis_autoheal_sdk import ActionResultStatus, AutoHealPlugin, Severity
@@ -216,3 +217,81 @@ def test_drain_node_requires_approval_warning() -> None:
 async def test_drain_node_pre_check_false_without_node_id() -> None:
     ctx = _make_ctx(payload={"docker_api_url": "http://docker:2375"})
     assert await DrainNodePlugin().pre_check(ctx) is False
+
+
+@pytest.mark.asyncio
+async def test_drain_node_uses_real_version_index_from_inspect() -> None:
+    """Docker's node-update API is optimistic-concurrency-locked on Version.Index;
+    a hardcoded version=0 would be rejected by any node updated even once."""
+    ctx = _make_ctx(payload={"node_id": "n1", "docker_api_url": "http://docker:2375"})
+    ctx.http_get = AsyncMock(
+        side_effect=[
+            {"status_code": 200, "body": {"Version": {"Index": 42}}},
+            {"status_code": 200},
+        ]
+    )
+    result = await DrainNodePlugin().execute(ctx)
+    assert result.is_success
+    update_url = ctx.http_get.call_args_list[1].args[0]
+    assert "version=42" in update_url
+
+
+@pytest.mark.asyncio
+async def test_drain_node_fails_when_inspect_missing_version_index() -> None:
+    ctx = _make_ctx(payload={"node_id": "n1", "docker_api_url": "http://docker:2375"})
+    ctx.http_get = AsyncMock(return_value={"status_code": 200, "body": {}})
+    result = await DrainNodePlugin().execute(ctx)
+    assert result.status == ActionResultStatus.FAILED
+
+
+# ── Case 7: cleanup-disk log_path allowlist ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cleanup_disk_rejects_log_path_outside_allowed_roots() -> None:
+    ctx = _make_ctx(payload={"disk_percent": 90, "log_path": "/app/config.yaml"})
+    with patch("aegis_plugins.plugins.cleanup_disk.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        result = await CleanupDiskPlugin().execute(ctx)
+    assert result.status == ActionResultStatus.FAILED
+    assert "outside the allowed roots" in result.detail
+    # the forged path must never reach a truncate invocation
+    truncate_calls = [c for c in mock_run.call_args_list if c.args[0][0] == "truncate"]
+    assert not truncate_calls
+
+
+@pytest.mark.asyncio
+async def test_cleanup_disk_truncates_log_path_inside_allowed_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("AEGIS_CLEANUP_DISK_ALLOWED_ROOTS", str(tmp_path))
+    log_file = tmp_path / "app.log"
+    log_file.write_text("x" * 10)
+    ctx = _make_ctx(payload={"disk_percent": 90, "log_path": str(log_file)})
+    with patch("aegis_plugins.plugins.cleanup_disk.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        result = await CleanupDiskPlugin().execute(ctx)
+    assert result.is_success
+    truncate_calls = [c for c in mock_run.call_args_list if c.args[0][0] == "truncate"]
+    assert truncate_calls
+    assert str(log_file.resolve()) in truncate_calls[0].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_disk_truncate_failure_is_logged_and_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("AEGIS_CLEANUP_DISK_ALLOWED_ROOTS", str(tmp_path))
+    log_file = tmp_path / "app.log"
+    log_file.write_text("x")
+    ctx = _make_ctx(payload={"disk_percent": 90, "log_path": str(log_file)})
+
+    def _run(cmd: list[str], **kwargs: Any) -> MagicMock:
+        if cmd[0] == "truncate":
+            raise subprocess.CalledProcessError(1, cmd, stderr=b"permission denied")
+        return MagicMock(returncode=0)
+
+    with patch("aegis_plugins.plugins.cleanup_disk.subprocess.run", side_effect=_run):
+        result = await CleanupDiskPlugin().execute(ctx)
+    assert result.status == ActionResultStatus.FAILED
+    assert "permission denied" in result.detail

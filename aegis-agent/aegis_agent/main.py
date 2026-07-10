@@ -10,6 +10,8 @@ from aegis_agent._collector import collect_metrics
 from aegis_agent._loop import run_loop
 from aegis_agent._reporter import MetricsReporter
 
+log = logging.getLogger(__name__)
+
 
 def cli_main() -> None:
     """Start the aegis-agent metrics collection loop."""
@@ -22,12 +24,17 @@ def cli_main() -> None:
     backend_url = os.environ.get("AEGIS_BACKEND_URL", "http://localhost:8080")
     agent_token = os.environ.get("AEGIS_AGENT_TOKEN", "")
     docker_host = os.environ.get("AEGIS_DOCKER_HOST", "unix:///var/run/docker.sock")
-    interval = int(os.environ.get("AEGIS_AGENT_INTERVAL", "60"))
+    raw_interval = os.environ.get("AEGIS_AGENT_INTERVAL", "60")
+    try:
+        interval = int(raw_interval)
+    except ValueError:
+        log.warning("invalid_interval_env value=%r falling back to default=60", raw_interval)
+        interval = 60
 
     reporter = MetricsReporter(backend_url=backend_url, agent_token=agent_token)
 
-    def _collect() -> list:
-        return collect_metrics(docker_host=docker_host)
+    async def _collect() -> list:
+        return await collect_metrics(docker_host=docker_host)
 
     asyncio.run(run_loop(collect_fn=_collect, report_fn=reporter.report, interval_seconds=interval))
 

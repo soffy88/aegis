@@ -62,4 +62,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # worker, so those singletons double-run (double metric writes, risk of double
 # alert/autoheal firing) — and each worker is a full ~500MB copy of the heavy
 # ML/document stack. One worker is correct here and ~halves memory.
-CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# --timeout-graceful-shutdown 25: give in-flight requests + the lifespan teardown
+# time to drain before uvicorn force-exits (compose stop_grace_period is 30s, so
+# uvicorn gives up a few seconds before Docker would SIGKILL).
+CMD ["uvicorn", "aegis.server.app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--timeout-graceful-shutdown", "25"]

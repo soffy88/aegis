@@ -27,9 +27,13 @@ class ChannelRequest(BaseModel):
 
 
 def _send(kind: str, config: dict[str, Any], text: str) -> None:
+    from aegis.server.lib.ssrf import guard_external  # noqa: PLC0415
+
     if kind in ("slack", "webhook"):
+        guard_external(config["url"])  # notifications must only reach public hosts
         httpx.post(config["url"], json={"text": text}, timeout=10).raise_for_status()
     elif kind == "discord":
+        guard_external(config["url"])
         httpx.post(config["url"], json={"content": text}, timeout=10).raise_for_status()
     elif kind == "telegram":
         httpx.post(
