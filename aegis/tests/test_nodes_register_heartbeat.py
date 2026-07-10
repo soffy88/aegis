@@ -27,7 +27,8 @@ _NODE = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 
 def _user(role: str = "admin") -> UserContext:
     return UserContext(
-        user_id=uuid.uuid4(), email="t@x.com",
+        user_id=uuid.uuid4(),
+        email="t@x.com",
         orgs=[OrgInToken(org_id=_ORG, slug="o", role=role)],
     )
 
@@ -45,26 +46,32 @@ def _client(conn: mock.AsyncMock, role: str = "admin") -> TestClient:
 
 
 def test_register_returns_token_on_first_insert():
+    from aegis.server.lib.tokens import hash_token
+
     conn = mock.AsyncMock()
-    conn.fetchrow.return_value = {
-        "node_id": _NODE, "agent_token": "secret-tok", "inserted": True
-    }
+    conn.fetchrow.return_value = {"node_id": _NODE, "inserted": True}
     client = _client(conn)
     r = client.post(
         f"/api/v1/orgs/{_ORG}/nodes/register",
-        json={"host": "10.0.0.5", "node_label": "edge-1", "ssh_username": "ops",
-              "docker_tcp_port": 2375},
+        json={
+            "host": "10.0.0.5",
+            "node_label": "edge-1",
+            "ssh_username": "ops",
+            "docker_tcp_port": 2375,
+        },
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["agent_token"] == "secret-tok" and body["status"] == "registered"
+    tok = body["agent_token"]
+    assert isinstance(tok, str) and tok and body["status"] == "registered"
+    # what was stored is the HASH, not the plaintext returned to the caller
+    stored = conn.fetchrow.await_args.args[6]
+    assert stored == hash_token(tok) and stored != tok
 
 
 def test_register_hides_token_on_reregister():
     conn = mock.AsyncMock()
-    conn.fetchrow.return_value = {
-        "node_id": _NODE, "agent_token": "secret-tok", "inserted": False
-    }
+    conn.fetchrow.return_value = {"node_id": _NODE, "inserted": False}
     client = _client(conn)
     r = client.post(
         f"/api/v1/orgs/{_ORG}/nodes/register",
@@ -87,8 +94,11 @@ def test_heartbeat_rejects_bad_token():
 
 
 def test_heartbeat_accepts_valid_token_and_updates_last_seen():
+    from aegis.server.lib.tokens import hash_token
+
     conn = mock.AsyncMock()
-    conn.fetchrow.return_value = {"agent_token": "real-token"}
+    # DB stores the hash; the agent presents the plaintext.
+    conn.fetchrow.return_value = {"agent_token": hash_token("real-token")}
     client = _client(conn)
     r = client.post(
         f"/api/v1/orgs/{_ORG}/nodes/{_NODE}/heartbeat",

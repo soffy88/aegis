@@ -13,8 +13,14 @@ from aegis.server.services import uptime_prober as up
 
 @pytest.fixture(autouse=True)
 def _no_real_tls():
-    """默认屏蔽真实 TLS 握手(否则拨测路径会真连网)。TLS 专项测试自行覆盖。"""
-    with patch.object(up, "_tls_days_remaining", return_value=None):
+    """默认屏蔽真实 TLS 握手(否则拨测路径会真连网)。TLS 专项测试自行覆盖。
+    同时中和 SSRF 守卫的真实 DNS 解析(这些用例用不可解析的假主机,SSRF 行为在
+    test_ssrf.py 专项覆盖)。"""
+    safe = SimpleNamespace(is_safe=True, reason="", resolved_ips=[], failed_check=None)
+    with (
+        patch.object(up, "_tls_days_remaining", return_value=None),
+        patch("aegis.server.lib.ssrf.url_safety_check", return_value=safe),
+    ):
         yield
 
 

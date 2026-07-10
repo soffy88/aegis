@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.lib.tokens import hash_token
 from aegis.server.models.membership import Role
 from aegis.server.persistence.audit import record_audit
 from aegis.server.runtime.config import get_settings
@@ -134,16 +135,18 @@ async def create_invite(
     token = secrets.token_urlsafe(48)
     expires_at = datetime.now(UTC) + timedelta(days=_INVITE_TTL_DAYS)
 
+    # Store only sha256(token); the plaintext is returned once (below / via email)
+    # so a DB read can't yield a usable invite link.
     invite_row = await conn.fetchrow(
         """
         INSERT INTO org_invites (org_id, email, role, token, invited_by, expires_at)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, token, email, role, org_id, expires_at
+        RETURNING id, email, role, org_id, expires_at
         """,
         org_id,
         body.email,
         body.role,
-        token,
+        hash_token(token),
         user.user_id,
         expires_at,
     )
@@ -163,7 +166,7 @@ async def create_invite(
     # M2-F+ risk: an admin could claim the token themselves to create an account for
     # another email address. Mitigation: once AEGIS_RESEND_API_KEY is set, drop `token`
     # from InviteResponse so the token only leaves the server through the email system.
-    return InviteResponse(**dict(invite_row))
+    return InviteResponse(**dict(invite_row), token=token)
 
 
 @router.get("/api/v1/invites/{token}")
@@ -179,7 +182,7 @@ async def get_invite(
         JOIN orgs o ON o.id = i.org_id
         WHERE i.token = $1
         """,
-        token,
+        hash_token(token),
     )
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "invite not found")
@@ -209,7 +212,7 @@ async def accept_invite(
         JOIN orgs o ON o.id = i.org_id
         WHERE i.token = $1
         """,
-        token,
+        hash_token(token),
     )
     if not invite_row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "invite not found")

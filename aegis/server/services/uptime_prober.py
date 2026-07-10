@@ -55,27 +55,37 @@ async def probe_due_targets(conn: asyncpg.Connection) -> int:
                OR last_checked_at <= now() - (interval_seconds * interval '1 second'))
         """
     )
+    from aegis.server.lib.ssrf import SSRFBlocked, guard_scrape  # noqa: PLC0415
+
     probed = 0
     for t in rows:
         up = False
         latency = 0
         err: str | None = None
+        tls_days: float | None = None
         try:
-            res = await asyncio.to_thread(
-                network_http_health,
-                url=t["url"],
-                timeout_sec=_PROBE_TIMEOUT_SEC,
-                expected_status=t["expected_status"],
-            )
-            up = bool(getattr(res, "healthy", False))
-            latency = int(getattr(res, "elapsed_ms", 0) or 0)
-            err = getattr(res, "error", None)
-        except Exception as exc:  # noqa: BLE001 — a probe failure is a "down", not a crash
+            # SSRF: allow private/loopback (legit internal uptime targets) but reject
+            # cloud-metadata / link-local / reserved before opening any socket.
+            guard_scrape(t["url"])
+        except SSRFBlocked as exc:
             err = str(exc)[:200]
+        else:
+            try:
+                res = await asyncio.to_thread(
+                    network_http_health,
+                    url=t["url"],
+                    timeout_sec=_PROBE_TIMEOUT_SEC,
+                    expected_status=t["expected_status"],
+                )
+                up = bool(getattr(res, "healthy", False))
+                latency = int(getattr(res, "elapsed_ms", 0) or 0)
+                err = getattr(res, "error", None)
+            except Exception as exc:  # noqa: BLE001 — a probe failure is a "down", not a crash
+                err = str(exc)[:200]
 
-        # §3.2 SHOULD: HTTPS 目标顺带做 TLS 证书到期检查(握手即得),记 tls_cert_days_remaining
-        # gauge 供 per-series 规则告警(如 < 14 天)。best-effort,不影响 uptime 判定。
-        tls_days = await asyncio.to_thread(_tls_days_remaining, t["url"])
+            # §3.2 SHOULD: HTTPS 目标顺带做 TLS 证书到期检查(握手即得),记 tls_cert_days_remaining
+            # gauge 供 per-series 规则告警(如 < 14 天)。best-effort,不影响 uptime 判定。
+            tls_days = await asyncio.to_thread(_tls_days_remaining, t["url"])
 
         tags = json.dumps({"url": t["url"], "source": "uptime", "target": t["name"]})
         metrics = [

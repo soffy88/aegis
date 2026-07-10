@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.lib.tokens import hash_token
 from aegis.server.models import Node
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/nodes", tags=["nodes"])
@@ -68,6 +69,7 @@ async def register_node(
         f"tcp://{payload.host}:{payload.docker_tcp_port}" if payload.docker_tcp_port else None
     )
     new_token = secrets.token_urlsafe(32)
+    # Store only sha256(token); the plaintext is returned once below and never again.
     row = await conn.fetchrow(
         """
         INSERT INTO aegis_nodes
@@ -78,21 +80,22 @@ async def register_node(
                 docker_mode = EXCLUDED.docker_mode,
                 docker_host_url = EXCLUDED.docker_host_url,
                 last_seen = now()
-        RETURNING node_id, agent_token, (xmax = 0) AS inserted
+        RETURNING node_id, (xmax = 0) AS inserted
         """,
         org_id,
         payload.host,
         payload.node_label,
         payload.docker_connection_mode,
         docker_host_url,
-        new_token,
+        hash_token(new_token),
     )
     inserted = row["inserted"]
     return {
         "node_id": str(row["node_id"]),
         "node_label": payload.node_label,
-        # Only reveal the token on first registration; it cannot be retrieved later.
-        "agent_token": row["agent_token"] if inserted else None,
+        # Only reveal the plaintext token on first registration; only its hash is
+        # stored, so it cannot be retrieved later.
+        "agent_token": new_token if inserted else None,
         "status": "registered" if inserted else "updated",
     }
 
@@ -118,7 +121,8 @@ async def node_heartbeat(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "node not found")
     stored = row["agent_token"] or ""
-    if not payload.agent_token or not secrets.compare_digest(stored, payload.agent_token):
+    presented = hash_token(payload.agent_token) if payload.agent_token else ""
+    if not stored or not presented or not secrets.compare_digest(stored, presented):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid agent token")
 
     await conn.execute(

@@ -37,9 +37,11 @@ async def _compute(conn: asyncpg.Connection, row: asyncpg.Record) -> dict[str, A
                   sum(CASE WHEN status_code = 2 THEN 1 ELSE 0 END) AS errors
              FROM aegis_spans
             WHERE service = $1
+              AND org_id = $3
               AND ingested_at > now() - ($2 || ' days')::interval""",
         row["service"],
         str(row["window_days"]),
+        row["org_id"],
     )
     total = stat["total"] or 0
     errors = stat["errors"] or 0
