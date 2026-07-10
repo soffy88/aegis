@@ -216,20 +216,28 @@ async def test_check_rca_budget_fail_open_configurable_on_db_error() -> None:
         assert await _check_rca_budget("org", _cfg(rca_budget_fail_open=False)) is False
 
 
-def test_build_knowledge_retrieval_fn_returns_none_when_no_db() -> None:
-    """vector_db 未初始化时 _build_knowledge_retrieval_fn 返回 None."""
+def test_build_knowledge_retrieval_fn_always_callable() -> None:
+    """检索恒可用（无 embedder 时走 pg_trgm 词法保底），返回可调用的 retrieve fn。"""
     from aegis.server.brain.rca import _build_knowledge_retrieval_fn
 
-    with patch("aegis.server.brain.rca.get_vector_db", return_value=None):
-        fn = _build_knowledge_retrieval_fn(_cfg())
-    assert fn is None
-
-
-def test_build_knowledge_retrieval_fn_returns_callable_when_db_ready() -> None:
-    """vector_db 就绪时返回可调用的 retrieve fn."""
-    from aegis.server.brain.rca import _build_knowledge_retrieval_fn
-
-    mock_db = MagicMock()
-    with patch("aegis.server.brain.rca.get_vector_db", return_value=mock_db):
-        fn = _build_knowledge_retrieval_fn(_cfg())
+    fn = _build_knowledge_retrieval_fn(_cfg(embedding_provider="fts"))
     assert callable(fn)
+
+
+def test_knowledge_retrieval_formats_runbook_results() -> None:
+    """检索到的 runbook 被格式化成 LLM 可读文本喂进 context。"""
+    from aegis.server.brain import rca
+    from aegis.server.services import runbook_store
+
+    runbook_store._INDEX = [
+        {
+            "name": "restart-nginx",
+            "title": "restart-nginx",
+            "content": "restart the nginx container when it is unhealthy",
+            "tags": ["container_unhealthy"],
+            "embedding": None,
+        }
+    ]
+    fn = rca._build_knowledge_retrieval_fn(_cfg(embedding_provider="fts", runbook_min_score=0.0))
+    out = fn("nginx unhealthy container")
+    assert "restart-nginx" in out and "Relevant runbooks" in out

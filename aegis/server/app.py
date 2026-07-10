@@ -193,27 +193,8 @@ def register_providers(cfg: AegisSettings) -> None:
         log.info("registered llm provider: ollama (base_url=%s)", cfg.ollama_base_url)
     else:
         log.debug("ollama provider not configured (set AEGIS_OLLAMA_BASE_URL to enable)")
-
-    _warn_if_embeddings_stubbed(cfg)
-
-
-def _warn_if_embeddings_stubbed(cfg: AegisSettings) -> None:
-    """Surface the silent RAG-embedding degradation (audit #13).
-
-    oprim.vector_encode falls back to a low-dimensional STUB encoder when its
-    embedding provider isn't registered, so RAG runbook retrieval silently runs on
-    meaningless vectors (false confidence, not an error). register_providers only
-    wires LLM providers, never an embedding one. Make that visible at startup so an
-    operator knows to register a real embedding model; choosing/validating that
-    model is deploy config (Ollama nomic-embed-text, Voyage, local bge-m3, ...).
-    """
-    if not ProviderRegistry.has("embedding", cfg.embedding_provider):
-        log.warning(
-            "rag_embeddings_stubbed: no embedding provider '%s' registered — RAG "
-            "runbook retrieval will use oprim's STUB encoder (degraded relevance). "
-            "Register a real embedding provider to enable knowledge retrieval.",
-            cfg.embedding_provider,
-        )
+    # RAG embedding degradation is now surfaced by embeddings.get_embedder (warns once
+    # if the configured provider is unavailable → lexical pg_trgm fallback).
 
 
 def create_app(settings: AegisSettings | None = None) -> FastAPI:
@@ -270,16 +251,14 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
             from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
             from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
-            from aegis.server.services.vector_store import init_vector_store  # noqa: PLC0415
 
             # 1. Load runbooks from YAML
             load_runbooks()
 
-            # 2. Init LanceDB vector store
-            init_vector_store(cfg)
-
-            # 3. Index runbooks into vector store (RAG)
-            index_runbooks(cfg)
+            # 2. Index runbooks into the Postgres RAG store (pgvector semantic /
+            #    pg_trgm lexical floor — no LanceDB, no GPU required).
+            async with get_pool().acquire() as conn:
+                await index_runbooks(cfg, conn)
 
             alerter = init_platform_alerter(cfg)
             init_rca_service(cfg)

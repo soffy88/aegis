@@ -20,6 +20,8 @@ from typing import Any
 
 from obase import ProviderRegistry
 from obase.docker import docker_inspect, docker_logs, docker_stats
+from oprim import disk_usage as fs_disk_usage
+from oprim import postgres_locks_status as postgres_locks
 from oprim import (
     postgres_pool_status,
     rabbitmq_consumer_count,
@@ -28,20 +30,14 @@ from oprim import (
     system_load_avg,
     system_ram_usage,
 )
-from oprim import disk_usage as fs_disk_usage
-from oprim import postgres_locks_status as postgres_locks
 from oprim import postgres_slow_queries as postgres_long_running_queries
 from oprim._network import network_http_health, network_port_check  # v3 not top-level
 from oservi.assembler import ServiceManifest, assemble
 from oservi.engines.agentic_loop import AgenticLoopEngine
-from oskill import retrieve_runbook
 
 from aegis.server.runtime.config import AegisSettings
-from aegis.server.services.vector_store import (
-    get_vector_db,
-    make_vector_encode_fn,
-    make_vector_search_fn,
-)
+from aegis.server.services import runbook_store
+from aegis.server.services.embeddings import get_embedder
 
 log = logging.getLogger(__name__)
 
@@ -165,35 +161,30 @@ def _make_react_llm_provider(
 
 
 def _build_knowledge_retrieval_fn(cfg: AegisSettings) -> Callable[[str], Any]:
-    """构建 knowledge_retrieval callable，注入 AgenticLoopEngine."""
-    db = get_vector_db()
-    if db is None:
-        log.warning("rca: vector_db not initialized, knowledge_retrieval disabled")
-        return None
+    """构建 knowledge_retrieval callable，注入 AgenticLoopEngine.
 
-    encode_fn = make_vector_encode_fn(provider=cfg.embedding_provider)
-    search_fn = make_vector_search_fn(db=db, collection=cfg.runbook_vector_collection)
+    走 runbook_store 的内存检索（语义 pgvector / 词法 pg_trgm 保底），同步、无 async
+    DB 往返（agent 在 worker 线程里同步调用本工具）。无 runbook 时返回空串。
+    """
+    embedder = get_embedder(cfg)  # None → 词法保底
 
     def _retrieve(query: str) -> str:
         try:
-            result = retrieve_runbook(
-                query=query,
-                vector_encode_fn=encode_fn,
-                vector_search_fn=search_fn,
+            results = runbook_store.retrieve(
+                query,
                 top_k=cfg.runbook_top_k,
                 min_score=cfg.runbook_min_score,
-                collection=cfg.runbook_vector_collection,
+                embedder=embedder,
             )
-            if not result.results:
-                return ""
-            # 序列化为 LLM 可读的文本
-            parts = [f"Relevant runbooks for '{query}':"]
-            for entry in result.results:
-                parts.append(f"\n## {entry.title} (score={entry.score:.2f})\n{entry.content}")
-            return "\n".join(parts)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.warning("rca_knowledge_retrieval_failed: %s", exc)
             return ""
+        if not results:
+            return ""
+        parts = [f"Relevant runbooks for '{query}':"]
+        for e in results:
+            parts.append(f"\n## {e['title']} (score={e['score']:.2f})\n{e['content']}")
+        return "\n".join(parts)
 
     _retrieve.__module__ = "oskill.aegis_bridge"
     return _retrieve
