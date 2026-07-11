@@ -122,6 +122,11 @@ class AegisSettings(BaseSettings):
     docker_host: str = "unix:///var/run/docker.sock"
     docker_socket_proxy_enabled: bool = True
 
+    # Host dir holding the private OUI package tarballs (helios-blocks-*.tgz /
+    # helios-oui-*.tgz), vendored into the nextjs-oui site scaffold (ADR-004 P2).
+    # Empty = the nextjs-oui template is unavailable. Override: AEGIS_OUI_VENDOR_DIR
+    oui_vendor_dir: str = ""
+
     # === Caddy ===
     caddy_admin_url: str = "http://localhost:2019"
     # Docker network to attach app-store installs to (so caddy/monitoring can reach

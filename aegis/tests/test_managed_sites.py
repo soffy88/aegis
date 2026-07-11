@@ -16,10 +16,12 @@ import pytest
 from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import websites as w
 from aegis.server.api.routers.websites import (
+    ScaffoldRequest,
     WebsiteRequest,
     _probe_sites,
     create_website,
     delete_website,
+    scaffold_site,
 )
 
 _ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -88,6 +90,45 @@ async def test_create_php_selects_php_image(tmp_path: Path, docker_ok: mock.Asyn
 
     assert odocker.docker_container_create.call_args.kwargs["image"] == "php:8.3-apache"
     assert out["runtime"] == "php"
+
+
+@pytest.mark.asyncio
+async def test_create_nextjs_builds_then_serves_out(
+    tmp_path: Path, docker_ok: mock.AsyncMock
+) -> None:
+    conn = mock.AsyncMock()
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    req = WebsiteRequest(name="app", root_dir=str(tmp_path), runtime="nextjs-oui")
+
+    with (
+        mock.patch("aegis.server.services.files._safe", return_value=tmp_path),
+        mock.patch.object(w, "_build_nextjs", return_value=out_dir) as build,
+    ):
+        res = await create_website(_ORG, req, conn=conn, user=_user())
+
+    build.assert_called_once()  # one-shot build ran
+    create_kwargs = odocker.docker_container_create.call_args.kwargs
+    assert create_kwargs["image"] == "nginx:alpine"  # served as static
+    assert str(out_dir) in create_kwargs["volumes"]  # serves the build output, not src
+    assert res["runtime"] == "nextjs-oui"
+
+
+@pytest.mark.asyncio
+async def test_scaffold_endpoint_writes_and_audits(tmp_path: Path) -> None:
+    conn = mock.AsyncMock()
+    req = ScaffoldRequest(name="blog", parent_dir=str(tmp_path), template="static")
+
+    with (
+        mock.patch("aegis.server.services.files._safe", return_value=tmp_path),
+        mock.patch.object(w, "record_audit", mock.AsyncMock()) as audit,
+    ):
+        out = await scaffold_site(_ORG, req, conn=conn, user=_user())
+
+    assert (tmp_path / "blog" / "index.html").exists()
+    assert out["runtime"] == "static"
+    assert out["dir"] == str(tmp_path / "blog")
+    assert audit.await_args.kwargs["action"] == "site.scaffolded"
 
 
 @pytest.mark.asyncio

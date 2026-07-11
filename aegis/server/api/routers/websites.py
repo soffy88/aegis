@@ -15,6 +15,7 @@ import asyncio
 import logging
 import subprocess
 import uuid
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -64,11 +65,57 @@ def _dcmd(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str
     )
 
 
+def _build_nextjs(root: Path, docker_host: str) -> Path:  # noqa: ARG001
+    """One-shot build of a nextjs-oui scaffold in an ephemeral node container →
+    static export at ``root/out`` (ADR-004 P2). Raises HTTPException on failure.
+
+    Uses raw `docker run --rm` (obase exposes no run-to-completion primitive); the
+    container mounts the site dir rw, pulls deps and builds, then is discarded.
+    The long-running site container that serves out/ is a plain nginx (see create).
+    """
+    r = _dcmd(
+        [
+            "run",
+            "--rm",
+            "-v",
+            f"{root}:/app",
+            "-w",
+            "/app",
+            "node:20",
+            "sh",
+            "-c",
+            "npm install && npm run build",
+        ],
+        timeout=900,
+    )
+    if r.returncode != 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            ("nextjs build failed: " + (r.stderr or r.stdout or "unknown error"))[:400],
+        )
+    out = root / "out"
+    if not out.is_dir():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "nextjs build produced no out/ — the scaffold needs next.config output:'export'",
+        )
+    return out
+
+
 class WebsiteRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=40)
     root_dir: str = Field(..., min_length=1)
+    # runtime: static | php | nextjs-oui. Falls back to php/static via the legacy
+    # `php` flag when unset (the pre-P2 console only sends `php`).
+    runtime: str | None = None
     php: bool = False
     domain: str | None = None
+
+
+class ScaffoldRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    parent_dir: str = Field(..., min_length=1)
+    template: str
 
 
 _CADDY_ADMIN = "http://aegis-caddy:2019"
@@ -151,11 +198,20 @@ async def create_website(
     if not root.is_dir():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "root_dir is not a directory")
 
-    runtime = "php" if req.php else "static"
-    image, mount = _runtime_image_mount(runtime)
+    runtime = req.runtime or ("php" if req.php else "static")
     cname = f"website-{req.name}"
     dh = _dh()
     port = _pick_free_host_port(8100, dh)
+
+    # nextjs-oui: build the static export once in an ephemeral node container, then
+    # serve the produced out/ via nginx (no long-running node process). Other
+    # runtimes serve their root directly (unknown runtime → 400 in _runtime_image_mount).
+    if runtime == "nextjs-oui":
+        image, mount = _RUNTIMES["static"]
+        serve_dir = await asyncio.to_thread(_build_nextjs, root, dh)
+    else:
+        image, mount = _runtime_image_mount(runtime)
+        serve_dir = root
 
     # Idempotent (re-)create: drop any stale Caddy route + container first. obase
     # exposes no container-remove primitive, so removal shells out (see module docstring).
@@ -178,7 +234,7 @@ async def create_website(
             restart_policy="unless-stopped",
             network=_EDGE_NET,
             ports={"80/tcp": port},
-            volumes={str(root): {"bind": mount, "mode": "ro"}},
+            volumes={str(serve_dir): {"bind": mount, "mode": "ro"}},
             docker_host=dh,
         )
         await asyncio.to_thread(docker_container_start, container_id=cname, docker_host=dh)
@@ -239,6 +295,55 @@ async def create_website(
         "domain": req.domain,
         "domain_bound": domain_bound,
         "https": https,
+    }
+
+
+@router.post("/scaffold", status_code=status.HTTP_201_CREATED)
+async def scaffold_site(
+    org_id: uuid.UUID,
+    req: ScaffoldRequest,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
+) -> dict[str, Any]:
+    """Write a starter project (static / php / nextjs-oui) into a new subdir under
+    a file-manager directory. The returned dir + runtime can then be deployed."""
+    from aegis.server.services.files import _safe  # noqa: PLC0415
+    from aegis.server.services.site_scaffold import TEMPLATES  # noqa: PLC0415
+    from aegis.server.services.site_scaffold import scaffold as _scaffold  # noqa: PLC0415
+
+    if not _SLUG.match(req.name):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "name must be lowercase alnum/hyphen")
+    if req.template not in TEMPLATES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown template: {req.template}")
+    try:
+        parent = _safe(req.parent_dir)  # enforce it's inside a file-manager root
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"parent_dir invalid: {exc}") from exc
+    if not parent.is_dir():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_dir is not a directory")
+
+    dest = parent / req.name
+    oui_dir = get_settings().oui_vendor_dir
+    try:
+        files = await asyncio.to_thread(_scaffold, req.template, dest, oui_vendor_dir=oui_dir)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    await record_audit(
+        conn,
+        org_id=org_id,
+        actor_user_id=user.user_id,
+        action="site.scaffolded",
+        target_type="site",
+        target_id=req.name,
+        metadata={"template": req.template, "dir": str(dest)},
+    )
+    return {
+        "name": req.name,
+        "dir": str(dest),
+        "template": req.template,
+        "runtime": req.template,  # template name doubles as the deploy runtime
+        "files": files,
     }
 
 

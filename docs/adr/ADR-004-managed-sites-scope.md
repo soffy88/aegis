@@ -37,8 +37,10 @@ owner 的实际诉求（2026-07-10）：想用 Aegis 自托管起新站点，但
 ## 落地边界（本 ADR 授权的实现范围）
 
 1. **B（先，核心）**：`sites` 表入库；create/delete/list 走 `obase.docker` 原语（`docker_container_create/start/stop`）替代 raw subprocess；建站/删站写 `audit_log`；探活循环记录健康状态；容器打 `aegis.managed=true` 标签纳入受管视图。
-2. **A（后，广度）**：`runtime` 预设（static / php / node / nextjs-oui）；"从模板新建站点"脚手架（含 Next.js + OUI starter）落到文件管理器目录再部署。
-3. **暂不做**：从 Git 源码自动构建（Coolify 式 buildpack）——属新基建，另行 ADR 评估。
+2. **A（后，广度）**：`runtime` 预设（static / php / nextjs-oui）；"从模板新建站点"脚手架（`/websites/scaffold`，含 Next.js + OUI starter）落到文件管理器目录再部署。
+   - **模板级一次性构建 admit**：nextjs-oui 脚手架配 `next.config output:'export'`；部署时在**临时 node 容器**里跑一次 `npm install && next build` 产出 `out/`，随后由 nginx 以**静态**方式托管——无常驻 node 进程、不运行时重建，对齐 §0.2 铁律。这与下条"任意 Git 源码构建"不同：构建输入是**平台自带的固定模板**，非用户任意仓库，攻击面与维护面都有界。
+   - **OUI 私有 tarball vendoring**：OUI（`@helios/blocks`/`@helios/oui`）不发布公共 npm；脚手架从 `AEGIS_OUI_VENDOR_DIR`（默认 console 用的 `platform/OUI/`）拷 tgz 进站点 `vendor/`，`package.json` 用 `file:` 引用。**决议不发布公共 npm**——不可逆的公开暴露，且违背自托管/可离线定位（I7）。
+3. **暂不做**：从**任意 Git 源码**自动构建（Coolify 式 buildpack，检测 Dockerfile/nixpacks 构建任意仓库）——攻击面/供应链无界，属新基建，另行 ADR 评估。
 
 ## 影响
 
