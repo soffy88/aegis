@@ -42,6 +42,7 @@ from aegis.server.api.routers import status_components as status_components_rout
 from aegis.server.api.routers import slo as slo_router
 from aegis.server.api.routers import telemetry as telemetry_router
 from aegis.server.api.routers import websites as websites_router
+from aegis.server.api.routers import publish as publish_router
 from aegis.server.api.routers import docker as docker_router
 from aegis.server.api.routers import files as files_router
 from aegis.server.api.routers import (
@@ -377,6 +378,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(backup_storage_router.router)
     app.include_router(firewall_router.router)
     app.include_router(websites_router.router)
+    app.include_router(publish_router.router)
     app.include_router(telemetry_router.ingest_router)
     app.include_router(telemetry_router.router)
     app.include_router(slo_router.router)

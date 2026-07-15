@@ -1106,6 +1106,30 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_sites_org ON sites (org_id);
         """,
     ),
+    (
+        "051_published_services",
+        """
+        -- "Publish" (发布): expose an already-running internal container:port to the
+        -- public internet via the existing Cloudflare Tunnel — a Caddy host-matched
+        -- route (see edge/caddy.py CaddyEdge, reused as-is) plus an automatically
+        -- managed Cloudflare Tunnel ingress rule + DNS record. Distinct from `sites`
+        -- (which creates NEW site containers); this only wires up existing services.
+        CREATE TABLE IF NOT EXISTS published_services (
+            id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id           UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name             TEXT NOT NULL,
+            upstream         TEXT NOT NULL,       -- "container:port"
+            domain           TEXT NOT NULL,
+            caddy_route_id   TEXT NOT NULL,
+            cf_dns_record_id TEXT,
+            status           TEXT NOT NULL DEFAULT 'active',
+            last_error       TEXT,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, domain)
+        );
+        CREATE INDEX IF NOT EXISTS idx_published_services_org ON published_services (org_id);
+        """,
+    ),
 ]
 
 

@@ -17,6 +17,39 @@
     reverse_proxy mneme-web:3000
 }
 
+# Stratum API
+:8084 {
+    reverse_proxy stratum-api:9302
+}
+
+# Stratum 前端
+:8085 {
+    reverse_proxy stratum-web:3000
+}
+
+# AII (Stratum 子产品)
+:8086 {
+    reverse_proxy aii-web:3101
+}
+
+# Hevi (hevi.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
+# 前端用同源 /api/* 调后端，跟 hevi 自己原来独立 tunnel 的路径拆分逻辑保持一致，
+# 不能像 stratum/mneme 那样拆成两个端口，否则前端同源 /api/* 请求全落到前端容器)
+:8088 {
+    handle /api/* {
+        reverse_proxy hevi-cftunnel-hevi-api-1:8000
+    }
+    handle {
+        reverse_proxy hevi-cftunnel-hevi-web-1:3000
+    }
+}
+
+# Selene (sel.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
+# 前端 nginx 已同源反代 /api、/ws 到 gateway，跟 hevi 一样单端口即可，不能拆两个端口)
+:8089 {
+    reverse_proxy selene-frontend-1:80
+}
+
 # Aegis 主入口
 :8080 {
     handle /api/* {
