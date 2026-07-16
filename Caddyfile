@@ -50,6 +50,13 @@
     reverse_proxy selene-frontend-1:80
 }
 
+# Stirling-PDF (pdf.sxueji.com — 应用市场装的 app,手动发布。stirling 容器在
+# helios-net(已 network connect,原 bridge),caddy 按容器名直连 :8080。
+# 后续若改用 aegis 发布功能自动建路由,可移除此块)
+:8091 {
+    reverse_proxy stirling-pdf:8080
+}
+
 # Helivex (helivex.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
 # helivex-web 是 host 网络容器直接 bind 宿主 :3400，caddy 经 helios-net 网关 172.18.0.1
 # 够到它。Next 前端已同源 /gw 反代到 gateway，单端口即可。Host 透传后 helivex-web
