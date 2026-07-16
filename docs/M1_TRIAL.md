@@ -1,6 +1,6 @@
 # Aegis M1 试用指南
 
-## 1. 登录 (https://aegis.uex.hk)
+## 1. 登录 (https://aegis.kanpan.co)
 - Aegis JWT auth (邮箱 + 密码)
 - 默认 admin 账号: M2-E-Batch-2 seed
 
@@ -16,7 +16,7 @@
 - M1 console 不显示, psql 查:
   docker exec platform-postgres psql -U <user> -d aegis -c \
     "SELECT id, sentry_public_key FROM projects WHERE slug = '<slug>';"
-- DSN: https://<key>@aegis.uex.hk/api/<id>/envelope/
+- DSN: https://<key>@aegis.kanpan.co/api/<id>/envelope/
 
 ## 5. 业务方接 SDK
 - 按 docs/sdk-integration/ 对应文件

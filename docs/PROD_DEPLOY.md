@@ -6,7 +6,7 @@
 
 - Wiki 主机 (跟 platform-postgres 同主机), Docker + Docker Compose
 - helios-net external network 已存在
-- uex.hk Cloudflare 管理 (Zero Trust 启用)
+- kanpan.co Cloudflare 管理 (Zero Trust 启用)
 - Wiki 主机**不需要**固定 IP / 不需要 80/443 端口入站 (Cloudflare Tunnel 反向连)
 
 ## 1. Cloudflare 创 Tunnel (Wiki Cloudflare 控制台)
@@ -18,11 +18,11 @@
 1.5 **不要** 跟 Cloudflare 默认 install 走完, 跳到 next step "Connectors" 留空 (本机 docker 跑 cloudflared)
 1.6 进 "Public hostnames" 配 ingress:
     - Subdomain: aegis
-    - Domain: uex.hk
+    - Domain: kanpan.co
     - Type: HTTP
     - URL: aegis-caddy:8080
 1.7 Save
-1.8 Cloudflare 自动加 DNS CNAME: aegis.uex.hk → <tunnel-id>.cfargotunnel.com (Wiki 不用手动加)
+1.8 Cloudflare 自动加 DNS CNAME: aegis.kanpan.co → <tunnel-id>.cfargotunnel.com (Wiki 不用手动加)
 
 ## 2. 准备 env vars
 
@@ -47,7 +47,7 @@ docker build -f Dockerfile.prod -t aegis-backend:latest --ssh default .
 # Console (aegis-console 子目录)
 cd aegis-console
 docker build -f Dockerfile.prod -t aegis-console:latest \
-    --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.uex.hk .
+    --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.kanpan.co .
 cd ..
 ```
 
@@ -81,24 +81,24 @@ Cloudflare 控制台 Tunnels 页 → aegis-prod tunnel 状态从 "Inactive" 变 
 
 ## 6. 验证浏览器可达
 
-- https://aegis.uex.hk → console 加载 (TLS 由 CF 边缘自动)
-- https://aegis.uex.hk/api/health → backend healthcheck 通过
+- https://aegis.kanpan.co → console 加载 (TLS 由 CF 边缘自动)
+- https://aegis.kanpan.co/api/health → backend healthcheck 通过
 
-注: DNS CNAME 生效需 5-30 分钟 (Cloudflare 通常很快), `dig aegis.uex.hk` 应返 `<tunnel-id>.cfargotunnel.com`.
+注: DNS CNAME 生效需 5-30 分钟 (Cloudflare 通常很快), `dig aegis.kanpan.co` 应返 `<tunnel-id>.cfargotunnel.com`.
 
 ## 7. Seed Aegis 自监控 DSN
 
 ```bash
 # 7.1 console UI 创 org "aegis-internal" + project "aegis-self"
-# 浏览器 https://aegis.uex.hk
+# 浏览器 https://aegis.kanpan.co
 
 # 7.2 psql 查 sentry_public_key
 docker exec platform-postgres psql -U postgres -d aegis -c \
     "SELECT id, sentry_public_key FROM projects WHERE slug = 'aegis-self';"
 
 # 7.3 拼 DSN 改 .env.aegis
-# DSN 格式: https://<sentry_public_key>@aegis.uex.hk/api/<id>/envelope/
-# 编辑 .env.aegis: AEGIS_SENTRY_DSN=https://<key>@aegis.uex.hk/api/<id>/envelope/
+# DSN 格式: https://<sentry_public_key>@aegis.kanpan.co/api/<id>/envelope/
+# 编辑 .env.aegis: AEGIS_SENTRY_DSN=https://<key>@aegis.kanpan.co/api/<id>/envelope/
 
 # 7.4 重启 aegis-backend
 docker compose -f docker-compose.aegis.yml --env-file .env.aegis up -d aegis-backend
@@ -139,7 +139,7 @@ docker exec platform-postgres psql -U postgres -d aegis -c \
 
 ## 8. 完成
 
-- ✅ https://aegis.uex.hk 公网可访问 (Cloudflare Tunnel + CF 边缘 TLS)
+- ✅ https://aegis.kanpan.co 公网可访问 (Cloudflare Tunnel + CF 边缘 TLS)
 - ✅ Wiki 主机动态 IP 0 影响 (反向连接)
 - ✅ Aegis 自监控启用
 - ✅ Wiki 可登录 console, 按 docs/M1_TRIAL.md 试用
@@ -157,8 +157,8 @@ docker exec platform-postgres psql -U postgres -d aegis -c \
 | 问题 | 排查 |
 |---|---|
 | Cloudflare Tunnel 没连上 | `docker logs aegis-cloudflared`, verify CLOUDFLARED_TOKEN 正确, CF 控制台 tunnel 状态 |
-| aegis.uex.hk 502 | aegis-caddy logs, verify Caddyfile :8080 内部反代正常 |
-| aegis.uex.hk 加载但报 CORS | backend AEGIS_CORS_ORIGINS=https://aegis.uex.hk verify |
+| aegis.kanpan.co 502 | aegis-caddy logs, verify Caddyfile :8080 内部反代正常 |
+| aegis.kanpan.co 加载但报 CORS | backend AEGIS_CORS_ORIGINS=https://aegis.kanpan.co verify |
 | backend 启动报 platform-postgres 连不上 | helios-net external 存在 (docker network ls), POSTGRES_PASSWORD verify |
 | console 502 | aegis-console 容器 logs, NEXT_PUBLIC_AEGIS_API build-time verify |
 | 自监控不上报 | AEGIS_SENTRY_DSN env var verify, aegis-backend logs grep sentry verify |
@@ -168,5 +168,5 @@ docker exec platform-postgres psql -U postgres -d aegis -c \
 加新项目 (e.g. helios):
 1. Caddyfile 加新 server block `:8081 { ... }`
 2. docker-compose.aegis.yml 加项目 service (e.g. helios-backend)
-3. CF 控制台 tunnel ingress 加 `helios.uex.hk → aegis-caddy:8081`
+3. CF 控制台 tunnel ingress 加 `helios.kanpan.co → aegis-caddy:8081`
 4. 无需 0 改 Aegis 自身 / 0 改 backend / 0 跨主机

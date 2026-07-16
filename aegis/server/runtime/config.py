@@ -122,11 +122,26 @@ class AegisSettings(BaseSettings):
     docker_host: str = "unix:///var/run/docker.sock"
     docker_socket_proxy_enabled: bool = True
 
+    # Host dir holding the private OUI package tarballs (helios-blocks-*.tgz /
+    # helios-oui-*.tgz), vendored into the nextjs-oui site scaffold (ADR-004 P2).
+    # Empty = the nextjs-oui template is unavailable. Override: AEGIS_OUI_VENDOR_DIR
+    oui_vendor_dir: str = ""
+
     # === Caddy ===
     caddy_admin_url: str = "http://localhost:2019"
     # Docker network to attach app-store installs to (so caddy/monitoring can reach
     # them). Empty = default bridge with published ports.
     app_install_network: str = ""
+
+    # Same token the aegis-cloudflared container authenticates with (env:
+    # CLOUDFLARED_TOKEN, already required by docker-compose.aegis.yml for that
+    # container — this just gives the backend a read of it too). It's a base64 JSON
+    # blob encoding {account_id, tunnel_id, secret}; the "Publish" feature decodes it
+    # to call the Cloudflare API against the *same* tunnel, no separate account/tunnel
+    # id config needed. Empty = the "Publish" feature is unavailable.
+    cloudflared_token: str = Field(
+        default="", description="Cloudflare Tunnel token (same as CLOUDFLARED_TOKEN)"
+    )
     caddy_config_dir: Path = Field(
         default=_UNSET_PATH,
         description="Caddy config dir (default: data_dir/caddy). Override: AEGIS_CADDY_CONFIG_DIR",
@@ -323,7 +338,7 @@ class AegisSettings(BaseSettings):
         description="Resend API key for transactional email. Empty = log only (dev).",
     )
     email_from_addr: str = Field(
-        default="noreply@aegis.uex.hk",
+        default="noreply@aegis.kanpan.co",
         description="From address for Aegis-sent emails (env: AEGIS_EMAIL_FROM_ADDR)",
     )
 

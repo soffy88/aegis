@@ -29,7 +29,7 @@ services:
       AEGIS_JWT_REFRESH_TTL_DAYS: "30"
 
       # === CORS ===
-      AEGIS_CORS_ALLOWED_ORIGINS: ${AEGIS_CORS_ALLOWED_ORIGINS:-https://aegis.uex.hk}
+      AEGIS_CORS_ALLOWED_ORIGINS: ${AEGIS_CORS_ALLOWED_ORIGINS:-https://aegis.kanpan.co}
 
       # === 数据目录 ===
       AEGIS_DATA_DIR: /data/aegis
@@ -39,6 +39,9 @@ services:
 
       # === Caddy 反代管理 ===
       AEGIS_CADDY_ADMIN_URL: http://aegis-caddy:2019
+      # 与 aegis-cloudflared 用的同一个 token —— "Publish" 功能用它解码出
+      # account_id/tunnel_id 调 Cloudflare API，不需要额外配置。
+      AEGIS_CLOUDFLARED_TOKEN: ${CLOUDFLARED_TOKEN:-}
 
       # === LLM (Brain / RCA, 可选) ===
       AEGIS_LLM_PROVIDER: ${AEGIS_LLM_PROVIDER:-anthropic}
@@ -73,7 +76,7 @@ services:
 
       # === 邮件 (Resend, 可选) ===
       AEGIS_RESEND_API_KEY: ${AEGIS_RESEND_API_KEY:-}
-      AEGIS_EMAIL_FROM_ADDR: ${AEGIS_EMAIL_FROM_ADDR:-noreply@aegis.uex.hk}
+      AEGIS_EMAIL_FROM_ADDR: ${AEGIS_EMAIL_FROM_ADDR:-noreply@aegis.kanpan.co}
 
       # === 自监控 ===
       AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-false}
@@ -176,7 +179,7 @@ services:
     environment:
       NODE_ENV: production
       # API 地址（容器内通过 helios-net 直连后端）
-      NEXT_PUBLIC_AEGIS_API: ${NEXT_PUBLIC_AEGIS_API:-https://aegis.uex.hk}
+      NEXT_PUBLIC_AEGIS_API: ${NEXT_PUBLIC_AEGIS_API:-https://aegis.kanpan.co}
     networks:
       - helios-net
     depends_on:
@@ -218,6 +221,8 @@ services:
       - aegis-caddy-config:/config
     networks:
       - helios-net
+      - stratum-net
+      - hevi-cftunnel_default
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
       interval: 60s

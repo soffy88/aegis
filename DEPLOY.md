@@ -54,7 +54,7 @@ DOCKER_BUILDKIT=1 docker build \
 docker build \
   -f aegis-console/Dockerfile.prod \
   --build-context platform=/data/soffy/projects/platform \
-  --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.uex.hk \
+  --build-arg NEXT_PUBLIC_AEGIS_API=https://aegis.kanpan.co \
   -t aegis-console:latest \
   aegis-console/
 ```
@@ -76,7 +76,7 @@ docker logs aegis-backend --tail 50
 
 # 测试 API — 后端/caddy 端口都不发布到宿主，所以用以下两种之一：
 # ① 端到端（经 Cloudflare 隧道 → caddy:8080 → backend）
-curl https://aegis.uex.hk/api/v1/health
+curl https://aegis.kanpan.co/api/v1/health
 # ② 本机内部（容器内直连后端，含 DB 就绪探针）
 docker exec aegis-backend python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/v1/health/ready').read())"
