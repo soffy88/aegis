@@ -12,9 +12,17 @@
     reverse_proxy mneme-api-1:8000
 }
 
-# Mneme 前端
+# Mneme 前端 + studio + 门控工具面(S3-B 同 host 路径路由,保留前缀不 strip)
 :8083 {
-    reverse_proxy mneme-web:3000
+    handle /mcp/* {
+        reverse_proxy mneme-api-1:8000
+    }
+    handle /studio* {
+        reverse_proxy mneme-studio:3001
+    }
+    handle {
+        reverse_proxy mneme-web:3000
+    }
 }
 
 # Stratum API
