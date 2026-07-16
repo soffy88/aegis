@@ -50,6 +50,14 @@
     reverse_proxy selene-frontend-1:80
 }
 
+# Helivex (helivex.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
+# helivex-web 是 host 网络容器直接 bind 宿主 :3400，caddy 经 helios-net 网关 172.18.0.1
+# 够到它。Next 前端已同源 /gw 反代到 gateway，单端口即可。Host 透传后 helivex-web
+# 按 Host 头判 non-local → DASH_USER/DASH_PASS Basic Auth，跟原独立 tunnel 行为一致)
+:8090 {
+    reverse_proxy 172.18.0.1:3400
+}
+
 # Aegis 主入口
 :8080 {
     handle /api/* {
