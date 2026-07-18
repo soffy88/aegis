@@ -247,6 +247,8 @@ services:
     container_name: aegis-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN:?required}
+    environment:
+      TUNNEL_EDGE_IP_VERSION: "4"
     networks:
       - helios-net
     depends_on:
