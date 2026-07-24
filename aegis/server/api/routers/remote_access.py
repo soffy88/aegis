@@ -137,3 +137,35 @@ async def tailscale_up_endpoint(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e
+
+
+class ZerotierJoinRequest(BaseModel):
+    network_id: str
+
+
+@router.get("/vpn/zerotier")
+async def zerotier_status_endpoint(
+    org_id: uuid.UUID,
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """ZeroTier mesh-VPN status from the host."""
+    import asyncio  # noqa: PLC0415
+
+    return await asyncio.to_thread(vpn_svc.zerotier_status)
+
+
+@router.post("/vpn/zerotier/join")
+async def zerotier_join_endpoint(
+    org_id: uuid.UUID,
+    req: ZerotierJoinRequest,
+    user: UserContext = Depends(require_permission(Permission.MODIFY_ORG)),
+) -> dict[str, Any]:
+    """Join a ZeroTier network (host network mutation). admin+."""
+    import asyncio  # noqa: PLC0415
+
+    try:
+        return await asyncio.to_thread(vpn_svc.zerotier_join, network_id=req.network_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e

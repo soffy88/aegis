@@ -14,9 +14,13 @@ the CLI is genuinely absent; otherwise it raises VpnPrimitiveUnavailable → 503
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from aegis.server.services.host_shell import host_capture, host_exec, sh_quote
+
+_ZT_NETWORK_RE = re.compile(r"^[0-9a-fA-F]{16}$")
 
 
 class VpnPrimitiveUnavailable(RuntimeError):
@@ -57,3 +61,59 @@ def tailscale_up(*, authkey: str, accept_routes: bool = False) -> dict[str, Any]
     if rc != 0:
         raise RuntimeError(f"tailscale up failed (rc={rc}): {out[:300]}")
     return tailscale_status()
+
+
+# ── ZeroTier ─────────────────────────────────────────────────────────────────
+#
+# Parsed inline (not via an oprim primitive): zerotier-cli -j output is simple
+# JSON and this is a cold feature — not worth a shared-lib release cycle.
+
+
+def _zt_not_installed() -> dict[str, Any]:
+    return {"installed": False, "online": False, "message": "zerotier not installed on host"}
+
+
+def zerotier_status() -> dict[str, Any]:
+    """Return ZeroTier node status + joined networks from the host."""
+    rc, out, _ = host_capture("zerotier-cli -j info")
+    if not out.strip():
+        return _zt_not_installed()
+    try:
+        info = json.loads(out)
+    except json.JSONDecodeError:
+        return _zt_not_installed()
+
+    networks: list[dict[str, Any]] = []
+    nrc, nout, _ = host_capture("zerotier-cli -j listnetworks")
+    if nout.strip():
+        try:
+            for n in json.loads(nout):
+                networks.append(
+                    {
+                        "id": n.get("nwid") or n.get("id"),
+                        "name": n.get("name"),
+                        "status": n.get("status"),
+                        "addresses": n.get("assignedAddresses") or [],
+                    }
+                )
+        except json.JSONDecodeError:
+            pass
+
+    return {
+        "installed": True,
+        "online": bool(info.get("online")),
+        "address": info.get("address"),
+        "version": info.get("version"),
+        "networks": networks,
+        "network_count": len(networks),
+    }
+
+
+def zerotier_join(*, network_id: str) -> dict[str, Any]:
+    """Join a ZeroTier network by 16-hex network id (host network mutation, R2)."""
+    if not _ZT_NETWORK_RE.match(network_id):
+        raise ValueError("network_id must be 16 hex chars")
+    rc, out = host_exec(f"zerotier-cli join {sh_quote(network_id)}", timeout=30)
+    if rc != 0:
+        raise RuntimeError(f"zerotier join failed (rc={rc}): {out[:300]}")
+    return zerotier_status()

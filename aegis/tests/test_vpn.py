@@ -121,3 +121,51 @@ def test_endpoint_status(client: TestClient, monkeypatch: pytest.MonkeyPatch) ->
 def test_endpoint_up_validation(client: TestClient) -> None:
     r = client.post(f"/api/v1/orgs/{_ORG}/remote-access/vpn/tailscale/up", json={"authkey": ""})
     assert r.status_code == 400
+
+
+# ── ZeroTier ─────────────────────────────────────────────────────────────────
+
+_ZT_INFO = '{"address":"deadbeef00","online":true,"version":"1.14.0"}'
+_ZT_NETS = (
+    '[{"nwid":"8056c2e21c000001","name":"n","status":"OK","assignedAddresses":["10.0.0.2/24"]}]'
+)
+
+
+def test_zt_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vpn_svc, "host_capture", lambda cmd, **k: (127, "", "absent"))
+    assert vpn_svc.zerotier_status()["installed"] is False
+
+
+def test_zt_status_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    def cap(cmd: str, **k: Any) -> tuple[int, str, str]:
+        return (0, _ZT_NETS if "listnetworks" in cmd else _ZT_INFO, "")
+
+    monkeypatch.setattr(vpn_svc, "host_capture", cap)
+    r = vpn_svc.zerotier_status()
+    assert r["installed"] is True
+    assert r["online"] is True
+    assert r["address"] == "deadbeef00"
+    assert r["network_count"] == 1
+    assert r["networks"][0]["id"] == "8056c2e21c000001"
+
+
+def test_zt_join_rejects_bad_id() -> None:
+    with pytest.raises(ValueError, match="16 hex"):
+        vpn_svc.zerotier_join(network_id="not-hex")
+
+
+def test_zt_join_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vpn_svc, "host_exec", lambda cmd, **k: (0, "200 join OK"))
+    monkeypatch.setattr(
+        vpn_svc,
+        "host_capture",
+        lambda cmd, **k: (0, _ZT_NETS if "listnetworks" in cmd else _ZT_INFO, ""),
+    )
+    assert vpn_svc.zerotier_join(network_id="8056c2e21c000001")["installed"] is True
+
+
+def test_zt_endpoint_join_validation(client: TestClient) -> None:
+    r = client.post(
+        f"/api/v1/orgs/{_ORG}/remote-access/vpn/zerotier/join", json={"network_id": "xyz"}
+    )
+    assert r.status_code == 400
