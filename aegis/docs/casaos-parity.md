@@ -74,16 +74,15 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 ### 3O 元素(oprim)
 | 元素 | 文件 | 签名要点 | 风险 | 状态 |
 |---|---|---|---|---|
-| tailscale_up | `_tailscale_up.py` | `tailscale up --authkey`(幂等)+ 返回 tailnet IP | R1 | ⬜ |
-| tailscale_status | `_tailscale_status.py` | `tailscale status -json` → 节点/在线/IP | R0 | ⬜ |
-| zerotier_join | `_zerotier_join.py` | `zerotier-cli join <network>` + 状态 | R1 | ⬜ |
+| tailscale_status | `_tailscale_status.py` | `tailscale status --json` 解析 → running/self_ips/tailnet/peers,dual-mode,未装 installed=False | R0 | ✅ **PR #25**(6 tests) |
+| tailscale_up | (aegis 侧 host_exec) | `tailscale up --authkey`(宿主网络变更,不单列 oprim 元素——动作无解析价值) | R2 | ✅ aegis |
+| zerotier_join/status | `_zerotier_*.py` | zerotier-cli(需宿主 daemon) | R1/R2 | ⬜ 后续 |
 | ddns_update | `_ddns_update.py` | 多 provider(DuckDNS/dyndns2=No-IP/DynDNS)→ 更新 A 记录,统一 DdnsResult;纯 httpx 无宿主依赖 | R1 | ✅ **PR helios-plat/oprim#23**(12 tests) |
 
 ### aegis 接线
 - ✅ **DDNS(Phase 4a,已提交)**:migration `053_ddns_configs`(凭据不入表,存 vault `ddns:<id>:secret`)、`services/ddns.py`(create/list/delete/update_now,凭据走 secrets_vault,消费 oprim `ddns_update`,未 bump 降级 503)、`routers/remote_access.py`(POST/GET/DELETE `/remote-access/ddns` + POST `/{id}/update`;建/删 admin+,刷新 operator+)、注册 app.py。测试 `tests/test_ddns.py` 9 绿、ruff 清、1134 收集。
-- ⬜ VPN(Phase 4b):tailscale_up/status、zerotier_join(需宿主 daemon,走 host-shell helper,同存储模式)。
-- ⬜ cron 定时刷新循环(现仅手动 update-now)。
-- ⬜ console `/settings/remote-access` 页。
+- ✅ **VPN Tailscale(Phase 4b,已提交)**:`services/vpn.py`(经 host-shell 在宿主取 `tailscale status --json` → oprim `tailscale_status` 解析;`tailscale up --authkey` 经 host_exec,R2)、`routers/remote_access.py` 加 `GET /vpn/tailscale`(viewer+)/`POST /vpn/tailscale/up`(admin+)。未装宿主返回 installed=False,oprim 未 bump 降级 503。`tests/test_vpn.py` 8 绿。
+- ⬜ ZeroTier(需宿主 daemon,同模式);cron 定时刷新循环(现仅手动 update-now,循环触及受监督编排机制 + 未 bump 无法验证,推迟);console `/settings/remote-access` 页。
 
 ---
 
@@ -107,7 +106,7 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - **Phase 3a**(✅ 已提交、部署即 live):文件分享链接(migration 052 + file_shares 服务 + `/files/share*` + 公开 `/s/{token}`,12 tests 绿)。纯 aegis 无 3O 发版依赖。⬜ console 分享弹窗待做。
 - **Phase 3b**(✅ 图像缩略图已提交):oprim `thumbnail_generate` **PR #24** + aegis `/files/thumbnail`(4 tests)。⬜ 视频/媒体预览需镜像加 ffmpeg + `media_probe`。
 - **Phase 4a**(✅ 已提交):DDNS 多 provider(oprim `ddns_update` **PR #23** + aegis migration 053 + `services/ddns.py` + `routers/remote_access.py`,9 tests 绿)。live 待 oprim#23 发版 + bump pin。
-- **Phase 4b**(⬜):VPN(tailscale/zerotier,走 host-shell)+ cron 定时刷新 + console 页。
+- **Phase 4b**(✅ Tailscale 已提交):oprim `tailscale_status` **PR #25** + aegis vpn service/端点(8 tests)。⬜ ZeroTier + cron 刷新 + console 页。
 - **Phase 5**:簇 4 WebSocket PTY。
 - **Phase 6**(最后、最高危):簇 1 R2/R3 宿主变更(mount/unmount/format)+ 簇 2 samba/rclone + 宿主电源。全部 dry_run 默认 + owner-only + 审计。DESIGN.md 需同步加一节说明 override。
 

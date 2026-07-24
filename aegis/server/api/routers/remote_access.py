@@ -21,7 +21,9 @@ from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.services import ddns as ddns_svc
+from aegis.server.services import vpn as vpn_svc
 from aegis.server.services.ddns import DdnsPrimitiveUnavailable
+from aegis.server.services.vpn import VpnPrimitiveUnavailable
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/remote-access", tags=["remote-access"])
 
@@ -92,3 +94,46 @@ async def update_ddns(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
     except LookupError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
+
+
+# ── Mesh VPN (Tailscale) ─────────────────────────────────────────────────────
+
+
+class TailscaleUpRequest(BaseModel):
+    authkey: str
+    accept_routes: bool = False
+
+
+@router.get("/vpn/tailscale")
+async def tailscale_status_endpoint(
+    org_id: uuid.UUID,
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Tailscale mesh-VPN status from the host."""
+    import asyncio  # noqa: PLC0415
+
+    try:
+        return await asyncio.to_thread(vpn_svc.tailscale_status)
+    except VpnPrimitiveUnavailable as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
+
+
+@router.post("/vpn/tailscale/up")
+async def tailscale_up_endpoint(
+    org_id: uuid.UUID,
+    req: TailscaleUpRequest,
+    user: UserContext = Depends(require_permission(Permission.MODIFY_ORG)),
+) -> dict[str, Any]:
+    """Bring Tailscale up with an auth key (host network mutation). admin+."""
+    import asyncio  # noqa: PLC0415
+
+    try:
+        return await asyncio.to_thread(
+            vpn_svc.tailscale_up, authkey=req.authkey, accept_routes=req.accept_routes
+        )
+    except VpnPrimitiveUnavailable as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e
