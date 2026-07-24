@@ -288,7 +288,17 @@ async def list_apps(
         org_id,
         project_id,
     )
-    return [dict(r) for r in rows]
+    # Enrich with the store-catalog emoji icon (by slug == app_name) so the console
+    # launcher can show real app icons instead of a first-letter fallback.
+    from aegis.server.api.routers.store import find_catalog_app  # noqa: PLC0415
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        entry = find_catalog_app(d["app_name"])
+        d["icon"] = entry.get("icon") if entry else None
+        out.append(d)
+    return out
 
 
 @router.get("/{install_id}")
