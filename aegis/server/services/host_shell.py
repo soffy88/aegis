@@ -64,6 +64,19 @@ def _ensure_helper(dh: str) -> None:
     )
 
 
+HELPER_CONTAINER = _HELPER
+
+
+def ensure_helper(docker_host: str | None = None) -> str:
+    """Ensure the privileged host-shell helper is running; return its name.
+
+    Public entry point (e.g. for the host-terminal WebSocket, which execs an
+    interactive shell into this container).
+    """
+    _ensure_helper(docker_host or _docker_host())
+    return _HELPER
+
+
 def host_exec(cmd: str, *, timeout: int = 25) -> tuple[int, str]:
     """Run `cmd` on the host via chroot; return (returncode, combined stdout+stderr).
 

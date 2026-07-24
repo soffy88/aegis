@@ -93,9 +93,10 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 ### 落点(主要 aegis/console,3O 侧薄)
 | 元素 | 库/文件 | 要点 | 风险 | 状态 |
 |---|---|---|---|---|
-| pty_spawn_plan | oprim `_pty_spawn_plan.py`(无状态) | 出 exec/pty 启动参数(容器 vs 宿主 break-glass 容器),不持 fd | R0 | ⬜ |
-| — | aegis `routers/terminal.py` | **WebSocket** PTY:后端 `pty.openpty()` + asyncio 桥接;宿主终端复用 owner-only break-glass 容器;容器终端复用 docker exec | **R2** | ⬜ |
-| — | console `/host-terminal`,容器终端 | xterm.js 接 WS(现有页面从请求/响应升级为流式) | — | ⬜ |
+| — | 容器终端 WS | **已存在**:docker.py `/containers/{name}/terminal`(docker exec + asyncio 桥接,admin+) | R2 | ✅ 既有 |
+| — | 宿主终端 WS(**Phase 5 已提交**) | docker.py `/host-terminal`:exec 进特权 helper `chroot /host bash` + asyncio 桥接;**owner-only**(比容器 admin 更强);`_ws_authorize` 校验 token/成员/角色。8 tests(鉴权门,PTY 桥需真 docker 无法此处验) | **R2** | ✅ aegis |
+| — | console `/host-terminal` | xterm.js 接 WS(现有页面升级为流式) | — | ⬜ console |
+| pty_spawn_plan | oprim(无状态) | 未做:exec/pty argv 构建对 WS 终端价值薄,直接 aegis 侧构建 | R0 | ⬜ 暂不做 |
 
 ---
 
@@ -107,6 +108,7 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - **Phase 3b**(✅ 图像缩略图已提交):oprim `thumbnail_generate` **PR #24** + aegis `/files/thumbnail`(4 tests)。⬜ 视频/媒体预览需镜像加 ffmpeg + `media_probe`。
 - **Phase 4a**(✅ 已提交):DDNS 多 provider(oprim `ddns_update` **PR #23** + aegis migration 053 + `services/ddns.py` + `routers/remote_access.py`,9 tests 绿)。live 待 oprim#23 发版 + bump pin。
 - **Phase 4b**(✅ Tailscale 已提交):oprim `tailscale_status` **PR #25** + aegis vpn service/端点(8 tests)。⬜ ZeroTier + cron 刷新 + console 页。
+- **Phase 5**(✅ 宿主终端 WS 已提交、部署即 live):docker.py `/host-terminal` WebSocket(owner-only,exec 进特权 helper chroot /host,复用容器终端桥接模式)+ `_ws_authorize` + host_shell `ensure_helper`。8 tests(鉴权门)。⚠️ PTY 桥接需真 docker + 浏览器 xterm.js **无法此处端到端验证**。⬜ console `/host-terminal` 页接 WS。纯 aegis 无 3O 依赖。
 - **Phase 5**:簇 4 WebSocket PTY。
 - **Phase 6**(最后、最高危):簇 1 R2/R3 宿主变更(mount/unmount/format)+ 簇 2 samba/rclone + 宿主电源。全部 dry_run 默认 + owner-only + 审计。DESIGN.md 需同步加一节说明 override。
 

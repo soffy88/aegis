@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
@@ -878,6 +879,125 @@ async def container_terminal(
                 await websocket.close()
             except Exception:
                 pass
+    finally:
+        if client is not None:
+            client.close()
+
+
+def _ws_authorize(token: str, org_id: UUID, min_role: Role) -> bool:
+    """Validate a WS access token and enforce membership + min role. Returns ok."""
+    try:
+        payload = jwt_verify_hs256(token=token, secret=get_settings().jwt_secret, check_exp=True)
+    except Exception:  # noqa: BLE001
+        return False
+    if payload.get("type") != "access":
+        return False
+    membership = next((o for o in payload.get("orgs", []) if o.get("org_id") == str(org_id)), None)
+    if membership is None:
+        return False
+    try:
+        role = Role(membership["role"])
+    except (KeyError, ValueError):
+        return False
+    return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[min_role]
+
+
+@router.websocket("/host-terminal")
+async def host_terminal(
+    websocket: WebSocket,
+    org_id: UUID,
+    token: str,
+) -> None:
+    """Interactive HOST terminal (WebSocket) — owner-only break-glass.
+
+    Execs an interactive shell into the privileged ``aegis-host-shell`` helper and
+    ``chroot``s to the host, giving a real root shell on the box. This is the most
+    powerful capability in the product, hence owner-only (vs admin+ for a container
+    shell). Same message protocol as the container terminal.
+    """
+    from aegis.server.services import host_shell  # noqa: PLC0415
+
+    if not _ws_authorize(token, org_id, Role.OWNER):
+        await websocket.close(code=1008)  # Policy Violation
+        return
+
+    settings = get_settings()
+    try:
+        helper = await asyncio.to_thread(host_shell.ensure_helper, settings.docker_host)
+    except Exception as exc:  # noqa: BLE001
+        await websocket.accept()
+        await websocket.send_text(
+            json.dumps({"type": "error", "data": f"helper unavailable: {exc}"})
+        )
+        await websocket.close()
+        return
+
+    await websocket.accept()
+
+    import docker
+
+    client = None
+    try:
+        client = docker.DockerClient(base_url=settings.docker_host)
+        exec_id = client.api.exec_create(
+            helper,
+            cmd=["chroot", "/host", "/bin/bash", "-l"],
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            tty=True,
+        )
+        sock = client.api.exec_start(exec_id["Id"], socket=True, tty=True)
+        sock._sock.setblocking(False)
+        loop = asyncio.get_event_loop()
+
+        async def read_host() -> None:
+            try:
+                while True:
+                    data = await loop.run_in_executor(None, _read_socket, sock._sock)
+                    if data is None:
+                        await asyncio.sleep(0.01)
+                        continue
+                    if not data:
+                        break
+                    await websocket.send_text(
+                        json.dumps(
+                            {"type": "output", "data": data.decode("utf-8", errors="replace")}
+                        )
+                    )
+            except Exception:  # noqa: BLE001
+                log.exception("host_terminal_read_error")
+
+        async def read_ws() -> None:
+            try:
+                while True:
+                    payload = json.loads(await websocket.receive_text())
+                    if payload.get("type") == "input":
+                        await loop.run_in_executor(None, sock._sock.send, payload["data"].encode())
+                    elif payload.get("type") == "resize":
+                        client.api.exec_resize(
+                            exec_id["Id"],
+                            height=payload.get("rows", 24),
+                            width=payload.get("cols", 80),
+                        )
+            except WebSocketDisconnect:
+                pass
+            except Exception:  # noqa: BLE001
+                log.exception("host_terminal_ws_error")
+
+        try:
+            await asyncio.gather(read_host(), read_ws())
+        finally:
+            sock.close()
+            with contextlib.suppress(Exception):
+                await websocket.close()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("host_terminal_setup_error")
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "data": str(exc)}))
+            await websocket.close()
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         if client is not None:
             client.close()
