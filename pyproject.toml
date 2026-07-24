@@ -37,7 +37,7 @@ dependencies = [
     # 生产镜像（--no-dev 构建）才暴露 ModuleNotFoundError。aegis 编排层（autoheal 等）
     # 无条件 import 依赖此链路，故必须是主依赖，非可选。
     "docker>=6.0",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
+    "oprim[image] @ git+ssh://git@github.com/helios-plat/oprim.git@v3.21.0",
     # runbook RAG 已迁到 Postgres (pgvector/pg_trgm, 见 services/runbook_store.py),
     # 去掉 lancedb + 其 pyarrow/pandas 传递依赖 (~290MB 镜像)。语义 embedding 走可选
     # extra `aegis[embed]` (fastembed CPU) 或 ollama; 不装则纯 pg_trgm 词法保底。
@@ -122,7 +122,7 @@ ignore_missing_imports = true
 # safe only if obase v0.11.0 is backward-compatible with oservice v0.4.2 API surface
 override-dependencies = [
     "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.1",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.19.0",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.21.0",
     "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
     "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
 ]

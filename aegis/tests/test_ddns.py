@@ -174,8 +174,14 @@ def test_router_create_ddns(client: tuple[TestClient, FakeConn]) -> None:
     assert r.json()["provider"] == "duckdns"
 
 
-def test_router_update_503_when_primitive_absent(client: tuple[TestClient, FakeConn]) -> None:
-    # Real venv oprim lacks ddns_update → 503 (not a crash).
+def test_router_update_503_when_primitive_unavailable(
+    client: tuple[TestClient, FakeConn], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When the oprim primitive is unavailable the router maps it to 503, not a crash.
+    def boom() -> Any:
+        raise DdnsPrimitiveUnavailable("needs oprim>=3.21")
+
+    monkeypatch.setattr(ddns_svc, "_ddns_update", boom)
     c, _ = client
     r = c.post(f"/api/v1/orgs/{_ORG}/remote-access/ddns/{_CFG}/update")
     assert r.status_code == 503
