@@ -127,10 +127,10 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - **设计判断**:格式化磁盘/关宿主机 **不放进共享 oprim**(任何消费者能格式化盘=footgun),价值在安全策略层(aegis 职责,DESIGN §5)。故做在 aegis `services/storage_ops.py`,纯 aegis 无 oprim 发版依赖。
 - mount/unmount(R2)、format(R3)、host_power(R3)。全部 **dry_run 默认 + owner-only(`require_min_role(OWNER)`)+ 审计**。护栏:挂载点白名单(/mnt、/media)、fstype 白名单(ext4/xfs/btrfs)、**format 确认令牌须等于设备路径 + 拒绝已挂载/系统盘(整盘检查)**、power 确认令牌须等于 action。经 host-shell + shlex 转义。
 - `routers/storage.py` 加 POST /mount /unmount /format /power(owner-only)。`tests/test_storage_ops.py` 17 绿(护栏全覆盖),1172 收集。
-- ⬜ console danger-zone(dry-run 预览 + 二次确认弹窗)未做。
+- ✅ **console danger-zone**(aegis-console `4f939f8`):`/storage` 页底 `StorageManagement` 组件——挂载/格式化/宿主电源,dry-run 优先(先「预览」显示命令再「执行」),格式化/电源需确认回显匹配才可点,红框标注。
 
 ## 仍未做(后续能力)
-- 视频缩略图/媒体预览(需给 backend 镜像加 ffmpeg + oprim `media_probe`)、ZeroTier、DDNS cron 刷新、console danger-zone 前端。
+- 视频缩略图/媒体预览(需给 backend 镜像加 ffmpeg + oprim `media_probe`)、ZeroTier、DDNS cron 刷新。
 
 ## 待主库定(每 PR body 标注)
 - 元素命名(`block_device_list` 等)、风险默认值(mount 默认 dry_run)、smartctl/lsblk 未安装时的降级返回契约。
