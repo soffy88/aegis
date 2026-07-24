@@ -32,6 +32,7 @@ from aegis.server.api.routers import brain as brain_router
 from aegis.server.api.routers import backup_storage as backup_storage_router
 from aegis.server.api.routers import databases as databases_router
 from aegis.server.api.routers import firewall as firewall_router
+from aegis.server.api.routers import storage as storage_router
 from aegis.server.api.routers import channels as channels_router
 from aegis.server.api.routers import correlation as correlation_router
 from aegis.server.api.routers import k8s as k8s_router
@@ -377,6 +378,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(databases_router.router)
     app.include_router(backup_storage_router.router)
     app.include_router(firewall_router.router)
+    app.include_router(storage_router.router)
     app.include_router(websites_router.router)
     app.include_router(publish_router.router)
     app.include_router(telemetry_router.ingest_router)

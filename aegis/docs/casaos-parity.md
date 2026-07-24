@@ -35,9 +35,12 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 | storage_pool_plan | `_storage_pool_plan.py`(无状态) | MergerFS/mdadm 配置生成(只出计划,不执行) | R0 | ⬜ |
 
 ### aegis 接线
-- router `routers/storage.py`:`GET /storage/devices`(block+smart+usb 聚合,viewer+)、`GET /storage/devices/{name}`、`POST /storage/mount`|`/unmount`(owner-only,dry_run 默认,二次确认)、`POST /storage/format`(owner-only,R3,确认令牌+审计)。
-- service `services/storage.py`:聚合 + 缓存 + 写 `audit_log`/change-event。
-- console `/storage` 页:盘卡片(容量环 + SMART 徽章 + USB 标记),挂载/格式化走危险操作二次确认弹窗。
+- ✅ router `routers/storage.py`(已注册 app.py):`GET /storage`(聚合 overview,含逐盘 SMART)、`GET /storage/devices`、`GET /storage/usb`、`GET /storage/smart?device=`。均 read-only,RBAC 门禁 **INSTALL_APP**(operator+,与 firewall 同——因走特权 host-shell helper)。
+- ✅ service `services/storage.py`:在**宿主**经 helper 跑 lsblk/lsusb/smartctl → 交 oprim 原语解析(`lsblk_json=`/`lsusb_output=`/`smartctl_json=`);oprim 未 bump 时惰性导入降级为 503。逐盘 SMART best-effort、设备路径正则白名单 + shlex 转义防注入。
+- ✅ service `services/host_shell.py`:抽出共享的特权宿主命令 helper(`host_exec`/`host_capture`/`sh_quote`),复用 `aegis-host-shell` 容器(未改 firewall.py)。
+- ✅ 测试 `tests/test_storage_service.py`:解析路径(拷原语真跑,8 绿)+ 降级/校验(真 venv,2 绿/6 skip)。app 收集 1113 无破坏。
+- ⬜ 未做:console `/storage` 页(盘卡片 + 容量环 + SMART 徽章 + USB);挂载/格式化(Phase 6 R2/R3)。
+- ⚠️ **依赖**:三原语在 oprim `feat/storage-observe`(未发版)。live 生效需:oprim PR 合并 → 发 tag(建议 v3.21.0)→ bump aegis oprim pin(pyproject 现 v3.19.0)。未 bump 前端点返回 503 明确原因,不崩。
 - 复用:oprim `disk_usage`(已有)做用量环。
 
 ---
@@ -96,7 +99,7 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 ## 阶段顺序(先地基、先只读、先低风险)
 
 - **Phase 1**(✅ 三原语本地完成,23 tests 绿/ruff 清,分支 `feat/storage-observe` @ oprim 隔离 worktree,待 push+PR;`partition_table_read` 可直接从 block_device_list 的 children 派生,暂缓单列):`block_device_list` / `disk_smart_probe` / `usb_device_list`。
-- **Phase 2**:aegis `routers/storage.py` + service + console `/storage`(只读盘视图)。
+- **Phase 2**(✅ 后端完成):aegis `routers/storage.py` + `services/storage.py` + `services/host_shell.py` + 测试(解析 8 绿 / 降级 2 绿,1113 收集无破坏,ruff 清)。宿主经特权 helper 跑命令、oprim 解析、未 bump 降级 503。⬜ 剩 console `/storage` 页 + oprim 发版后 bump pin 才 live。
 - **Phase 3**:簇 2 只读(thumbnail/media_probe + files 预览/分享)。
 - **Phase 4**:簇 3 VPN + DDNS(R1)。
 - **Phase 5**:簇 4 WebSocket PTY。
