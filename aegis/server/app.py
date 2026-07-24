@@ -45,6 +45,7 @@ from aegis.server.api.routers import telemetry as telemetry_router
 from aegis.server.api.routers import websites as websites_router
 from aegis.server.api.routers import publish as publish_router
 from aegis.server.api.routers import docker as docker_router
+from aegis.server.api.routers import file_share_public as file_share_public_router
 from aegis.server.api.routers import files as files_router
 from aegis.server.api.routers import (
     edge as edge_router,
@@ -392,6 +393,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(profiling_router.router)
     app.include_router(k8s_router.router)
     app.include_router(files_router.router)
+    app.include_router(file_share_public_router.router)
     app.include_router(autoheal_router.router)
     app.include_router(brain_router.router)
     app.include_router(nodes_router.router)

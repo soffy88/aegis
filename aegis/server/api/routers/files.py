@@ -13,6 +13,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+import asyncpg
 from fastapi import (
     APIRouter,
     Depends,
@@ -26,8 +27,10 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from aegis.server.api.deps import get_db_conn
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
+from aegis.server.services import file_shares as sharesvc
 from aegis.server.services import files as filesvc
 from aegis.server.services.files import FileManagerDisabled, PathNotAllowed
 
@@ -128,6 +131,56 @@ async def download_file(
     except Exception as exc:
         raise _map(exc) from exc
     return FileResponse(p, filename=p.name, media_type="application/octet-stream")
+
+
+class ShareRequest(BaseModel):
+    path: str
+    expires_in_hours: int | None = None
+    max_downloads: int | None = None
+
+
+@router.post("/share", status_code=status.HTTP_201_CREATED)
+async def create_share(
+    org_id: UUID,
+    req: ShareRequest,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> dict[str, Any]:
+    """Create a time-limited public share link for a file. operator+ required."""
+    try:
+        return await sharesvc.create_share(
+            conn,
+            org_id=org_id,
+            path=req.path,
+            created_by=user.user_id,
+            expires_in_hours=req.expires_in_hours,
+            max_downloads=req.max_downloads,
+        )
+    except Exception as exc:
+        raise _map(exc) from exc
+
+
+@router.get("/shares")
+async def list_shares(
+    org_id: UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> list[dict[str, Any]]:
+    """List active/expired share links for the org."""
+    return await sharesvc.list_shares(conn, org_id=org_id)
+
+
+@router.delete("/shares/{share_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_share(
+    org_id: UUID,
+    share_id: UUID,
+    conn: asyncpg.Connection = Depends(get_db_conn),
+    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+) -> None:
+    """Revoke a share link. operator+ required."""
+    ok = await sharesvc.revoke_share(conn, org_id=org_id, share_id=share_id)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="share not found")
 
 
 @router.put("/write")

@@ -1130,6 +1130,29 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_published_services_org ON published_services (org_id);
         """,
     ),
+    (
+        "052_file_shares",
+        """
+        -- File manager share links: a time-limited, capability-token public
+        -- download URL for a single file under the sandboxed file_manager_roots.
+        -- The raw token is never stored — only its sha256 hash; lookups hash the
+        -- presented token. Path is re-validated against the roots at download time.
+        CREATE TABLE IF NOT EXISTS file_shares (
+            id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id         UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            token_hash     TEXT NOT NULL UNIQUE,
+            path           TEXT NOT NULL,
+            filename       TEXT NOT NULL,
+            created_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+            expires_at     TIMESTAMPTZ,
+            max_downloads  INTEGER,
+            download_count INTEGER NOT NULL DEFAULT 0,
+            revoked        BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_shares_org ON file_shares (org_id);
+        """,
+    ),
 ]
 
 
