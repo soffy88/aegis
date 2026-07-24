@@ -1153,6 +1153,31 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_file_shares_org ON file_shares (org_id);
         """,
     ),
+    (
+        "053_ddns_configs",
+        """
+        -- Dynamic DNS configs (CasaOS remote-access parity). Credentials (token /
+        -- password) are NOT stored here — they live encrypted in org_secrets under
+        -- name 'ddns:<id>:secret'; this table keeps only non-secret config + last
+        -- update outcome. Refresh is via oprim.ddns_update (duckdns / dyndns2).
+        CREATE TABLE IF NOT EXISTS ddns_configs (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id          UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            provider        TEXT NOT NULL,        -- duckdns | dyndns2
+            hostname        TEXT NOT NULL,
+            username        TEXT,                 -- dyndns2 only (non-secret)
+            base_url        TEXT,                 -- dyndns2 provider override
+            enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+            last_status     TEXT,
+            last_ip         TEXT,
+            last_error      TEXT,
+            last_updated_at TIMESTAMPTZ,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, provider, hostname)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ddns_configs_org ON ddns_configs (org_id);
+        """,
+    ),
 ]
 
 
