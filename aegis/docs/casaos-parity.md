@@ -119,9 +119,12 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - 全量套件 **988 passed / 166 skipped / 0 failed**,pin bump 零回归。部署 aegis-backend(重建镜像)后生效。
 - 遗留(与本工程无关):`boto3` 未在 aegis 声明却被 oskill `restore_from_backup` 无条件 import(历史"侥幸装了"),建议后续正式声明。
 
-## 仍未做(console 前端 + 后续能力)
-- console:`/storage` 已做;分享弹窗、缩略图网格、`/host-terminal` 接 WS、`/settings/remote-access` 页未做(aegis-console entangled 仓)。
-- 后续能力:视频缩略图/媒体预览(镜像加 ffmpeg + `media_probe`)、ZeroTier、DDNS cron 刷新、簇 6 危险宿主变更(mount/format/电源,R2/R3)。
+## ✅ console 前端接线完成(aegis-console commit `b42d209`)
+- `/storage`(盘/SMART/USB)、files 分享弹窗(→ /s/{token} 链接)+ 图片详情面板缩略图预览(鉴权 aegisBlob→objectURL,避开 img 无 Bearer)、`/settings/remote-access`(Tailscale 状态/接入 + DDNS CRUD/更新)、`/host-terminal` 改用 owner-only `/docker/host-terminal` WS(ContainerTerminal 加可选 wsPath)。nav + i18n(en+zh)齐,typecheck+lint 清。
+- ⚠️ 未含别人未提交的 publish 页 + Dockerfile/package/pnpm(OUI)WIP;共享文件(AppFrame/api-paths/messages)含少量既有 publish 行(无 git add -p,连带)。console 从工作区部署,提交完整性不影响功能。
+
+## 仍未做(后续能力)
+- 视频缩略图/媒体预览(需给 backend 镜像加 ffmpeg + oprim `media_probe`)、ZeroTier、DDNS cron 刷新、簇 6 危险宿主变更(mount/format/电源,R2/R3)。
 
 ## 待主库定(每 PR body 标注)
 - 元素命名(`block_device_list` 等)、风险默认值(mount 默认 dry_run)、smartctl/lsblk 未安装时的降级返回契约。
