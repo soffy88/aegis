@@ -40,6 +40,7 @@ _ROLLUP_INTERVAL_SEC = 3600  # 60 min: downsample raw metrics into hourly rollup
 _ROLLUP_LOOKBACK_HOURS = 3  # re-aggregate last N hours each run (idempotent upsert 兜迟到点)
 _HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
 _DRIFT_INTERVAL_SEC = 600  # 10 min: config-as-code drift scan (§10/§3.7)
+_DDNS_REFRESH_INTERVAL_SEC = 300  # 5 min: refresh enabled DDNS records (CasaOS parity)
 _SELF_BACKUP_TICK_SEC = 3600  # 每小时醒来判断是否到自备份周期 (§11.4)
 _DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
 _DEADMAN_STARTUP_GRACE_SEC = 180.0  # 不误报 boot 期尚未首轮 tick 的循环
@@ -72,6 +73,7 @@ _SUPERVISED_LOOPS: dict[str, float] = {
     "alert_eval": _ALERT_EVAL_INTERVAL_SEC,
     "retention": _RETENTION_INTERVAL_SEC,
     "rollup": _ROLLUP_INTERVAL_SEC,
+    "ddns_refresh": _DDNS_REFRESH_INTERVAL_SEC,
 }
 
 
@@ -450,6 +452,37 @@ async def _drift_loop() -> None:
         await asyncio.sleep(_jittered(_DRIFT_INTERVAL_SEC))
 
 
+async def _ddns_refresh_loop() -> None:
+    """CasaOS parity: periodically push the current IP to every enabled DDNS config.
+
+    update_now delegates to oprim.ddns_update (an HTTPS call); one config's failure
+    (bad creds / provider down) never blocks the others. Degrades quietly when the
+    oprim pin lacks ddns_update.
+    """
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+    from aegis.server.services import ddns as ddns_svc  # noqa: PLC0415
+
+    await asyncio.sleep(random.uniform(30, 60))
+    while True:
+        try:
+            async with get_pool().acquire() as conn:
+                rows = await conn.fetch("SELECT id, org_id FROM ddns_configs WHERE enabled = TRUE")
+                for r in rows:
+                    try:
+                        await ddns_svc.update_now(conn, org_id=r["org_id"], config_id=r["id"])
+                    except ddns_svc.DdnsPrimitiveUnavailable:
+                        break  # pin not bumped — skip the whole round
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("ddns_refresh_error id=%s err=%s", r["id"], exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ddns_refresh_loop_error err=%s", exc)
+        await _tick("ddns_refresh", _DDNS_REFRESH_INTERVAL_SEC)
+
+
 async def _deadman_loop() -> None:
     """§6 死人开关:内部循环存活评估(deadman_evaluate) + L1 外部心跳(heartbeat_emit).
 
@@ -614,6 +647,7 @@ async def _cron_main(alerter: Any | None) -> None:
             _deadman_loop(),
             _self_backup_loop(),
             _drift_loop(),
+            _ddns_refresh_loop(),
             return_exceptions=True,
         )
     finally:
