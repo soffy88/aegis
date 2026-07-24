@@ -209,25 +209,47 @@ def resolve_for_download(path: str) -> Path:
 
 MAX_THUMBNAIL_SRC_BYTES = 40 * 1024 * 1024  # 40 MiB — don't decode huge images
 
+_VIDEO_EXTS = {"mp4", "mkv", "mov", "avi", "webm", "m4v", "flv", "wmv", "mpg", "mpeg", "ts"}
+
+
+def _is_video(name: str) -> bool:
+    dot = name.lower().rfind(".")
+    return dot >= 0 and name[dot + 1 :].lower() in _VIDEO_EXTS
+
 
 class ThumbnailUnavailable(Exception):
-    """The installed oprim lacks thumbnail_generate (pin not bumped yet)."""
+    """The installed oprim lacks the thumbnail/media primitives (pin not bumped)."""
 
 
 def generate_thumbnail(path: str, *, max_size: int = 256, fmt: str = "webp") -> tuple[bytes, str]:
-    """Read a sandboxed image file and return (thumbnail_bytes, media_type).
+    """Return (thumbnail_bytes, media_type) for a sandboxed image OR video file.
 
-    Parsing/resize lives in the 3O ``oprim.thumbnail_generate`` primitive. Raises
-    ThumbnailUnavailable when the oprim pin predates it, ValueError for non-images.
+    Images go through ``oprim.thumbnail_generate`` (Pillow); videos through
+    ``oprim.video_thumbnail`` (ffmpeg extracts + scales a frame). Raises
+    ThumbnailUnavailable when the oprim pin lacks the primitive, ValueError for
+    undecodable input.
     """
+    p = resolve_for_download(path)
+
+    if _is_video(p.name):
+        try:
+            from oprim import video_thumbnail  # noqa: PLC0415
+        except ImportError as e:
+            raise ThumbnailUnavailable(
+                "video thumbnails require oprim>=3.22 shipping video_thumbnail"
+            ) from e
+        try:
+            r = video_thumbnail(path=str(p), max_size=max_size, fmt="jpeg")
+        except Exception as e:  # noqa: BLE001 — ffmpeg failure / non-video → 400
+            raise ValueError(f"cannot thumbnail video: {e}") from e
+        return r.data, "image/jpeg"
+
     try:
         from oprim import thumbnail_generate  # noqa: PLC0415
     except ImportError as e:
         raise ThumbnailUnavailable(
             "thumbnails require oprim[image]>=3.21 shipping thumbnail_generate"
         ) from e
-
-    p = resolve_for_download(path)
     if p.stat().st_size > MAX_THUMBNAIL_SRC_BYTES:
         raise ValueError("image too large to thumbnail")
     data = p.read_bytes()
@@ -239,6 +261,21 @@ def generate_thumbnail(path: str, *, max_size: int = 256, fmt: str = "webp") -> 
         result.format, "application/octet-stream"
     )
     return result.data, media
+
+
+def probe_media(path: str) -> dict[str, Any]:
+    """Return media metadata (duration/codec/resolution) for a sandboxed file."""
+    try:
+        from oprim import media_probe  # noqa: PLC0415
+    except ImportError as e:
+        raise ThumbnailUnavailable(
+            "media metadata requires oprim>=3.22 shipping media_probe"
+        ) from e
+    p = resolve_for_download(path)
+    try:
+        return media_probe(path=str(p)).model_dump()
+    except Exception as e:  # noqa: BLE001 — ffprobe failure / non-media → 400
+        raise ValueError(f"cannot probe media: {e}") from e
 
 
 def change_mode(path: str, mode: str) -> dict[str, Any]:

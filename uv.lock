@@ -14,7 +14,7 @@ resolution-markers = [
 overrides = [
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.1" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.38.0" },
-    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.21.0" },
+    { name = "oprim", git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.22.0" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v4.11.0" },
 ]
 
@@ -97,7 +97,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "obase", git = "ssh://git@github.com/helios-plat/obase.git?rev=v0.19.1" },
     { name = "omodul", git = "ssh://git@github.com/helios-plat/omodul.git?rev=v1.38.0" },
-    { name = "oprim", extras = ["image"], git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.21.0" },
+    { name = "oprim", extras = ["image"], git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.22.0" },
     { name = "oservi", git = "ssh://git@github.com/helios-plat/oservi.git?rev=v1.3.0" },
     { name = "oskill", git = "ssh://git@github.com/helios-plat/oskill.git?rev=v4.11.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
@@ -1642,8 +1642,8 @@ wheels = [
 
 [[package]]
 name = "oprim"
-version = "3.21.0"
-source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.21.0#87e9fcda8a866a3e31f81f9ab1a20d67027645ec" }
+version = "3.22.0"
+source = { git = "ssh://git@github.com/helios-plat/oprim.git?rev=v3.22.0#7f9786779d2bfd61cfb1203cbdbe2434133360c8" }
 dependencies = [
     { name = "chardet" },
     { name = "dnspython" },

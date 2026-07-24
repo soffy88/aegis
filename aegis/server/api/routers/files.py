@@ -158,6 +158,21 @@ async def thumbnail(
     )
 
 
+@router.get("/media")
+async def media_info(
+    org_id: UUID,
+    path: str = Query(...),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> dict[str, Any]:
+    """Return media metadata (duration/codec/resolution) for a file. viewer+."""
+    try:
+        return await asyncio.to_thread(filesvc.probe_media, path)
+    except ThumbnailUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _map(exc) from exc
+
+
 class ShareRequest(BaseModel):
     path: str
     expires_in_hours: int | None = None

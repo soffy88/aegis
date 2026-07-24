@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 import uuid
 from collections.abc import Generator
 from pathlib import Path
@@ -109,3 +110,62 @@ def test_endpoint_503_without_primitive(
     monkeypatch.setattr(filesvc, "generate_thumbnail", boom)
     r = client.get(f"/api/v1/orgs/{_ORG}/files/thumbnail", params={"path": "/x.png"})
     assert r.status_code == 503
+
+
+# ── video / media (needs ffmpeg + oprim>=3.22) ───────────────────────────────
+
+_HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def _has_media_primitive() -> bool:
+    try:
+        from oprim import video_thumbnail  # noqa: F401,PLC0415
+    except ImportError:
+        return False
+    return True
+
+
+needs_media = pytest.mark.skipif(
+    not (_HAS_FFMPEG and _has_media_primitive()),
+    reason="ffmpeg or oprim>=3.22 media primitives not available",
+)
+
+
+@pytest.fixture
+def sample_video(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import subprocess
+
+    out = tmp_path / "clip.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "quiet",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=320x240:rate=5",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],
+        check=True,
+        timeout=30,
+    )
+    monkeypatch.setattr("aegis.server.services.files.resolve_for_download", lambda _p: out)
+    return out
+
+
+@needs_media
+def test_video_thumbnail_returns_jpeg(sample_video: Path) -> None:
+    data, media = filesvc.generate_thumbnail(str(sample_video), max_size=160)
+    assert media == "image/jpeg"
+    assert data[:2] == b"\xff\xd8"  # JPEG SOI
+
+
+@needs_media
+def test_probe_media_video(sample_video: Path) -> None:
+    info = filesvc.probe_media(str(sample_video))
+    assert info["is_video"] is True
+    assert info["width"] == 320
+    assert info["height"] == 240
