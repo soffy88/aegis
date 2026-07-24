@@ -112,6 +112,17 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - **Phase 5**:簇 4 WebSocket PTY。
 - **Phase 6**(最后、最高危):簇 1 R2/R3 宿主变更(mount/unmount/format)+ 簇 2 samba/rclone + 宿主电源。全部 dry_run 默认 + owner-only + 审计。DESIGN.md 需同步加一节说明 override。
 
+## ✅ 发版收口(D,2026-07-24)
+- oprim 4 PR(#22 存储三原语 / #23 ddns_update / #24 thumbnail_generate / #25 tailscale_status)全部合入 main → **发版 v3.21.0**(经 PR #26 bump 版本 + tag,tag 指向 main 可达提交)。纯增量,无既有 API 变更。
+- aegis oprim pin **v3.19.0 → v3.21.0**(commit `aede6ad`),主依赖改 `oprim[image]`(缩略图 Pillow)。
+- **全 6 原语从固定版真导入 OK;存储/DDNS/VPN/缩略图端点脱离 503 降级、真正 live。**
+- 全量套件 **988 passed / 166 skipped / 0 failed**,pin bump 零回归。部署 aegis-backend(重建镜像)后生效。
+- 遗留(与本工程无关):`boto3` 未在 aegis 声明却被 oskill `restore_from_backup` 无条件 import(历史"侥幸装了"),建议后续正式声明。
+
+## 仍未做(console 前端 + 后续能力)
+- console:`/storage` 已做;分享弹窗、缩略图网格、`/host-terminal` 接 WS、`/settings/remote-access` 页未做(aegis-console entangled 仓)。
+- 后续能力:视频缩略图/媒体预览(镜像加 ffmpeg + `media_probe`)、ZeroTier、DDNS cron 刷新、簇 6 危险宿主变更(mount/format/电源,R2/R3)。
+
 ## 待主库定(每 PR body 标注)
 - 元素命名(`block_device_list` 等)、风险默认值(mount 默认 dry_run)、smartctl/lsblk 未安装时的降级返回契约。
 - 宿主变更类是否进 oprim 主库(通用)还是 aegis 专有层——倾向进 oprim 但默认 dry_run,执行策略留 aegis。
