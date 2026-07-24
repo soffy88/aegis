@@ -24,7 +24,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
@@ -32,7 +32,11 @@ from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission
 from aegis.server.services import file_shares as sharesvc
 from aegis.server.services import files as filesvc
-from aegis.server.services.files import FileManagerDisabled, PathNotAllowed
+from aegis.server.services.files import (
+    FileManagerDisabled,
+    PathNotAllowed,
+    ThumbnailUnavailable,
+)
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +135,27 @@ async def download_file(
     except Exception as exc:
         raise _map(exc) from exc
     return FileResponse(p, filename=p.name, media_type="application/octet-stream")
+
+
+@router.get("/thumbnail")
+async def thumbnail(
+    org_id: UUID,
+    path: str = Query(...),
+    size: int = Query(default=256, ge=16, le=1024),
+    user: UserContext = Depends(require_permission(Permission.VIEW_PROJECT)),
+) -> Response:
+    """Return a webp thumbnail for a sandboxed image file. viewer+."""
+    try:
+        data, media = await asyncio.to_thread(
+            filesvc.generate_thumbnail, path, max_size=size, fmt="webp"
+        )
+    except ThumbnailUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _map(exc) from exc
+    return Response(
+        content=data, media_type=media, headers={"Cache-Control": "private, max-age=3600"}
+    )
 
 
 class ShareRequest(BaseModel):

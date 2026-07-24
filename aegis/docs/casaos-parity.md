@@ -60,7 +60,8 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 
 ### aegis 接线
 - ✅ **分享链接(Phase 3a,已提交、可 live)**:migration `052_file_shares`(token 存 sha256、path/expires/max_downloads/download_count/revoked)、`services/file_shares.py`(create/list/revoke/resolve,解析时复验路径在 roots 内 + 查过期/限次,行锁原子自增)、files.py 加 `POST /files/share`(operator+)/`GET /files/shares`/`DELETE /files/shares/{id}`、**公开无鉴权 `GET /s/{token}`**(`routers/file_share_public.py`,失败一律 404 不做 oracle)。测试 `tests/test_file_shares.py` 12 绿、ruff 清、1125 收集。**纯 aegis、无 3O 发版依赖,部署即 live**(不像存储要等 oprim#22)。
-- ⬜ 缩略图/预览(Phase 3b):`GET /files/thumbnail`(Pillow 图像,已在 venv;视频需给 backend 镜像加 ffmpeg)、`GET /files/preview`(媒体元数据 media_probe)。需 oskill `thumbnail_generate` + oprim `media_probe` 发版。
+- ✅ **缩略图(Phase 3b,已提交)**:oprim `thumbnail_generate`(Pillow image extra)**PR #24** + aegis `GET /files/thumbnail`(读沙箱图像→原语→webp,惰性导入降级 503,40MiB 上限,Cache-Control)。`tests/test_file_thumbnail.py` 4 绿/1 skip。**注:aegis 应依赖 `oprim[image]`;Pillow 已在 venv。**
+- ⬜ 视频缩略图/媒体预览:需给 backend 镜像加 ffmpeg(现只 libpq5/libmagic1)+ oprim `media_probe`。
 - ⬜ SMB/rclone 作为"存储位置"(Phase 6 R2/网络配置)。
 - ⬜ console `/files`:分享弹窗(复制链接 + 有效期)、缩略图网格、预览抽屉。
 
@@ -104,7 +105,7 @@ Aegis 在可观测/告警/自愈/多主机/RBAC/Docker 深度上远超 CasaOS。
 - **Phase 1**(✅ 三原语本地完成,23 tests 绿/ruff 清,分支 `feat/storage-observe` @ oprim 隔离 worktree,待 push+PR;`partition_table_read` 可直接从 block_device_list 的 children 派生,暂缓单列):`block_device_list` / `disk_smart_probe` / `usb_device_list`。
 - **Phase 2**(✅ 后端+前端完成):aegis `routers/storage.py` + `services/storage.py` + `services/host_shell.py` + 测试(解析 8 绿 / 降级 2 绿,1113 收集无破坏,ruff 清)+ console `/storage` 页(typecheck+lint 清)。宿主经特权 helper 跑命令、oprim 解析、未 bump 降级 503。⬜ 仅剩 oprim PR #22 合并发版后 bump aegis pin 才 live。oprim 分支已 push,PR **helios-plat/oprim#22**。
 - **Phase 3a**(✅ 已提交、部署即 live):文件分享链接(migration 052 + file_shares 服务 + `/files/share*` + 公开 `/s/{token}`,12 tests 绿)。纯 aegis 无 3O 发版依赖。⬜ console 分享弹窗待做。
-- **Phase 3b**(⬜):缩略图/媒体预览(oskill `thumbnail_generate` 图像[Pillow 已有] + oprim `media_probe`[需给镜像加 ffmpeg])。
+- **Phase 3b**(✅ 图像缩略图已提交):oprim `thumbnail_generate` **PR #24** + aegis `/files/thumbnail`(4 tests)。⬜ 视频/媒体预览需镜像加 ffmpeg + `media_probe`。
 - **Phase 4a**(✅ 已提交):DDNS 多 provider(oprim `ddns_update` **PR #23** + aegis migration 053 + `services/ddns.py` + `routers/remote_access.py`,9 tests 绿)。live 待 oprim#23 发版 + bump pin。
 - **Phase 4b**(⬜):VPN(tailscale/zerotier,走 host-shell)+ cron 定时刷新 + console 页。
 - **Phase 5**:簇 4 WebSocket PTY。

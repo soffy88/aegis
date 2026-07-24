@@ -207,6 +207,40 @@ def resolve_for_download(path: str) -> Path:
     return p
 
 
+MAX_THUMBNAIL_SRC_BYTES = 40 * 1024 * 1024  # 40 MiB — don't decode huge images
+
+
+class ThumbnailUnavailable(Exception):
+    """The installed oprim lacks thumbnail_generate (pin not bumped yet)."""
+
+
+def generate_thumbnail(path: str, *, max_size: int = 256, fmt: str = "webp") -> tuple[bytes, str]:
+    """Read a sandboxed image file and return (thumbnail_bytes, media_type).
+
+    Parsing/resize lives in the 3O ``oprim.thumbnail_generate`` primitive. Raises
+    ThumbnailUnavailable when the oprim pin predates it, ValueError for non-images.
+    """
+    try:
+        from oprim import thumbnail_generate  # noqa: PLC0415
+    except ImportError as e:
+        raise ThumbnailUnavailable(
+            "thumbnails require oprim[image]>=3.21 shipping thumbnail_generate"
+        ) from e
+
+    p = resolve_for_download(path)
+    if p.stat().st_size > MAX_THUMBNAIL_SRC_BYTES:
+        raise ValueError("image too large to thumbnail")
+    data = p.read_bytes()
+    try:
+        result = thumbnail_generate(image_bytes=data, max_size=max_size, fmt=fmt)
+    except Exception as e:  # noqa: BLE001 — oprim OprimValidationError for non-images → 400
+        raise ValueError(f"cannot thumbnail: {e}") from e
+    media = {"webp": "image/webp", "jpeg": "image/jpeg", "png": "image/png"}.get(
+        result.format, "application/octet-stream"
+    )
+    return result.data, media
+
+
 def change_mode(path: str, mode: str) -> dict[str, Any]:
     """chmod a file/dir. *mode* is an octal string like '755' or '0o644'."""
     p = _safe(path)
