@@ -71,7 +71,9 @@ docker tag "${TMP_TAG}" aegis-console:latest
 ok "回滚点: aegis-console:rollback-${DATE}"
 
 echo "[5/6] 重建容器 ..."
-$COMPOSE up -d --force-recreate aegis-console >/dev/null
+# --no-deps: aegis-caddy 由外部单独托管(非本 compose 生命周期),不加会连带尝试
+# 重建 caddy 触发名字冲突、中断部署(2026-07-31 踩过)。只动 aegis-console 自己。
+$COMPOSE up -d --no-deps --force-recreate aegis-console >/dev/null
 sleep 6
 
 # ── 闸门 3: 部署后核验(公网 BUILD_ID 命中 + 功能在场，否则自动回滚)────────
@@ -81,8 +83,8 @@ served="$(curl -s --noproxy '*' --max-time 15 "${PUBLIC_URL}/en/login" 2>/dev/nu
 if [ "$run_bid" != "$CAND_BID" ] || [ "$served" != "$run_bid" ]; then
   echo "部署后核验失败 (容器BID=${run_bid} 候选=${CAND_BID} 公网命中=${served:-无}) —— 自动回滚" >&2
   docker tag "aegis-console:rollback-${DATE}" aegis-console:latest
-  $COMPOSE up -d --force-recreate aegis-console >/dev/null
+  $COMPOSE up -d --no-deps --force-recreate aegis-console >/dev/null
   die "已自动回滚到部署前状态"
 fi
 ok "线上 = 候选镜像 (BUILD_ID=${run_bid})，公网校验命中"
-echo "🎉 部署完成。回滚: docker tag aegis-console:rollback-${DATE} aegis-console:latest && ${COMPOSE} up -d --force-recreate aegis-console"
+echo "🎉 部署完成。回滚: docker tag aegis-console:rollback-${DATE} aegis-console:latest && ${COMPOSE} up -d --no-deps --force-recreate aegis-console"
