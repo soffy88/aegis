@@ -9,6 +9,7 @@ backend.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -32,6 +33,45 @@ router = APIRouter(prefix="/api/v1/orgs/{org_id}/telemetry", tags=["telemetry"])
 
 _RETENTION_HOURS = 48
 _ingest_count = 0
+_MAX_INGEST_BYTES = 2 * 1024 * 1024
+_MAX_RUM_BYTES = 64 * 1024
+_MAX_SPANS_PER_REQUEST = 5_000
+
+
+def _require_ingest_key(x_aegis_ingest_key: str | None) -> None:
+    cfg = get_settings()
+    key = getattr(cfg, "telemetry_ingest_key", "") or ""
+    if not key:
+        # Local/dev deployments historically allowed open ingest. Production must
+        # fail closed because /api/* is behind the public edge.
+        if getattr(cfg, "env", "dev") == "prod":
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "telemetry ingest key is not configured",
+            )
+        return
+    if x_aegis_ingest_key != key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad ingest key")
+
+
+async def _read_json_limited(request: Request, *, max_bytes: int) -> dict[str, Any]:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(413, "payload too large")
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid content-length") from None
+    raw = await request.body()
+    if len(raw) > max_bytes:
+        raise HTTPException(413, "payload too large")
+    try:
+        data = json.loads(raw or b"{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "JSON object expected")
+    return data
 
 
 def _attr_map(attrs: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -54,16 +94,16 @@ async def ingest_traces(
     match the X-Aegis-Ingest-Key header. ``org_id`` is only used to stamp the
     stored rows — the shared ingest key remains the sole auth mechanism."""
     global _ingest_count  # noqa: PLW0603
-    key = getattr(get_settings(), "telemetry_ingest_key", "") or ""
-    if key and x_aegis_ingest_key != key:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad ingest key")
+    _require_ingest_key(x_aegis_ingest_key)
 
-    body = await request.json()
+    body = await _read_json_limited(request, max_bytes=_MAX_INGEST_BYTES)
     rows: list[tuple[Any, ...]] = []
     for rs in body.get("resourceSpans", []):
         svc = _attr_map(rs.get("resource", {}).get("attributes")).get("service.name") or "unknown"
         for ss in rs.get("scopeSpans", []):
             for sp in ss.get("spans", []):
+                if len(rows) >= _MAX_SPANS_PER_REQUEST:
+                    raise HTTPException(413, "too many spans")
                 try:
                     start = int(sp.get("startTimeUnixNano", 0))
                     end = int(sp.get("endTimeUnixNano", 0))
@@ -102,9 +142,14 @@ async def ingest_traces(
 
 
 @ingest_router.post("/{org_id}/rum")
-async def ingest_rum(org_id: uuid.UUID, request: Request) -> dict[str, str]:
+async def ingest_rum(
+    org_id: uuid.UUID,
+    request: Request,
+    x_aegis_ingest_key: str | None = Header(default=None),
+) -> dict[str, str]:
     """RUM beacon ingest — a browser snippet POSTs page-load timing here."""
-    b = await request.json()
+    _require_ingest_key(x_aegis_ingest_key)
+    b = await _read_json_limited(request, max_bytes=_MAX_RUM_BYTES)
     async with get_pool().acquire() as conn:
         await conn.execute(
             """INSERT INTO aegis_rum (app, page, load_ms, ttfb_ms, fcp_ms, ua, org_id)
@@ -169,7 +214,7 @@ async def services(
 ) -> list[dict[str, Any]]:
     """Per-service RED: request rate, error %, p50/p95/p99 latency (ms)."""
     rows = await conn.fetch(
-        f"""
+        """
         SELECT service,
                count(*)                                              AS calls,
                (sum(CASE WHEN status_code = 2 THEN 1 ELSE 0 END)::float
@@ -317,7 +362,8 @@ async def root_cause(
 
     err = await conn.fetch(
         """SELECT service,
-                  (sum(CASE WHEN status_code=2 THEN 1 ELSE 0 END)::float / count(*)) * 100 AS error_pct,
+                  (sum(CASE WHEN status_code=2 THEN 1 ELSE 0 END)::float
+                  / count(*)) * 100 AS error_pct,
                   count(*) AS calls
              FROM aegis_spans
             WHERE ingested_at > now() - ($1 || ' minutes')::interval AND service = ANY($2::text[])

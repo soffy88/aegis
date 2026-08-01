@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -62,9 +62,16 @@ def _mock_inspect_result() -> MagicMock:
         "image": "myapp:latest",
         "state": "running",
         "status": "Up 2 hours",
-        "labels": {},
+        "labels": {"aegis.org": str(_ORG)},
         "ports": [],
     }
+    return r
+
+
+def _mock_inspect_with_labels(labels: dict[str, str]) -> MagicMock:
+    r = _mock_inspect_result()
+    data = r.model_dump.return_value
+    data["labels"] = labels
     return r
 
 
@@ -79,9 +86,15 @@ def test_inspect_uses_oprim(client: TestClient) -> None:
 
 
 def test_start_uses_oprim(client: TestClient) -> None:
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_start",
-        return_value=_mock_op_result(),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_result(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_start",
+            return_value=_mock_op_result(),
+        ),
     ):
         resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/start")
     assert resp.status_code == 200
@@ -89,18 +102,30 @@ def test_start_uses_oprim(client: TestClient) -> None:
 
 
 def test_stop_uses_oprim(client: TestClient) -> None:
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_stop",
-        return_value=_mock_op_result(),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_result(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_stop",
+            return_value=_mock_op_result(),
+        ),
     ):
         resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/stop")
     assert resp.status_code == 200
 
 
 def test_restart_uses_oprim(client: TestClient) -> None:
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_restart",
-        return_value=_mock_op_result(),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_result(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_restart",
+            return_value=_mock_op_result(),
+        ),
     ):
         resp = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/restart")
     assert resp.status_code == 200
@@ -110,9 +135,15 @@ def test_logs_uses_oprim(client: TestClient) -> None:
     log_line = MagicMock()
     log_line.model_dump.return_value = {"timestamp": "2026-05-24T00:00:00Z", "message": "started"}
 
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_logs",
-        return_value=[log_line],
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_result(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_logs",
+            return_value=[log_line],
+        ),
     ):
         resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/abc123/logs")
     assert resp.status_code == 200
@@ -193,6 +224,68 @@ def test_list_containers_empty(client: TestClient) -> None:
     assert resp.json() == []
 
 
+def test_list_containers_hides_other_org_for_non_owner(client: TestClient) -> None:
+    client.app.dependency_overrides[get_current_user] = _user_with_role("viewer")
+    mine = MagicMock()
+    mine.model_dump.return_value = {
+        "container_id": "mine",
+        "name": "mine",
+        "labels": {"aegis.org": str(_ORG)},
+    }
+    other = MagicMock()
+    other.model_dump.return_value = {
+        "container_id": "other",
+        "name": "other",
+        "labels": {"aegis.org": "99999999-9999-9999-9999-999999999999"},
+    }
+    unlabeled = MagicMock()
+    unlabeled.model_dump.return_value = {"container_id": "sys", "name": "sys", "labels": {}}
+    try:
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_ps",
+            return_value=[mine, other, unlabeled],
+        ):
+            resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers")
+        assert resp.status_code == 200
+        assert [c["container_id"] for c in resp.json()] == ["mine"]
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_container_action_rejects_other_org_label(client: TestClient) -> None:
+    client.app.dependency_overrides[get_current_user] = _user_with_role("admin")
+    try:
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_with_labels(
+                {"aegis.org": "99999999-9999-9999-9999-999999999999"}
+            ),
+        ):
+            resp = client.post(
+                f"/api/v1/orgs/{_ORG}/docker/containers/abc123/exec",
+                json={"command": ["id"]},
+            )
+        assert resp.status_code == 404
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
+def test_container_action_rejects_unlabeled_for_non_owner(client: TestClient) -> None:
+    client.app.dependency_overrides[get_current_user] = _user_with_role("admin")
+    try:
+        with mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect_with_labels({}),
+        ):
+            resp = client.post(
+                f"/api/v1/orgs/{_ORG}/docker/containers/abc123/exec",
+                json={"command": ["id"]},
+            )
+        assert resp.status_code == 403
+    finally:
+        client.app.dependency_overrides[get_current_user] = _fake_user
+
+
 def test_list_containers_rbac_unauthorized(client: TestClient) -> None:
     """Test that a user with no membership in the org gets 403."""
 
@@ -226,7 +319,7 @@ def test_list_containers_oprim_error_returns_502(client: TestClient) -> None:
 # ── privilege re-tiering: exec/terminal are admin+, host-shell is owner-only ────
 
 
-def _user_with_role(role: str):
+def _user_with_role(role: str) -> Callable[[], Awaitable[UserContext]]:
     async def _u() -> UserContext:
         return UserContext(
             user_id=_USER,
@@ -255,9 +348,15 @@ def test_exec_allowed_for_admin(client: TestClient) -> None:
     result = MagicMock()
     result.model_dump.return_value = {"exit_code": 0, "output": "root"}
     try:
-        with mock.patch(
-            "aegis.server.api.routers.docker.docker_container_exec",
-            return_value=result,
+        with (
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_inspect",
+                return_value=_mock_inspect_result(),
+            ),
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_exec",
+                return_value=result,
+            ),
         ):
             resp = client.post(
                 f"/api/v1/orgs/{_ORG}/docker/containers/abc123/exec",

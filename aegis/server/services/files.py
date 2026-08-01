@@ -301,11 +301,15 @@ def compress(paths: list[str], dest: str) -> dict[str, Any]:
     for s in srcs:
         if not s.exists():
             raise FileNotFoundError(f"not found: {s}")
+        if s.is_symlink():
+            raise PathNotAllowed(f"refusing to archive symlink: {s}")
     if dest.endswith(".zip"):
         with _zip.ZipFile(dp, "w", _zip.ZIP_DEFLATED) as z:
             for s in srcs:
                 if s.is_dir():
                     for f in s.rglob("*"):
+                        if f.is_symlink():
+                            continue
                         if f.is_file():
                             z.write(f, f.relative_to(s.parent))
                 else:
@@ -313,13 +317,22 @@ def compress(paths: list[str], dest: str) -> dict[str, Any]:
     else:
         with _tar.open(dp, "w:gz") as t:
             for s in srcs:
-                t.add(str(s), arcname=s.name)
+                if s.is_dir():
+                    t.add(str(s), arcname=s.name, recursive=False)
+                    for f in s.rglob("*"):
+                        if f.is_symlink():
+                            continue
+                        if f.is_dir() or f.is_file():
+                            t.add(str(f), arcname=str(f.relative_to(s.parent)), recursive=False)
+                else:
+                    t.add(str(s), arcname=s.name, recursive=False)
     return {"path": str(dp), "size": dp.stat().st_size}
 
 
 def extract(path: str, dest_dir: str) -> dict[str, Any]:
     """Extract a .zip or .tar/.tar.gz into *dest_dir*, guarding against
     zip-slip / tar-slip (members escaping the destination)."""
+    import stat as _stat  # noqa: PLC0415
     import tarfile as _tar  # noqa: PLC0415
     import zipfile as _zip  # noqa: PLC0415
 
@@ -334,16 +347,30 @@ def extract(path: str, dest_dir: str) -> dict[str, Any]:
         target = (d / name).resolve()
         return target == root or target.is_relative_to(root)
 
+    def _zip_is_link_or_special(info: _zip.ZipInfo) -> bool:
+        mode = (info.external_attr >> 16) & 0o170000
+        return mode in {
+            _stat.S_IFLNK,
+            _stat.S_IFIFO,
+            _stat.S_IFCHR,
+            _stat.S_IFBLK,
+            _stat.S_IFSOCK,
+        }
+
     if str(p).endswith(".zip"):
         with _zip.ZipFile(p) as z:
-            for name in z.namelist():
-                if not _inside(name):
-                    raise PathNotAllowed(f"archive member escapes destination: {name}")
+            for info in z.infolist():
+                if not _inside(info.filename):
+                    raise PathNotAllowed(f"archive member escapes destination: {info.filename}")
+                if _zip_is_link_or_special(info):
+                    raise PathNotAllowed(f"refusing archive link/special member: {info.filename}")
             z.extractall(d)
     else:
         with _tar.open(p) as t:
             for member in t.getmembers():
                 if not _inside(member.name):
                     raise PathNotAllowed(f"archive member escapes destination: {member.name}")
+                if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                    raise PathNotAllowed(f"refusing archive link/special member: {member.name}")
             t.extractall(d)  # noqa: S202 — members validated above
     return {"path": str(d)}

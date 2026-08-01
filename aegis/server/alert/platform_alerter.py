@@ -17,6 +17,8 @@ AlerterEngine evaluator 协议不一致).
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -250,7 +252,14 @@ def telegram_channel(*, text: str, chat_id: str, bot_token: str, **_: Any) -> No
             chat_id,
         )
         return
-    telegram_send(TelegramRequest(text=text, chat_id=chat_id, bot_token=bot_token))
+    result = telegram_send(TelegramRequest(text=text, chat_id=chat_id, bot_token=bot_token))
+    if inspect.isawaitable(result):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(result)
+        else:
+            loop.create_task(result)
 
 
 # ── Assembly ──────────────────────────────────────────────────────────────────

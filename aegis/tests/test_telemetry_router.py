@@ -215,6 +215,59 @@ def test_ingest_traces_still_enforces_shared_ingest_key(monkeypatch: pytest.Monk
         get_settings.cache_clear()
 
 
+def test_ingest_rum_enforces_shared_ingest_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("AEGIS_TELEMETRY_INGEST_KEY", "topsecret")
+    get_settings.cache_clear()
+    try:
+        r = _ingest_client().post(
+            f"/api/v1/telemetry/{_ORG_A}/rum",
+            json={"app": "web", "page": "/", "load_ms": 100},
+            headers={"X-Aegis-Ingest-Key": "wrong"},
+        )
+        assert r.status_code == 401
+    finally:
+        monkeypatch.delenv("AEGIS_TELEMETRY_INGEST_KEY", raising=False)
+        get_settings.cache_clear()
+
+
+def test_ingest_prod_without_key_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("AEGIS_ENV", "prod")
+    monkeypatch.setenv("AEGIS_JWT_SECRET", "x" * 32)
+    monkeypatch.delenv("AEGIS_TELEMETRY_INGEST_KEY", raising=False)
+    get_settings.cache_clear()
+    try:
+        r = _ingest_client().post(f"/api/v1/telemetry/{_ORG_A}/v1/traces", json=_TRACE_BODY)
+        assert r.status_code == 503
+    finally:
+        monkeypatch.delenv("AEGIS_ENV", raising=False)
+        monkeypatch.delenv("AEGIS_JWT_SECRET", raising=False)
+        get_settings.cache_clear()
+
+
+def test_ingest_traces_rejects_too_many_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aegis.server.api.routers import telemetry as t
+
+    monkeypatch.setattr(t, "_MAX_SPANS_PER_REQUEST", 1)
+    body = {
+        "resourceSpans": [
+            {
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {"traceId": "t1", "spanId": "s1"},
+                            {"traceId": "t2", "spanId": "s2"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    r = _ingest_client().post(f"/api/v1/telemetry/{_ORG_A}/v1/traces", json=body)
+    assert r.status_code == 413
+
+
 # ===== query router: every endpoint must scope its SQL by org_id =====
 
 

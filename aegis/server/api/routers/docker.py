@@ -44,9 +44,10 @@ from oprim._exceptions import OprimError
 from pydantic import BaseModel
 
 from aegis.server.api.deps import get_db_conn
-from aegis.server.auth.dependencies import UserContext
+from aegis.server.auth.dependencies import OrgInToken, UserContext
 from aegis.server.auth.rbac import Permission, require_min_role, require_permission
 from aegis.server.models import ROLE_HIERARCHY, Role
+from aegis.server.persistence import get_pool
 from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,138 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/docker", tags=["docker"])
 
 _502 = status.HTTP_502_BAD_GATEWAY
+
+
+def _dump(value: Any) -> dict[str, Any]:
+    """Best-effort model/dict normalizer for oprim/docker-py return values."""
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return value
+    return dict(value) if value is not None else {}
+
+
+def _role_for_org(user: UserContext, org_id: UUID) -> Role:
+    membership = user.org_by_id(org_id)
+    if membership is None:  # require_permission/require_min_role should already gate this.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a member of this org")
+    return Role(membership.role)
+
+
+def _is_owner(user: UserContext, org_id: UUID) -> bool:
+    return ROLE_HIERARCHY[_role_for_org(user, org_id)] >= ROLE_HIERARCHY[Role.OWNER]
+
+
+def _labels(data: dict[str, Any]) -> dict[str, Any]:
+    raw = data.get("labels") or data.get("Labels")
+    if raw is None and isinstance(data.get("Config"), dict):
+        raw = data["Config"].get("Labels")
+    raw = raw or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _resource_org(data: dict[str, Any]) -> str | None:
+    labels = _labels(data)
+    value = labels.get("aegis.org") or labels.get("com.aegis.org")
+    return str(value) if value else None
+
+
+def _resource_name(data: dict[str, Any]) -> str:
+    return str(
+        data.get("id")
+        or data.get("Id")
+        or data.get("name")
+        or data.get("Name")
+        or data.get("container_id")
+        or data.get("container")
+        or ""
+    )
+
+
+def _authorize_labeled_resource(
+    data: dict[str, Any],
+    *,
+    org_id: UUID,
+    user: UserContext,
+    resource: str,
+    action: str,
+) -> None:
+    """Enforce org ownership for Docker resources that can carry Aegis labels.
+
+    Aegis-managed resources must carry ``aegis.org=<org uuid>``. Unlabelled
+    legacy/platform resources are break-glass only and require owner, so normal
+    viewers/operators/admins cannot accidentally cross tenant boundaries.
+    """
+    owner = _resource_org(data)
+    if owner is not None:
+        if owner != str(org_id):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"{resource} not found in this org",
+            )
+        return
+    if _is_owner(user, org_id):
+        log.warning(
+            "docker_unscoped_resource_breakglass "
+            "org_id=%s user_id=%s resource=%s action=%s name=%s",
+            org_id,
+            user.user_id,
+            resource,
+            action,
+            data.get("name") or data.get("Name") or data.get("container_id") or data.get("id"),
+        )
+        return
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        f"{resource} is not labeled for an Aegis org; owner break-glass required",
+    )
+
+
+async def _inspect_container_authorized(
+    *,
+    container: str,
+    org_id: UUID,
+    user: UserContext,
+    docker_host: str | None,
+    action: str,
+) -> dict[str, Any]:
+    try:
+        result = await asyncio.to_thread(
+            docker_container_inspect,
+            container_id=container,
+            **_hostkw(docker_host),
+        )
+    except OprimError as exc:
+        raise HTTPException(status_code=_502, detail=str(exc)) from exc
+    data = _dump(result)
+    _authorize_labeled_resource(
+        data,
+        org_id=org_id,
+        user=user,
+        resource="container",
+        action=action,
+    )
+    return data
+
+
+def _filter_labeled_resources(
+    items: list[Any], *, org_id: UUID, user: UserContext, resource: str
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    include_unscoped = _is_owner(user, org_id)
+    for item in items:
+        data = _dump(item)
+        owner = _resource_org(data)
+        if owner == str(org_id) or (owner is None and include_unscoped):
+            out.append(data)
+        elif owner is None:
+            log.info(
+                "docker_unscoped_resource_hidden org_id=%s resource=%s name=%s",
+                org_id,
+                resource,
+                data.get("name") or data.get("Name") or data.get("id"),
+            )
+    return out
 
 
 async def _resolve_docker_host(
@@ -99,6 +232,15 @@ class VolumeCreateRequest(BaseModel):
     driver_opts: dict[str, str] | None = None
 
 
+def _with_org_labels(labels: dict[str, str] | None, org_id: UUID) -> dict[str, str]:
+    merged = dict(labels or {})
+    existing = merged.get("aegis.org")
+    if existing and existing != str(org_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "aegis.org label must match path org_id")
+    merged["aegis.org"] = str(org_id)
+    return merged
+
+
 class ContainerExecRequest(BaseModel):
     command: list[str]
     workdir: str | None = None
@@ -124,7 +266,7 @@ async def list_containers(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         items = await asyncio.to_thread(docker_ps, all=all, **_hostkw(docker_host))
-        return [c.model_dump() if hasattr(c, "model_dump") else c for c in items]
+        return _filter_labeled_resources(items, org_id=org_id, user=user, resource="container")
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -140,10 +282,13 @@ async def inspect_container(
     """Inspect a container. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        result = await asyncio.to_thread(
-            docker_container_inspect, container_id=container, **_hostkw(docker_host)
+        return await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="inspect",
         )
-        return result.model_dump()
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -159,6 +304,13 @@ async def start_container(
     """Start a container. operator+ required."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="start",
+        )
         result = await asyncio.to_thread(
             docker_container_start, container_id=container, **_hostkw(docker_host)
         )
@@ -178,6 +330,13 @@ async def stop_container(
     """Stop a container. operator+ required."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="stop",
+        )
         result = await asyncio.to_thread(
             docker_container_stop, container_id=container, **_hostkw(docker_host)
         )
@@ -197,6 +356,13 @@ async def restart_container(
     """Restart a container. operator+ required."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="restart",
+        )
         result = await asyncio.to_thread(
             docker_container_restart, container_id=container, **_hostkw(docker_host)
         )
@@ -218,6 +384,13 @@ async def container_logs(
     """Get container logs. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="logs",
+        )
         since = f"{since_seconds}s" if since_seconds else None
         result = await asyncio.to_thread(
             docker_container_logs,
@@ -250,13 +423,22 @@ async def search_logs(
     if not names:
         try:
             lst = await asyncio.to_thread(docker_container_list, **_hostkw(docker_host))
-            names = [getattr(c, "name", None) for c in lst if getattr(c, "name", None)][:25]
+            allowed = _filter_labeled_resources(lst, org_id=org_id, user=user, resource="container")
+            names = [str(c.get("name") or c.get("Name") or "") for c in allowed][:25]
+            names = [n for n in names if n]
         except OprimError as exc:
             raise HTTPException(status_code=_502, detail=str(exc)) from exc
     ql = q.lower()
     rows: list[dict[str, Any]] = []
     for name in names[:25]:
         try:
+            await _inspect_container_authorized(
+                container=name,
+                org_id=org_id,
+                user=user,
+                docker_host=docker_host,
+                action="logs.search",
+            )
             logs = await asyncio.to_thread(
                 docker_container_logs, container_id=name, lines=tail, **_hostkw(docker_host)
             )
@@ -282,6 +464,13 @@ async def container_stats(
     """Single-shot container stats via oprim. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="stats",
+        )
         result = await asyncio.to_thread(
             docker_container_stats, container_id=container, **_hostkw(docker_host)
         )
@@ -391,6 +580,13 @@ async def set_container_limits(
     if swap < body.memory_mb:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "memory_swap_mb must be >= memory_mb")
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
+    await _inspect_container_authorized(
+        container=container,
+        org_id=org_id,
+        user=user,
+        docker_host=docker_host,
+        action="limits",
+    )
     args = ["update", "--memory", f"{body.memory_mb}m", "--memory-swap", f"{swap}m", container]
     await asyncio.to_thread(_docker_cli, docker_host, args)
     return {"container": container, "memory_mb": body.memory_mb, "ok": True}
@@ -442,6 +638,19 @@ async def memory_overview(
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     host = await _host_memory(conn)
     host_total_bytes = host.get("mem_total_mb", 0) * 1024 * 1024
+    allowed_names: set[str] | None = None
+    if not _is_owner(user, org_id):
+        try:
+            ps_items = await asyncio.to_thread(docker_ps, all=True, **_hostkw(docker_host))
+            allowed = _filter_labeled_resources(
+                ps_items, org_id=org_id, user=user, resource="container"
+            )
+            allowed_names = {_resource_name(c) for c in allowed} | {
+                str(c.get("name") or c.get("Name") or "") for c in allowed
+            }
+            allowed_names.discard("")
+        except OprimError as exc:
+            raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
     out = await asyncio.to_thread(
         _docker_cli, docker_host, ["stats", "--no-stream", "--format", "{{json .}}"], 40
@@ -455,6 +664,9 @@ async def memory_overview(
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
+        name = str(d.get("Name") or "")
+        if allowed_names is not None and name not in allowed_names:
+            continue
         used_s, _, limit_s = d.get("MemUsage", "").partition(" / ")
         used = _parse_size(used_s)
         limit = _parse_size(limit_s)
@@ -462,7 +674,7 @@ async def memory_overview(
         has_limit = bool(limit) and (not host_total_bytes or limit < host_total_bytes * 0.98)
         containers.append(
             {
-                "name": d.get("Name"),
+                "name": name,
                 "mem_mb": round(used / 1024 / 1024, 1),
                 "limit_mb": round(limit / 1024 / 1024, 1) if has_limit else None,
                 "pct_of_limit": round(used / limit * 100, 1) if has_limit and limit else None,
@@ -486,7 +698,7 @@ async def create_network(
             name=req.name,
             driver=req.driver,
             internal=req.internal,
-            labels=req.labels,
+            labels=_with_org_labels(req.labels, org_id),
             options=req.options,
         )
         return result.model_dump()
@@ -502,6 +714,15 @@ async def delete_network(
 ) -> None:
     """Delete a docker network."""
     try:
+        items = await asyncio.to_thread(docker_network_list)
+        networks = [_dump(n) for n in items]
+        match = next((n for n in networks if _resource_name(n) == network_id), None)
+        if match is not None:
+            _authorize_labeled_resource(
+                match, org_id=org_id, user=user, resource="network", action="delete"
+            )
+        elif not _is_owner(user, org_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner break-glass required")
         await asyncio.to_thread(docker_network_delete, network_id=network_id)
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
@@ -519,7 +740,7 @@ async def create_volume(
             docker_volume_create,
             name=req.name,
             driver=req.driver,
-            labels=req.labels,
+            labels=_with_org_labels(req.labels, org_id),
             driver_opts=req.driver_opts,
         )
         return result.model_dump()
@@ -571,7 +792,7 @@ async def delete_image(
     force: bool = Query(default=False),
     node_id: UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+    user: UserContext = Depends(require_min_role(Role.OWNER)),
 ) -> dict[str, Any]:
     """Delete an image from the target daemon. operator+ required."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
@@ -589,9 +810,9 @@ async def system_prune(
     volumes: bool = Query(default=False, description="Also prune unused volumes"),
     node_id: UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db_conn),
-    user: UserContext = Depends(require_permission(Permission.TRIGGER_AUTOHEAL)),
+    user: UserContext = Depends(require_min_role(Role.OWNER)),
 ) -> dict[str, Any]:
-    """Reclaim space (dangling images, stopped containers, optionally volumes)."""
+    """Reclaim space (dangling images, stopped containers, optionally volumes). owner-only."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
         result = await asyncio.to_thread(
@@ -615,7 +836,8 @@ async def list_networks(
     """List docker networks on the target daemon. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        return await asyncio.to_thread(docker_network_list, **_hostkw(docker_host))
+        items = await asyncio.to_thread(docker_network_list, **_hostkw(docker_host))
+        return _filter_labeled_resources(items, org_id=org_id, user=user, resource="network")
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -630,7 +852,8 @@ async def list_volumes(
     """List docker volumes on the target daemon. viewer+ can read."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
-        return await asyncio.to_thread(docker_volume_list, **_hostkw(docker_host))
+        items = await asyncio.to_thread(docker_volume_list, **_hostkw(docker_host))
+        return _filter_labeled_resources(items, org_id=org_id, user=user, resource="volume")
     except OprimError as exc:
         raise HTTPException(status_code=_502, detail=str(exc)) from exc
 
@@ -647,6 +870,15 @@ async def delete_volume(
     """Delete a docker volume from the target daemon. operator+ required."""
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        items = await asyncio.to_thread(docker_volume_list, **_hostkw(docker_host))
+        volumes = [_dump(v) for v in items]
+        match = next((v for v in volumes if _resource_name(v) == name), None)
+        if match is not None:
+            _authorize_labeled_resource(
+                match, org_id=org_id, user=user, resource="volume", action="delete"
+            )
+        elif not _is_owner(user, org_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner break-glass required")
         return await asyncio.to_thread(
             docker_volume_delete, name=name, force=force, **_hostkw(docker_host)
         )
@@ -671,6 +903,13 @@ async def exec_container(
     """
     docker_host = await _resolve_docker_host(conn, org_id, node_id)
     try:
+        await _inspect_container_authorized(
+            container=container,
+            org_id=org_id,
+            user=user,
+            docker_host=docker_host,
+            action="exec",
+        )
         result = await asyncio.to_thread(
             docker_container_exec,
             container_id=container,
@@ -758,43 +997,11 @@ async def container_terminal(
 ) -> None:
     """Interactive container terminal (WebSocket + docker exec)."""
     # 1. Validate token AND authorize. A WS cannot carry an Authorization header,
-    #    so we verify the token query-param manually — but must still enforce the
-    #    same authz as the REST exec endpoint, not just signature validity:
-    #    holder must present a valid *access* token, be a member of org_id, and
-    #    be admin+ (mirrors exec_container's require_min_role(ADMIN) — an interactive
-    #    shell is a host-operator capability, not an on-call operator one).
-    #    NOTE: container_name is not yet scoped to org_id (containers are global on
-    #    the platform daemon in this design). Cross-tenant container ownership
-    #    enforcement is tracked separately; the admin+ gate limits the blast radius
-    #    to trusted org admins in the meantime.
-    try:
-        payload = jwt_verify_hs256(
-            token=token,
-            secret=get_settings().jwt_secret,
-            check_exp=True,
-        )
-    except Exception:
+    #    so the query-param token is verified manually, including the same immediate
+    #    DB revocation semantics as HTTP auth (users.token_epoch + is_active).
+    user = await _ws_user(token, org_id, Role.ADMIN)
+    if user is None:
         await websocket.close(code=1008)  # Policy Violation
-        return
-
-    if payload.get("type") != "access":
-        await websocket.close(code=1008)
-        return
-
-    membership = next(
-        (o for o in payload.get("orgs", []) if o.get("org_id") == str(org_id)),
-        None,
-    )
-    if membership is None:
-        await websocket.close(code=1008)  # not a member of this org
-        return
-    try:
-        role = Role(membership["role"])
-    except (KeyError, ValueError):
-        await websocket.close(code=1008)
-        return
-    if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[Role.ADMIN]:
-        await websocket.close(code=1008)  # interactive shell requires admin+
         return
 
     await websocket.accept()
@@ -809,6 +1016,13 @@ async def container_terminal(
         try:
             client = docker.DockerClient(base_url=settings.docker_host)
             container = client.containers.get(container_name)
+            _authorize_labeled_resource(
+                dict(container.attrs or {}),
+                org_id=org_id,
+                user=user,
+                resource="container",
+                action="terminal",
+            )
         except docker.errors.NotFound:
             await websocket.send_text(
                 json.dumps({"type": "error", "data": f"Container '{container_name}' not found"})
@@ -875,31 +1089,51 @@ async def container_terminal(
             await asyncio.gather(read_docker(), read_ws())
         finally:
             sock.close()
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.close()
-            except Exception:
-                pass
     finally:
         if client is not None:
             client.close()
 
 
-def _ws_authorize(token: str, org_id: UUID, min_role: Role) -> bool:
-    """Validate a WS access token and enforce membership + min role. Returns ok."""
+async def _ws_user(token: str, org_id: UUID, min_role: Role) -> UserContext | None:
+    """Validate a WS access token with the same revocation semantics as HTTP auth."""
     try:
         payload = jwt_verify_hs256(token=token, secret=get_settings().jwt_secret, check_exp=True)
     except Exception:  # noqa: BLE001
-        return False
+        return None
     if payload.get("type") != "access":
-        return False
+        return None
     membership = next((o for o in payload.get("orgs", []) if o.get("org_id") == str(org_id)), None)
     if membership is None:
-        return False
+        return None
     try:
         role = Role(membership["role"])
     except (KeyError, ValueError):
-        return False
-    return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[min_role]
+        return None
+    if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[min_role]:
+        return None
+
+    try:
+        user_id = UUID(payload["sub"])
+        async with get_pool().acquire() as conn:
+            db_epoch = await conn.fetchval(
+                "SELECT token_epoch FROM users WHERE id = $1 AND is_active", user_id
+            )
+    except Exception:  # noqa: BLE001 — fail closed for break-glass WS auth
+        log.exception("ws_auth_db_check_failed")
+        return None
+    if db_epoch is None or payload.get("epoch") != db_epoch:
+        return None
+
+    try:
+        orgs = [
+            OrgInToken(org_id=UUID(o["org_id"]), slug=o.get("slug", ""), role=o["role"])
+            for o in payload.get("orgs", [])
+        ]
+    except (KeyError, ValueError, TypeError):
+        return None
+    return UserContext(user_id=user_id, email=str(payload.get("email") or ""), orgs=orgs)
 
 
 @router.websocket("/host-terminal")
@@ -917,7 +1151,7 @@ async def host_terminal(
     """
     from aegis.server.services import host_shell  # noqa: PLC0415
 
-    if not _ws_authorize(token, org_id, Role.OWNER):
+    if await _ws_user(token, org_id, Role.OWNER) is None:
         await websocket.close(code=1008)  # Policy Violation
         return
 

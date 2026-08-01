@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import stat
+import tarfile
 import uuid
+import zipfile
 from collections.abc import Generator
 from pathlib import Path
 
@@ -13,6 +16,8 @@ from fastapi.testclient import TestClient
 from aegis.server.api.routers import files as files_router
 from aegis.server.auth.dependencies import OrgInToken, UserContext, get_current_user
 from aegis.server.runtime import config as cfg
+from aegis.server.services import files as filesvc
+from aegis.server.services.files import PathNotAllowed
 
 _ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
 _USER = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -152,3 +157,43 @@ def test_disabled_when_no_roots(client: TestClient, monkeypatch: pytest.MonkeyPa
     # an actual operation is rejected as unavailable
     r = client.get(f"{_base()}/list", params={"path": "/tmp"})
     assert r.status_code == 503
+
+
+def test_compress_directory_skips_symlink_escape(root: Path) -> None:
+    outside = root.parent / "outside-secret.txt"
+    outside.write_text("secret")
+    src = root / "src"
+    src.mkdir()
+    (src / "safe.txt").write_text("safe")
+    (src / "leak.txt").symlink_to(outside)
+
+    dest = root / "bundle.zip"
+    filesvc.compress([str(src)], str(dest))
+
+    with zipfile.ZipFile(dest) as z:
+        names = set(z.namelist())
+        assert "src/safe.txt" in names
+        assert "src/leak.txt" not in names
+
+
+def test_extract_tar_rejects_symlink_member(root: Path) -> None:
+    archive = root / "evil.tar"
+    with tarfile.open(archive, "w") as t:
+        info = tarfile.TarInfo("link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "/etc/passwd"
+        t.addfile(info)
+
+    with pytest.raises(PathNotAllowed):
+        filesvc.extract(str(archive), str(root / "out"))
+
+
+def test_extract_zip_rejects_symlink_member(root: Path) -> None:
+    archive = root / "evil.zip"
+    info = zipfile.ZipInfo("link")
+    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr(info, "/etc/passwd")
+
+    with pytest.raises(PathNotAllowed):
+        filesvc.extract(str(archive), str(root / "out"))

@@ -236,7 +236,11 @@ class TestViewerRole:
 
     def test_viewer_can_inspect_container(self, client: TestClient) -> None:
         result = mock.MagicMock()
-        result.model_dump.return_value = {"container_id": "x", "state": "running"}
+        result.model_dump.return_value = {
+            "container_id": "x",
+            "state": "running",
+            "labels": {"aegis.org": str(_ORG)},
+        }
         with mock.patch(
             "aegis.server.api.routers.docker.docker_container_inspect", return_value=result
         ):
@@ -289,8 +293,16 @@ class TestOperatorRole:
     def test_operator_can_start_container(self, client: TestClient) -> None:
         result = mock.MagicMock()
         result.model_dump.return_value = {"success": True}
-        with mock.patch(
-            "aegis.server.api.routers.docker.docker_container_start", return_value=result
+        inspect = mock.MagicMock()
+        inspect.model_dump.return_value = {"container_id": "x", "labels": {"aegis.org": str(_ORG)}}
+        with (
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_inspect",
+                return_value=inspect,
+            ),
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_start", return_value=result
+            ),
         ):
             r = client.post(f"/api/v1/orgs/{_ORG}/docker/containers/nginx/start")
         assert r.status_code == 200

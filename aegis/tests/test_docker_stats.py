@@ -59,11 +59,23 @@ def _mock_stats() -> MagicMock:
     return s
 
 
+def _mock_inspect() -> MagicMock:
+    r = MagicMock()
+    r.model_dump.return_value = {"container_id": "myapp", "labels": {"aegis.org": str(_ORG)}}
+    return r
+
+
 def test_stats_returns_cpu_mem_net(client: TestClient) -> None:
     """Stats endpoint returns CPU%, Mem MB, Net I/O via oprim."""
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_stats",
-        return_value=_mock_stats(),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_stats",
+            return_value=_mock_stats(),
+        ),
     ):
         resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/myapp/stats")
 
@@ -79,9 +91,15 @@ def test_stats_container_not_found(client: TestClient) -> None:
     """Stats for nonexistent container returns 502."""
     from oprim._exceptions import OprimError
 
-    with mock.patch(
-        "aegis.server.api.routers.docker.docker_container_stats",
-        side_effect=OprimError("not found"),
+    with (
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_inspect",
+            return_value=_mock_inspect(),
+        ),
+        mock.patch(
+            "aegis.server.api.routers.docker.docker_container_stats",
+            side_effect=OprimError("not found"),
+        ),
     ):
         resp = client.get(f"/api/v1/orgs/{_ORG}/docker/containers/ghost/stats")
 

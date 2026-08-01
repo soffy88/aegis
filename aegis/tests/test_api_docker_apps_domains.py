@@ -299,9 +299,17 @@ class TestDockerRouter:
     def test_logs_oprim_error_502(self, docker_client: TestClient) -> None:
         from oprim._exceptions import OprimError
 
-        with mock.patch(
-            "aegis.server.api.routers.docker.docker_container_logs",
-            side_effect=OprimError("not found"),
+        inspect = mock.MagicMock()
+        inspect.model_dump.return_value = _INSPECT_DATA
+        with (
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_inspect",
+                return_value=inspect,
+            ),
+            mock.patch(
+                "aegis.server.api.routers.docker.docker_container_logs",
+                side_effect=OprimError("not found"),
+            ),
         ):
             r = docker_client.get(f"/api/v1/orgs/{_ORG}/docker/containers/missing/logs")
         assert r.status_code == 502
