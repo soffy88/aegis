@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import asyncpg
 
@@ -33,7 +33,7 @@ _RECENT_ACTIONS: list[datetime] = []
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _rate_limited(now: datetime, *, max_actions: int, window_seconds: int) -> bool:

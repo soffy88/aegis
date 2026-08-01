@@ -56,7 +56,7 @@ class Node:
             cpus=row["cpus"],
             memory_bytes=row["memory_bytes"],
             registered_at=row["registered_at"],
-            last_seen=row["last_seen"] if "last_seen" in row else None,
+            last_seen=row.get("last_seen"),
         )
 
     def to_dict(self) -> dict[str, Any]:

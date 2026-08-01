@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 # 悄悄撑大、限流形同虚设。
 _gate: asyncio.BoundedSemaphore | None = None
 _gate_size: int | None = None
-_holders: dict[str, "Lease"] = {}
+_holders: dict[str, Lease] = {}
 _expiry_tasks: dict[str, asyncio.Task[None]] = {}
 
 

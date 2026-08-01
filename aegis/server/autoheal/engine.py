@@ -34,8 +34,8 @@ from aegis_autoheal_sdk import (
     ServiceInfo,
     Severity,
 )
-from omodul.rollback_app import RollbackAppConfig, RollbackAppInput, rollback_app
 from obase.docker import docker_container_restart
+from omodul.rollback_app import RollbackAppConfig, RollbackAppInput, rollback_app
 from oprim import http_request_once
 from oskill import circuit_breaker_check, diagnose_pattern_match
 
@@ -83,7 +83,7 @@ class AegisAutoHealContext(AutoHealContext):
         env: Severity,
         trace_id: str,
         docker_host: str = "unix:///var/run/docker.sock",
-    ):
+    ) -> None:
         self._service = service
         self._alert_payload = alert_payload
         self._env = env

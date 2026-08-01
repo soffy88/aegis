@@ -82,9 +82,11 @@ def _probe_cert(domain: str) -> dict[str, Any]:
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((domain, 443), timeout=6) as sock:
-            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
-                der = ssock.getpeercert(binary_form=True)
+        with (
+            socket.create_connection((domain, 443), timeout=6) as sock,
+            ctx.wrap_socket(sock, server_hostname=domain) as ssock,
+        ):
+            der = ssock.getpeercert(binary_form=True)
         cert = x509.load_der_x509_certificate(der)  # type: ignore[arg-type]
         not_after = cert.not_valid_after_utc
         days_left = (not_after - _dt.datetime.now(_dt.UTC)).days

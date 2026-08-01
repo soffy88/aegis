@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from aegis_autoheal_sdk import ActionResultStatus, AutoHealContext, ServiceInfo, Severity
-
 from aegis_plugins.plugins.http_management import (
     HealthcheckExternalPlugin,
     ReloadConfigPlugin,

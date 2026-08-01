@@ -16,9 +16,10 @@ Runs background loops:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ def _jittered(interval: float) -> float:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # §4.2/§6: 各编排循环每轮 tick 更新存活时刻(self-metrics 时间戳);_deadman_loop 据此评估卡死。
@@ -330,12 +331,13 @@ async def _retention_loop() -> None:
 
     retention_prune/disk_usage 是 sync oprim 原语(psycopg/os.statvfs)→ 走 to_thread 不阻塞事件循环。
     单条 prune 失败不阻断其它条目;缺 psycopg 等致命错整体降级但不崩循环。"""
+    from oprim import disk_usage, retention_prune  # noqa: PLC0415
+
     from aegis.server.persistence.retention import (  # noqa: PLC0415
         RETENTION,
         STORAGE_GUARD_PERCENT,
     )
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
-    from oprim import disk_usage, retention_prune  # noqa: PLC0415
 
     await asyncio.sleep(random.uniform(60, 120))
     while True:
@@ -402,8 +404,9 @@ async def _rollup_loop() -> None:
     是 sync psycopg → to_thread。"""
     from datetime import timedelta  # noqa: PLC0415
 
-    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
     from oprim import metric_downsample_rollup  # noqa: PLC0415
+
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
 
     await asyncio.sleep(random.uniform(90, 150))
     while True:
@@ -490,9 +493,10 @@ async def _deadman_loop() -> None:
     - 外部(L1):仅当所有循环健康时才向 cfg.deadman_heartbeat_url 发心跳;任一卡死则**抑制**心跳
       → 外部 watcher 超时告警("谁看门人":aegis 自身失能由平台外部发现,不自证清白)。
     URL 空 = 外部死人禁用(degraded,仅内部 error 日志)。heartbeat_emit 是 sync → to_thread。"""
-    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
     from oprim import heartbeat_emit  # noqa: PLC0415
     from oskill.deadman_evaluate import deadman_evaluate  # noqa: PLC0415
+
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
 
     await asyncio.sleep(random.uniform(45, 75))  # 让各循环有时间首轮 tick
     while True:
@@ -600,8 +604,9 @@ async def _acquire_loop_runner_role() -> Any | None:
 
     Returns 持有的连接(赢得角色)或 None(未拿到 → 本实例只跑 API)。
     """
-    from aegis.server.persistence import get_pool  # noqa: PLC0415
     from oprim import pg_advisory_lock_plan  # noqa: PLC0415
+
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
 
     plan = pg_advisory_lock_plan(name=_LOOP_RUNNER_ROLE)
     try:
@@ -651,20 +656,17 @@ async def _cron_main(alerter: Any | None) -> None:
             return_exceptions=True,
         )
     finally:
-        from aegis.server.persistence import get_pool  # noqa: PLC0415
         from oprim import pg_advisory_lock_plan  # noqa: PLC0415
 
-        try:
+        from aegis.server.persistence import get_pool  # noqa: PLC0415
+
+        with contextlib.suppress(Exception):
             await runner_conn.fetchval(
                 "SELECT pg_advisory_unlock($1)",
                 pg_advisory_lock_plan(name=_LOOP_RUNNER_ROLE).key,
             )
-        except Exception:  # noqa: BLE001
-            pass
-        try:
+        with contextlib.suppress(Exception):
             await get_pool().release(runner_conn)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def start_orchestration_crons(alerter: Any | None = None) -> asyncio.Task:

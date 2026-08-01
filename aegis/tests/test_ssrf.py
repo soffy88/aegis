@@ -17,9 +17,8 @@ def _result(is_safe: bool, reason: str = "") -> SimpleNamespace:
 def test_guard_external_blocks_private() -> None:
     with mock.patch.object(
         ssrf, "url_safety_check", return_value=_result(False, "is_private_blocked")
-    ) as chk:
-        with pytest.raises(ssrf.SSRFBlocked):
-            ssrf.guard_external("http://10.0.0.5/hook")
+    ) as chk, pytest.raises(ssrf.SSRFBlocked):
+        ssrf.guard_external("http://10.0.0.5/hook")
     # strict preset: loopback + private both blocked
     assert chk.call_args.kwargs["block_private"] is True
     assert chk.call_args.kwargs["block_loopback"] is True
@@ -42,15 +41,15 @@ def test_guard_scrape_allows_private_but_blocks_metadata() -> None:
 
     with mock.patch.object(
         ssrf, "url_safety_check", return_value=_result(False, "is_link_local_blocked")
-    ):
-        with pytest.raises(ssrf.SSRFBlocked):
-            ssrf.guard_scrape("http://169.254.169.254/latest/meta-data/")
+    ), pytest.raises(ssrf.SSRFBlocked):
+        ssrf.guard_scrape("http://169.254.169.254/latest/meta-data/")
 
 
 def test_url_safety_error_is_wrapped() -> None:
-    with mock.patch.object(ssrf, "url_safety_check", side_effect=ssrf.URLSafetyError("boom")):
-        with pytest.raises(ssrf.SSRFBlocked):
-            ssrf.guard_external("http://[::bad")
+    with mock.patch.object(
+        ssrf, "url_safety_check", side_effect=ssrf.URLSafetyError("boom")
+    ), pytest.raises(ssrf.SSRFBlocked):
+        ssrf.guard_external("http://[::bad")
 
 
 def test_channel_send_guards_user_url() -> None:
@@ -63,7 +62,7 @@ def test_channel_send_guards_user_url() -> None:
             "aegis.server.lib.ssrf.url_safety_check",
             return_value=_result(False, "is_loopback_blocked"),
         ),
+        pytest.raises(ssrf.SSRFBlocked),
     ):
-        with pytest.raises(ssrf.SSRFBlocked):
-            channels._send("webhook", {"url": "http://127.0.0.1:2019/config"}, "hi")
+        channels._send("webhook", {"url": "http://127.0.0.1:2019/config"}, "hi")
     _httpx.post.assert_not_called()  # blocked before any request

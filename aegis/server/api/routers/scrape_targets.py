@@ -6,6 +6,7 @@ pulls them into agent_metrics. viewer+ can list; operator+ can manage.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import urllib.parse
@@ -31,10 +32,8 @@ def _validate_scrape_url(v: str) -> str:
         raise ValueError("url must include a host")
     # Scrape targets are intentionally internal (localhost exporters, private IPs),
     # so we do NOT block private ranges — only reject obviously invalid hosts.
-    try:
+    with contextlib.suppress(ValueError):
         ipaddress.ip_address(host)  # ok if it parses; non-IP hostnames also fine
-    except ValueError:
-        pass
     return v
 
 

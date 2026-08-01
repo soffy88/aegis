@@ -36,10 +36,9 @@ async def test_retention_loop_prunes_every_registered_table():
     sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     with (
         patch("asyncio.to_thread", side_effect=fake_to_thread),
-        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._retention_loop()
+        await cron._retention_loop()
 
     prune_calls = [c for c in calls if c[0] == "retention_prune"]
     assert len(prune_calls) == len(RETENTION)  # 每张登记表都被 prune
@@ -62,10 +61,9 @@ async def test_storage_guard_breach_logs_warning():
     with (
         patch("asyncio.to_thread", side_effect=fake_to_thread),
         patch("asyncio.sleep", sleep_mock),
-        patch.object(cron.log, "warning") as m_warn,
+        patch.object(cron.log, "warning") as m_warn,pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._retention_loop()
+        await cron._retention_loop()
 
     assert any("storage_guard_breach" in str(c.args) for c in m_warn.call_args_list)
 
@@ -86,10 +84,9 @@ async def test_retention_prune_error_does_not_abort_loop():
     sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     with (
         patch("asyncio.to_thread", side_effect=fake_to_thread),
-        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._retention_loop()
+        await cron._retention_loop()
 
     # 首表抛错后,其余表仍尝试 + 存储守卫仍执行
     assert seen.count("retention_prune") == len(RETENTION)

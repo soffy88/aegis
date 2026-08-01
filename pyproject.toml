@@ -133,4 +133,12 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ANN", "PT", "SIM"]
-ignore = ["ANN401", "B008"]
+ignore = ["ANN401", "B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests favour readability and fixture ergonomics over exhaustive annotations.
+"aegis/tests/**/*.py" = ["ANN", "PT018", "PT019", "PT022", "PT028"]
+"aegis-agent/tests/**/*.py" = ["ANN", "PT018", "PT019", "PT022", "PT028"]
+"aegis-plugins/tests/**/*.py" = ["ANN", "PT018", "PT019", "PT022", "PT028"]
+# FastAPI Depends(...) signatures look like pytest parameters with defaults to Ruff's PT028.
+"aegis/server/api/routers/*.py" = ["PT028"]

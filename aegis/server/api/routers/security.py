@@ -11,7 +11,6 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 
 from aegis.server.auth.dependencies import UserContext
 from aegis.server.auth.rbac import Permission, require_permission

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,13 +19,16 @@ from aegis.server.schemas.release_gate import (
     ReleaseGateResponse,
 )
 
+if TYPE_CHECKING:
+    from aegis.server.engines.webhook_dispatcher import WebhookDispatcher
+
 router = APIRouter(
     prefix="/api/v1/orgs/{org_id}/projects/{project_id}/release-gates",
     tags=["release-gates"],
 )
 
 
-def _build_webhook_dispatcher(conn: asyncpg.Connection):
+def _build_webhook_dispatcher(conn: asyncpg.Connection) -> WebhookDispatcher:
     """WebhookDispatcher bound to this request's conn, so gate decisions emit
     release.approved/rejected events (delivered by the cron delivery loop)."""
     from aegis.server.engines.webhook_dispatcher import WebhookDispatcher

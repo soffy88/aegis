@@ -38,10 +38,9 @@ async def _run_one_deadman_iter(settings, to_thread_fn):
     with (
         patch("aegis.server.runtime.config.get_settings", return_value=settings),
         patch("asyncio.to_thread", side_effect=to_thread_fn),
-        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._deadman_loop()
+        await cron._deadman_loop()
 
 
 @pytest.mark.asyncio

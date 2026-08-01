@@ -8,8 +8,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
-from oprim import url_safety_check
-from oprim import URLSafetyError
+from oprim import URLSafetyError, url_safety_check
 from pydantic import BaseModel, Field
 
 from aegis.server.api.deps import get_db_conn

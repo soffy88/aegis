@@ -102,6 +102,7 @@ async def test_rca_requires_human_stops_chain() -> None:
 async def test_brain_does_not_call_omodul_directly() -> None:
     """brain.py only calls dispatcher.invoke, never imports omodul directly."""
     import inspect
+
     import aegis.server.orchestration.brain as brain_mod
 
     source = inspect.getsource(brain_mod)

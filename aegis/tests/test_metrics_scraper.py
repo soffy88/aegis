@@ -45,9 +45,8 @@ async def test_scrape_url_parses_samples() -> None:
 
 @pytest.mark.asyncio
 async def test_scrape_url_raises_on_non_200() -> None:
-    with _httpx_returning("nope", status_code=503):
-        with pytest.raises(ValueError, match="HTTP 503"):
-            await metrics_scraper.scrape_url("http://x/metrics")
+    with _httpx_returning("nope", status_code=503), pytest.raises(ValueError, match="HTTP 503"):
+        await metrics_scraper.scrape_url("http://x/metrics")
 
 
 @pytest.mark.asyncio

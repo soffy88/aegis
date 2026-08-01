@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from aegis.server.services import secrets_vault
 from aegis.server.runtime.config import AegisSettings
+from aegis.server.services import secrets_vault
 
 
 def test_warns_once_when_no_dedicated_master_key(caplog):

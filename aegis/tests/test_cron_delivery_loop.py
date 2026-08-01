@@ -7,7 +7,6 @@ the per-tick batch cap, and is registered in the cron gather set.
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -59,9 +58,8 @@ async def test_delivery_loop_drains_until_empty():
 
     with _patch_pool(), patch.object(
         cron, "_build_webhook_dispatcher", return_value=dispatcher
-    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep):
-        with pytest.raises(_StopLoop):
-            await cron._delivery_loop()
+    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep), pytest.raises(_StopLoop):
+        await cron._delivery_loop()
 
     assert dispatcher.deliver_batch.await_count == 3  # drained until empty
 
@@ -83,9 +81,8 @@ async def test_delivery_loop_respects_batch_cap():
 
     with _patch_pool(), patch.object(
         cron, "_build_webhook_dispatcher", return_value=dispatcher
-    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep):
-        with pytest.raises(_StopLoop):
-            await cron._delivery_loop()
+    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep), pytest.raises(_StopLoop):
+        await cron._delivery_loop()
 
     # bounded by the per-tick cap, not infinite
     assert dispatcher.deliver_batch.await_count == cron._DELIVERY_DRAIN_BATCHES

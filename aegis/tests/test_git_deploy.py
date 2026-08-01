@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -35,9 +36,8 @@ async def test_build_and_deploy_happy_path(tmp_path):
     def fake_clone(cmd, **kw):
         # git clone <...> dest → create the dest dir with a Dockerfile
         dest = cmd[-1]
-        import os
-        os.makedirs(dest, exist_ok=True)
-        open(os.path.join(dest, "Dockerfile"), "w").write("FROM alpine\n")
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        Path(dest, "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
         return mock.MagicMock(returncode=0, stderr="", stdout="")
 
     with (
@@ -67,20 +67,22 @@ async def test_build_fails_without_dockerfile(tmp_path):
         os.makedirs(cmd[-1], exist_ok=True)  # no Dockerfile
         return mock.MagicMock(returncode=0, stderr="", stdout="")
 
-    with mock.patch("subprocess.run", side_effect=fake_clone):
-        with pytest.raises(RuntimeError, match="no Dockerfile"):
-            await gd.build_and_deploy_from_git(
-                repo_url="https://h/r.git", branch=None, app_name="x", subdir=None,
-                ports=None, env=None, docker_host="unix:///x", build_root=str(tmp_path))
+    with mock.patch("subprocess.run", side_effect=fake_clone), pytest.raises(
+        RuntimeError, match="no Dockerfile"
+    ):
+        await gd.build_and_deploy_from_git(
+            repo_url="https://h/r.git", branch=None, app_name="x", subdir=None,
+            ports=None, env=None, docker_host="unix:///x", build_root=str(tmp_path))
 
 
 @pytest.mark.asyncio
 async def test_clone_failure_raises(tmp_path):
-    with mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=128, stderr="not found", stdout="")):
-        with pytest.raises(RuntimeError, match="git clone failed"):
-            await gd.build_and_deploy_from_git(
-                repo_url="https://h/r.git", branch=None, app_name="x", subdir=None,
-                ports=None, env=None, docker_host="unix:///x", build_root=str(tmp_path))
+    with mock.patch(
+        "subprocess.run", return_value=mock.MagicMock(returncode=128, stderr="not found", stdout="")
+    ), pytest.raises(RuntimeError, match="git clone failed"):
+        await gd.build_and_deploy_from_git(
+            repo_url="https://h/r.git", branch=None, app_name="x", subdir=None,
+            ports=None, env=None, docker_host="unix:///x", build_root=str(tmp_path))
 
 
 # ---- router ----

@@ -632,11 +632,11 @@ async def _dispatch_upgrade(
     project_id: uuid.UUID | None,
 ) -> dict[str, Any]:
     """Invoke omodul.upgrade_self_hosted_app via the dispatcher (mirrors _run_install)."""
+    import redis.asyncio as aioredis  # noqa: PLC0415
+
     from aegis.server.dispatch.budget_tracker import BudgetTracker  # noqa: PLC0415
     from aegis.server.dispatch.dedup_cache import DedupCache  # noqa: PLC0415
     from aegis.server.dispatch.omodul_dispatcher import OmodulDispatcher  # noqa: PLC0415
-
-    import redis.asyncio as aioredis  # noqa: PLC0415
 
     cfg = get_settings()
     redis_client = aioredis.from_url(cfg.redis_url)

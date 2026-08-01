@@ -13,8 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from obase import ProviderRegistry
 
-from aegis.server.exceptions import AegisError, QuotaExceededError
-
 from aegis.server.api.routers import (
     alert_fired,
     alert_rules,
@@ -27,53 +25,54 @@ from aegis.server.api.routers import apps as apps_router
 from aegis.server.api.routers import audit as audit_router
 from aegis.server.api.routers import auth as auth_router
 from aegis.server.api.routers import autoheal as autoheal_router
+from aegis.server.api.routers import autoheal_policies as autoheal_policies_router
+from aegis.server.api.routers import backup_storage as backup_storage_router
 from aegis.server.api.routers import backups as backups_router
 from aegis.server.api.routers import brain as brain_router
-from aegis.server.api.routers import backup_storage as backup_storage_router
-from aegis.server.api.routers import databases as databases_router
-from aegis.server.api.routers import firewall as firewall_router
-from aegis.server.api.routers import storage as storage_router
 from aegis.server.api.routers import channels as channels_router
 from aegis.server.api.routers import correlation as correlation_router
-from aegis.server.api.routers import k8s as k8s_router
-from aegis.server.api.routers import profiling as profiling_router
-from aegis.server.api.routers import loki as loki_router
-from aegis.server.api.routers import security as security_router
-from aegis.server.api.routers import status_components as status_components_router
-from aegis.server.api.routers import slo as slo_router
-from aegis.server.api.routers import telemetry as telemetry_router
-from aegis.server.api.routers import websites as websites_router
-from aegis.server.api.routers import publish as publish_router
-from aegis.server.api.routers import remote_access as remote_access_router
+from aegis.server.api.routers import databases as databases_router
 from aegis.server.api.routers import docker as docker_router
-from aegis.server.api.routers import file_share_public as file_share_public_router
-from aegis.server.api.routers import files as files_router
 from aegis.server.api.routers import (
     edge as edge_router,
 )
 from aegis.server.api.routers import envelope as envelope_router
+from aegis.server.api.routers import file_share_public as file_share_public_router
+from aegis.server.api.routers import files as files_router
+from aegis.server.api.routers import firewall as firewall_router
+from aegis.server.api.routers import git_deploy as git_deploy_router
+from aegis.server.api.routers import gpu_lock as gpu_lock_router
 from aegis.server.api.routers import incidents as incidents_router
 from aegis.server.api.routers import invite as invite_router
+from aegis.server.api.routers import k8s as k8s_router
+from aegis.server.api.routers import loki as loki_router
 from aegis.server.api.routers import metrics as metrics_router
 from aegis.server.api.routers import nodes as nodes_router
-from aegis.server.api.routers import gpu_lock as gpu_lock_router
 from aegis.server.api.routers import ollama_gateway as ollama_gateway_router
 from aegis.server.api.routers import oncall as oncall_router
 from aegis.server.api.routers import orgs as orgs_router
+from aegis.server.api.routers import profiling as profiling_router
 from aegis.server.api.routers import projects as projects_router
-from aegis.server.api.routers import remediation as remediation_router
-from aegis.server.api.routers import autoheal_policies as autoheal_policies_router
-from aegis.server.api.routers import stale_tasks as stale_tasks_router
-from aegis.server.api.routers import git_deploy as git_deploy_router
-from aegis.server.api.routers import scrape_targets as scrape_targets_router
-from aegis.server.api.routers import uptime_targets as uptime_targets_router
-from aegis.server.api.routers import secrets as secrets_router
-from aegis.server.api.routers import status_page as status_page_router
+from aegis.server.api.routers import publish as publish_router
 from aegis.server.api.routers import release_gates as release_gates_router
+from aegis.server.api.routers import remediation as remediation_router
+from aegis.server.api.routers import remote_access as remote_access_router
 from aegis.server.api.routers import runbooks as runbooks_router
+from aegis.server.api.routers import scrape_targets as scrape_targets_router
+from aegis.server.api.routers import secrets as secrets_router
+from aegis.server.api.routers import security as security_router
+from aegis.server.api.routers import slo as slo_router
+from aegis.server.api.routers import stale_tasks as stale_tasks_router
+from aegis.server.api.routers import status_components as status_components_router
+from aegis.server.api.routers import status_page as status_page_router
+from aegis.server.api.routers import storage as storage_router
 from aegis.server.api.routers import store as store_router
+from aegis.server.api.routers import telemetry as telemetry_router
+from aegis.server.api.routers import uptime_targets as uptime_targets_router
 from aegis.server.api.routers import users as users_router
 from aegis.server.api.routers import webhook_subscriptions as webhook_subscriptions_router
+from aegis.server.api.routers import websites as websites_router
+from aegis.server.exceptions import AegisError, QuotaExceededError
 from aegis.server.middleware.rate_limit import AuthRateLimitMiddleware
 from aegis.server.middleware.request_id import RequestIDMiddleware
 from aegis.server.middleware.security_headers import SecurityHeadersMiddleware
@@ -251,9 +250,9 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
             from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
             from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
-            from aegis.server.edge.caddy import init_caddy_edge  # noqa: PLC0415
             from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
             from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
+            from aegis.server.edge.caddy import init_caddy_edge  # noqa: PLC0415
             from aegis.server.services.runbook import load_runbooks  # noqa: PLC0415
             from aegis.server.services.runbook_indexer import index_runbooks  # noqa: PLC0415
 

@@ -57,9 +57,8 @@ async def test_list_models_success():
 @pytest.mark.asyncio
 async def test_list_models_unreachable_raises_upstream_error():
     ctx, _ = _mock_client(raise_exc=httpx.ConnectError("refused"))
-    with patch("httpx.AsyncClient", return_value=ctx):
-        with pytest.raises(gw.GatewayUpstreamError):
-            await gw.list_models(base_url="http://ollama:11434")
+    with patch("httpx.AsyncClient", return_value=ctx), pytest.raises(gw.GatewayUpstreamError):
+        await gw.list_models(base_url="http://ollama:11434")
 
 
 @pytest.mark.asyncio
@@ -92,14 +91,15 @@ async def test_generate_upstream_http_error():
     err = httpx.HTTPStatusError("boom", request=MagicMock(), response=resp)
     ctx, client = _mock_client()
     client.post = AsyncMock(side_effect=err)
-    with patch("httpx.AsyncClient", return_value=ctx):
-        with pytest.raises(gw.GatewayUpstreamError) as exc_info:
-            await gw.generate(
-                base_url="http://ollama:11434",
-                payload={"model": "m", "prompt": "p"},
-                max_concurrency=1,
-                queue_timeout_sec=5,
-            )
+    with patch("httpx.AsyncClient", return_value=ctx), pytest.raises(
+        gw.GatewayUpstreamError
+    ) as exc_info:
+        await gw.generate(
+            base_url="http://ollama:11434",
+            payload={"model": "m", "prompt": "p"},
+            max_concurrency=1,
+            queue_timeout_sec=5,
+        )
     assert exc_info.value.status_code == 500
 
 

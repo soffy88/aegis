@@ -29,7 +29,8 @@ def _kube() -> dict[str, Any] | None:
     path = get_settings().kubeconfig
     if not path or not os.path.exists(path):
         return None
-    cfg = yaml.safe_load(open(path))
+    with open(path, encoding="utf-8") as kubeconfig:
+        cfg = yaml.safe_load(kubeconfig)
     ctx_name = cfg.get("current-context")
     ctx = next(c["context"] for c in cfg["contexts"] if c["name"] == ctx_name)
     cluster = next(c["cluster"] for c in cfg["clusters"] if c["name"] == ctx["cluster"])

@@ -21,7 +21,7 @@ def _cfg(**over) -> AegisSettings:
 @pytest.fixture(autouse=True)
 def _reset_warn():
     embeddings._warned = False
-    yield
+    return
 
 
 @pytest.mark.parametrize("provider", ["fts", "none", "", "lexical"])

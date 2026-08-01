@@ -22,10 +22,9 @@ async def test_rollup_loop_calls_downsample_with_expected_args():
     sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     with (
         patch("asyncio.to_thread", side_effect=fake_to_thread),
-        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._rollup_loop()
+        await cron._rollup_loop()
 
     assert captured["fn"] == "metric_downsample_rollup"
     assert captured["source_table"] == "agent_metrics"
@@ -44,10 +43,9 @@ async def test_rollup_error_does_not_crash_loop():
     with (
         patch("asyncio.to_thread", side_effect=fake_to_thread),
         patch("asyncio.sleep", sleep_mock),
-        patch.object(cron.log, "warning") as m_warn,
+        patch.object(cron.log, "warning") as m_warn,pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._rollup_loop()
+        await cron._rollup_loop()
     assert any("metric_rollup_error" in str(c.args) for c in m_warn.call_args_list)
 
 

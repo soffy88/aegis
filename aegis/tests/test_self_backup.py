@@ -106,10 +106,9 @@ async def test_self_backup_loop_runs_when_due(tmp_path):
     with (
         patch("aegis.server.runtime.config.get_settings", return_value=_cfg(tmp_path)),
         patch("asyncio.to_thread", side_effect=fake_to_thread),
-        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await cron._self_backup_loop()
+        await cron._self_backup_loop()
 
     assert "run_self_backup" in calls and "prune_self_backups" in calls
     cron._last_self_backup = None

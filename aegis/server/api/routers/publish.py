@@ -18,7 +18,7 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -35,6 +35,9 @@ from aegis.server.services import cloudflare
 from aegis.server.services.secrets_vault import reveal_secret
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from aegis.server.edge.caddy import CaddyEdge
 
 router = APIRouter(prefix="/api/v1/orgs/{org_id}/publish", tags=["publish"])
 
@@ -58,7 +61,7 @@ def _root_domain(domain: str) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else domain
 
 
-def _edge():
+def _edge() -> CaddyEdge:
     edge = get_caddy_edge()
     if edge is None:
         raise HTTPException(_503, "CaddyEdge not initialized — check caddy_admin_url config")
