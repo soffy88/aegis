@@ -38,7 +38,9 @@ services:
       AEGIS_DOCKER_HOST: unix:///var/run/docker.sock
 
       # === Caddy 反代管理 ===
-      AEGIS_CADDY_ADMIN_URL: http://aegis-caddy:2019
+      # Caddy Admin API is bound to a static IP on the private internal-only
+      # aegis-caddy-admin network, not to shared app networks.
+      AEGIS_CADDY_ADMIN_URL: http://172.30.201.2:2019
       # 与 aegis-cloudflared 用的同一个 token —— "Publish" 功能用它解码出
       # account_id/tunnel_id 调 Cloudflare API，不需要额外配置。
       AEGIS_CLOUDFLARED_TOKEN: ${CLOUDFLARED_TOKEN:-}
@@ -73,6 +75,9 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AEGIS_BACKUP_S3_REGION: ${AEGIS_BACKUP_S3_REGION:-us-east-1}
+      AEGIS_BACKUP_WEBDAV_URL: ${AEGIS_BACKUP_WEBDAV_URL:-}
+      AEGIS_BACKUP_WEBDAV_USER: ${AEGIS_BACKUP_WEBDAV_USER:-}
+      AEGIS_BACKUP_WEBDAV_PASSWORD: ${AEGIS_BACKUP_WEBDAV_PASSWORD:-}
 
       # === 邮件 (Resend, 可选) ===
       AEGIS_RESEND_API_KEY: ${AEGIS_RESEND_API_KEY:-}
@@ -81,6 +86,8 @@ services:
       # === 自监控 ===
       AEGIS_SENTRY_ENABLED: ${AEGIS_SENTRY_ENABLED:-false}
       AEGIS_SENTRY_DSN: ${AEGIS_SENTRY_DSN:-}
+      AEGIS_TELEMETRY_INGEST_KEY: ${AEGIS_TELEMETRY_INGEST_KEY:-}
+      AEGIS_DEADMAN_HEARTBEAT_URL: ${AEGIS_DEADMAN_HEARTBEAT_URL:-}
 
       # === 可观测性外置组件 (helios-net 内直连) ===
       AEGIS_LOKI_URL: ${AEGIS_LOKI_URL:-http://aegis-loki:3100}
@@ -90,6 +97,7 @@ services:
       # === Plan (自托管默认 enterprise) ===
       AEGIS_SELF_HOSTED_MODE: "true"
       AEGIS_DEFAULT_ORG_PLAN: enterprise
+      AEGIS_SECRETS_MASTER_KEY: ${AEGIS_SECRETS_MASTER_KEY:-}
 
       # === Agent token ===
       AEGIS_AGENT_TOKEN: ${AEGIS_AGENT_TOKEN:-}
@@ -115,9 +123,11 @@ services:
       # Extra stack networks so the uptime prober can reach those stacks' health
       # endpoints (read-only HTTP probing). Reversible: remove a network to stop
       # probing that stack internally.
-      - helios-net
-      - stratum-net
-      - hevi-cftunnel_default
+      helios-net:
+      stratum-net:
+      hevi-cftunnel_default:
+      aegis-caddy-admin:
+        ipv4_address: 172.30.201.3
 
     # host.docker.internal isn't set up by default on Linux Docker — needed to reach
     # the host-level systemd `ollama` service (GPU, port 11434) for the LLM gateway.
@@ -220,9 +230,11 @@ services:
       - aegis-caddy-data:/data
       - aegis-caddy-config:/config
     networks:
-      - helios-net
-      - stratum-net
-      - hevi-cftunnel_default
+      helios-net:
+      stratum-net:
+      hevi-cftunnel_default:
+      aegis-caddy-admin:
+        ipv4_address: 172.30.201.2
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
       interval: 60s
@@ -408,3 +420,8 @@ networks:
     external: true
   hevi-cftunnel_default:
     external: true
+  aegis-caddy-admin:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.201.0/29

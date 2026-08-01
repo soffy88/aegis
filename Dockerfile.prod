@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv==0.5.0
 
 COPY pyproject.toml uv.lock README.md ./
-RUN --mount=type=secret,id=ssh_key \
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
-    cp /run/secrets/ssh_key /root/.ssh/id_ed25519 && chmod 600 /root/.ssh/id_ed25519 && \
-    printf 'Host github.com\n  StrictHostKeyChecking no\n  IdentitiesOnly yes\n  IdentityFile /root/.ssh/id_ed25519\n' > /root/.ssh/config && chmod 600 /root/.ssh/config && \
+RUN --mount=type=ssh \
+    mkdir -p -m 0700 /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts && \
     uv sync --frozen --no-cache --no-dev && \
     rm -rf /root/.ssh
 
@@ -22,7 +21,7 @@ FROM python:3.14-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 ca-certificates libmagic1 ffmpeg && \
+    libpq5 postgresql-client ca-certificates libmagic1 ffmpeg && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 

@@ -44,7 +44,8 @@ docker exec -it platform-postgres psql -U helios -c "CREATE DATABASE aegis;"
 ### 3. 构建镜像
 
 ```bash
-# 后端（需要 SSH key 访问私有依赖）
+# 后端（需要 BuildKit SSH agent 访问私有依赖；Dockerfile.prod 使用 --mount=type=ssh，
+# 不把私钥作为 build secret 复制进镜像层）
 DOCKER_BUILDKIT=1 docker build \
   --ssh default \
   -f Dockerfile.prod \
@@ -74,7 +75,7 @@ docker compose -f docker-compose.aegis.yml ps
 # 检查后端日志（迁移是否成功）
 docker logs aegis-backend --tail 50
 
-# 测试 API — 后端/caddy 端口都不发布到宿主，所以用以下两种之一：
+# 测试 API — 后端只绑定宿主回环 8010，应用入口经 Cloudflare Tunnel 到 Caddy 8080：
 # ① 端到端（经 Cloudflare 隧道 → caddy:8080 → backend）
 curl https://aegis.kanpan.co/api/v1/health
 # ② 本机内部（容器内直连后端，含 DB 就绪探针）
@@ -85,6 +86,9 @@ docker exec aegis-backend python -c \
 > 拓扑：`cloudflared → aegis-caddy:8080 → /api/* 到 aegis-backend、其余到 aegis-console`。
 > caddy 另发布 `:80/:443` 仅用于运行时动态添加的客户网站/域名路由（自动 HTTPS），
 > **应用本身不在 :80**，因此 `curl http://localhost/...` 不会命中 API。
+> Caddy Admin API 固定绑定在 `aegis-caddy-admin` 内部网络的 `172.30.201.2:2019`，
+> 只有 `aegis-backend` 连接该网络并通过 `AEGIS_CADDY_ADMIN_URL=http://172.30.201.2:2019`
+> 调用；不要改回 `0.0.0.0:2019` 或共享业务网络地址。
 
 ## 日常运维
 

@@ -1,5 +1,7 @@
 {
-    admin 0.0.0.0:2019
+    # Bind the Admin API only to the dedicated internal compose network. Do not
+    # listen on 0.0.0.0, because aegis-caddy also joins shared app networks.
+    admin 172.30.201.2:2019
     # Automatic HTTPS (Let's Encrypt) is enabled for host-matched website routes
     # added at runtime via the admin API. The :8080 tunnel entry below has no
     # hostname, so nothing here triggers cert issuance for the console itself
