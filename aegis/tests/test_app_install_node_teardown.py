@@ -49,7 +49,7 @@ def _project_row():
 
 def test_uninstall_stops_container_before_delete():
     conn = mock.AsyncMock()
-    conn.fetchrow.return_value = {"app_name": "grafana"}
+    conn.fetchrow.return_value = {"app_name": "grafana", "domain": None}
     with mock.patch("obase.docker.docker_container_stop") as stop:
         r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}")
     assert r.status_code == 204
@@ -102,3 +102,61 @@ def test_install_unknown_node_404():
             json={"app_name": "nginx", "install_dir": "/opt/n", "node_id": str(_NODE)},
         )
     assert r.status_code == 404
+
+
+def test_uninstall_removes_container_and_keeps_volumes_by_default():
+    """A1: stop is not enough — the container must also be rm'd, but the app's
+    data volumes survive unless the caller explicitly asks to purge them."""
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = {"app_name": "grafana", "domain": None}
+    with (
+        mock.patch("obase.docker.docker_container_stop"),
+        mock.patch("obase.docker.docker_container_remove") as rm,
+    ):
+        r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}")
+    assert r.status_code == 204
+    assert rm.call_args.kwargs["container_id"] == "grafana"
+    assert rm.call_args.kwargs["force"] is True
+    assert rm.call_args.kwargs["remove_volumes"] is False
+
+
+def test_uninstall_purge_volumes_opt_in():
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = {"app_name": "grafana", "domain": None}
+    with (
+        mock.patch("obase.docker.docker_container_stop"),
+        mock.patch("obase.docker.docker_container_remove") as rm,
+    ):
+        r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}?purge_volumes=true")
+    assert r.status_code == 204
+    assert rm.call_args.kwargs["remove_volumes"] is True
+
+
+def test_uninstall_removes_caddy_route_when_domain_bound():
+    """A1: a bound domain must stop pointing at the removed app."""
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = {"app_name": "grafana", "domain": "g.example.com"}
+    edge = mock.MagicMock()
+    with (
+        mock.patch("obase.docker.docker_container_stop"),
+        mock.patch("obase.docker.docker_container_remove"),
+        mock.patch("aegis.server.edge.caddy.get_caddy_edge", return_value=edge),
+    ):
+        r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}")
+    assert r.status_code == 204
+    from aegis.server.edge.caddy import org_route_id
+
+    edge.remove_route.assert_called_once_with(org_route_id(_ORG, "g.example.com"))
+
+
+def test_uninstall_survives_docker_failure():
+    """Teardown is best-effort: a broken daemon must not strand the DB row."""
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = {"app_name": "grafana", "domain": None}
+    with (
+        mock.patch("obase.docker.docker_container_stop", side_effect=RuntimeError("down")),
+        mock.patch("obase.docker.docker_container_remove", side_effect=RuntimeError("down")),
+    ):
+        r = _client(conn).delete(f"/api/v1/orgs/{_ORG}/apps/{_APP}")
+    assert r.status_code == 204
+    assert conn.execute.await_args.args[0].startswith("DELETE FROM installed_apps")

@@ -29,7 +29,7 @@
 |---|------|------|---------|
 | 1 | Webhook 投递循环 (cron 接 deliver_batch) | ✅ done | 3 单测绿;cron 注册 `_delivery_loop` |
 | 2 | 告警规则评估 loop | ✅ done | 4 单测绿;`_alert_eval_loop` + `run_alert_evaluation` |
-| 3 | 闭环自愈接线 (AutoHealEngine + aegis_alert_events) | 🟡 partial | 写入器+repo+retry 已实;**自动执行策略→Needs Human** |
+| 3 | 闭环自愈接线 (AutoHealEngine + aegis_alert_events) | ✅ done | 后续已落 `autoheal_policies` 表 + `run_autoheal_policies` cron(默认 dry_run,真实重启需显式 dry_run=false)+ 抖动/限流/kill-switch |
 | 4 | 备份执行修复 (result key + 上传) | 🟡 done | router 读对 findings 键+honor status;⚠️真 S3 上传仍是 omodul 桩 |
 | 5 | 应用升级/回滚真实执行 | 🟡 done | 接真 omodul dispatch(升级)+rollback_app(回滚);⚠️真 Docker 不可验,upgrade 缺 image 追踪(见 #19) |
 | 6 | 安装路径修正 (catalog image/target_host/domain) | ✅ done | catalog image 解析+settings docker/caddy host+domain 回写 |
@@ -40,7 +40,7 @@
 | 7 | causal-chain 跨租户泄露 (安全) | ✅ done | 查询锚点+递归均按 org_id 过滤;2 单测 |
 | 8 | 节点注册修复 + 心跳 + agent 通信 | 🟡 done | 注册改真 SQL upsert+token;migr 033 加 last_seen/agent_token;heartbeat 端点+status 派生;⚠️edge agent 进程本体属独立二进制不在仓 |
 | 9 | 多主机容器控制 (透传 docker_host) | ✅ done | 全部容器端点接受 node_id→解析 docker_host_url 透传 oprim;默认用 settings.docker_host |
-| 10 | RBAC 撤权即时生效 (回查 DB) | 🚨 human | 需 auth 核心改造(token_epoch 或每请求回查),风险高,见 Needs Human |
+| 10 | RBAC 撤权即时生效 (回查 DB) | ✅ done | 已按方案② 落地:users.token_epoch 签进 JWT,`get_current_user` 每请求比对 DB 且要求 is_active;角色变更/移除/停用/改密即时失效。test_token_epoch.py |
 | 11 | 镜像管理域 (list/pull/delete/prune) | 🟡 done | 4 端点接 oprim+node 路由+RBAC;⚠️真 Docker 不可验;前端页待补 |
 | 12 | 网络/卷管理补全 (list/delete) | 🟡 done | networks/volumes list + volume delete 端点;⚠️真 Docker 不可验;前端页待补 |
 | 13 | RAG embedding provider 注册 | 🟡 done | 启动时对未注册 provider 大声告警(原静默用 stub);注册真模型属 deploy 配置 |
@@ -52,16 +52,16 @@
 |---|------|------|---------|
 | 16 | Release Gate 接入执行 | 🟡 done | decide 端点注入 webhook_dispatcher→发 release.approved/rejected;自愈门已在 engine 内 create_gate+wait |
 | 17 | 审计覆盖补全 | ✅ done | org.created/ownership_transferred、project.created/archived、invite.created/accepted 补写 audit_log |
-| 18 | 域名 DNS/TLS + 收敛双路径 | 🚨 design | 收敛 domains.py→CaddyEdge 可做;DNS provider + 证书状态属外部基建,单独排期 |
+| 18 | 域名 DNS/TLS + 收敛双路径 | ✅ done | domains.py 已收敛到 CaddyEdge(org_route_id 同一命名);新增 `GET /domains/certificates` 实测 :443 证书签发者/到期/剩余天数。DNS 托管仍在注册商侧(设计选择) |
 | 19 | 应用多级版本溯源 | ✅ done | migr 034 app_version_history 表+升级/回滚记录+GET /history 端点 |
-| 20 | 日志聚合 | 🚨 design | 需引入 Loki/ES + 采集 + 查询 UI,多日基建,单独排期 |
-| 21 | 链路追踪 | 🚨 design | 需 OTel collector + 埋点 + trace 视图,多日基建,单独排期 |
+| 20 | 日志聚合 | ✅ done | Loki + promtail(loki-config/promtail-config + compose)+ `routers/loki.py` 查询 API,console 有日志页 |
+| 21 | 链路追踪 | ✅ done | OTLP/HTTP ingest(`routers/telemetry.py`,ingest key 鉴权、prod fail-closed)+ 每服务 RED / trace 瀑布 / 依赖图;otel-collector 走 `--profile tracing` |
 | 22 | Secrets KDF 加固 | ✅ done | 未设独立 master key 时大声告警(派生自 jwt_secret 无域分离);改派生会孤立已存密文,故走告警+建议轮转 |
 
 ## 🔧 审计外补强 (follow-up round — 实现中发现/延伸)
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 卸载销毁容器 (A1) | 🟡 done | uninstall 先 best-effort stop 容器(按 app_name)再删行;⚠️无 rm 原语(3O 库未暴露),容器/卷/Caddy 路由完整清理待补 |
+| 卸载销毁容器 (A1) | ✅ done | compose 应用 `compose down`;单容器 stop→`docker_container_remove(force)`;绑定域名时同步删 Caddy 路由;卷默认保留,`?purge_volumes=true` 才销毁数据。全程 best-effort(daemon 挂了也能删记录)。test_app_install_node_teardown.py (+4) |
 | 安装目标节点 (A2) | ✅ done | InstallRequest 加 node_id→解析节点 host/docker_host_url 传 target_host/docker_host;未知 node 404 |
 | 应用 image 追踪 (B1) | ✅ done | migr 035 installed_apps.image;安装时落库(解析自 catalog) |
 | domains edge URL 配置化 (A5) | ✅ done | 硬编码 http://localhost:8081 → settings.domain_edge_url |
@@ -92,8 +92,4 @@
 - **#3 自愈写入器 (partial)** — `AutoHealEventRepository` 给孤儿表 `aegis_alert_events` 加真实写入器;告警 fire 时写事件(severity/source/reason/value),autoheal 看板/stats 从此有数据;retry 端点去掉 TODO 桩,改为真实 `mark_handled`。**自动 signal→remediation 执行未做**:需先有 autoheal 策略模型(无表/无 pattern/无已装插件)+ 是否允许无人值守真实动作的安全决策 → 见 Needs Human。test_autoheal_event_repository.py (4)
 
 ## 🚨 Needs Human / 设计排期 (大型基建,非本次可验)
-- **#18 域名 DNS/TLS + 双路径收敛**:`domains.py` 仅存串并 best-effort 转发到硬编码 `http://localhost:8081`,而 UI 实际走 `edge.py`/CaddyEdge。收敛(让 domains.py 复用 CaddyEdge)是有界改动;但 DNS 记录托管 + TLS 证书状态回显需接外部 DNS provider / ACME,属基建,单独排期。
-- **#20 日志聚合**:无任何日志聚合(仅 Sentry 式错误 ingest)。需引入 Loki/Elasticsearch + 容器日志采集 + 查询 UI,多日工作。
-- **#21 链路追踪**:无 OTel/Jaeger(trace_id 仅关联串)。需 OpenTelemetry collector + 服务埋点 + trace 视图,多日工作。
-- **#10 RBAC 撤权即时生效 (auth 核心决策)**:角色取自 JWT claim(dependencies.py:59-69),降权/移除滞后一个 access TTL。两种正解都需谨慎:① 每个受保护请求回查 DB membership(每请求一次查询的成本 + 所有 require_permission 端点行为变更);② 给 users 加 `token_epoch`,签进 JWT、在 get_current_user 比对 DB、角色变更时自增(立即失效全部 token,但需迁移+改 token 铸造+每请求查 users)。两者都触碰认证核心、测试面广,鲁莽落地有安全风险。建议走②,单独排期 + 安全评审。我未在长会话末仓促改认证。
-- **#3 自愈自动执行策略 (产品+安全决策)**:闭环自愈的"自动执行"缺一个把告警信号映射到补救动作的策略模型 —— 当前无 `autoheal_policies` 表、无 `diagnose_pattern_match` 用的 pattern 库、无已安装插件(entry_points 为空)。`AutoHealEngine.run()` 真实但需 `action_plan{patterns, plugin_name, rollback...}`。两个决策需人定:① 策略模型形态(每规则/每应用映射哪个插件+pattern);② 是否允许无人值守执行**真实破坏性动作**(重启/回滚容器),还是默认 `autoheal_dry_run=true` 仅建议。我已把可安全交付的部分(事件写入/看板/retry)做完,未擅自实现自动重启生产容器。
+- (本轮清空 — 原 #3/#10/#18/#20/#21 已在后续迭代落地,详见上表)

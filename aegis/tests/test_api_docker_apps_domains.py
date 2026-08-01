@@ -372,7 +372,7 @@ class TestAppsRouter:
 
     def test_uninstall_ok(self, apps_client: TestClient, apps_conn: mock.AsyncMock) -> None:
         # uninstall now looks up the app (app_name) before best-effort teardown.
-        apps_conn.fetchrow.return_value = {"app_name": "homeassistant"}
+        apps_conn.fetchrow.return_value = {"app_name": "homeassistant", "domain": None}
         r = apps_client.delete(f"/api/v1/orgs/{_ORG}/apps/{_APP_ID}")
         assert r.status_code == 204
 

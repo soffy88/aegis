@@ -441,18 +441,25 @@ async def install_app_endpoint(
 async def uninstall_app(
     org_id: uuid.UUID,
     install_id: uuid.UUID,
+    purge_volumes: bool = Query(
+        default=False,
+        description="Also delete the app's anonymous volumes (destroys its data).",
+    ),
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.INSTALL_APP)),
 ) -> None:
     """Uninstall an app. member+ required.
 
-    Best-effort stops the running container before dropping the row so uninstall
-    doesn't leave it running (the old code only deleted the DB record). The
-    container is named after the app instance. Full removal (docker rm + volume +
-    Caddy route cleanup) needs an uninstall primitive the 3O libs don't expose yet.
+    Full best-effort teardown before dropping the DB row:
+      * compose apps: ``docker compose down`` (containers + network)
+      * single-container apps: stop, then ``docker rm`` the container
+      * the app's Caddy route (if a domain was bound) is removed from the edge
+    Named/anonymous volumes are kept unless ``purge_volumes=true`` — data loss is
+    opt-in, never a side effect of uninstalling. Every step is best-effort so a
+    partially-broken host still lets the record be removed.
     """
     row = await conn.fetchrow(
-        "SELECT app_name FROM installed_apps WHERE id = $1 AND org_id = $2",
+        "SELECT app_name, domain FROM installed_apps WHERE id = $1 AND org_id = $2",
         install_id,
         org_id,
     )
@@ -483,6 +490,31 @@ async def uninstall_app(
             )
         except Exception as exc:  # noqa: BLE001 — teardown is best-effort
             log.warning("uninstall_stop_failed app=%s err=%s", row["app_name"], exc)
+        # ...then actually remove it, so a reinstall of the same app doesn't hit
+        # a name conflict with the dead container.
+        try:
+            from obase.docker import docker_container_remove  # noqa: PLC0415
+
+            await asyncio.to_thread(
+                docker_container_remove,
+                container_id=row["app_name"],
+                force=True,
+                remove_volumes=purge_volumes,
+                docker_host=dh,
+            )
+        except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+            log.warning("uninstall_rm_failed app=%s err=%s", row["app_name"], exc)
+
+    # Drop the public route so the domain stops resolving to a dead upstream.
+    if row["domain"]:
+        try:
+            from aegis.server.edge.caddy import get_caddy_edge, org_route_id  # noqa: PLC0415
+
+            edge = get_caddy_edge()
+            if edge is not None:
+                await asyncio.to_thread(edge.remove_route, org_route_id(org_id, row["domain"]))
+        except Exception as exc:  # noqa: BLE001 — teardown is best-effort
+            log.warning("uninstall_route_remove_failed domain=%s err=%s", row["domain"], exc)
 
     await conn.execute(
         "DELETE FROM installed_apps WHERE id = $1 AND org_id = $2",
