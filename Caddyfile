@@ -20,6 +20,20 @@
     handle /studio* {
         reverse_proxy mneme-studio:3001
     }
+    # Fay 数字人大脑 WebSocket + 音频文件
+    handle /fay-ws {
+        reverse_proxy mneme-fay:10002 {
+            header_up Connection "Upgrade"
+            header_up Upgrade "websocket"
+        }
+    }
+    handle /fay-audio/* {
+        route {
+            uri strip_prefix /fay-audio
+            uri replace / /audio/
+            reverse_proxy mneme-fay:5000
+        }
+    }
     handle {
         reverse_proxy mneme-web:3000
     }
@@ -35,10 +49,16 @@
     reverse_proxy stratum-web:3000
 }
 
-# AII (Stratum 子产品)
+# AII Note / AII 前端 (Stratum 子产品)
+# 公网: aegis-prod tunnel → 本端口 → aii-web:3101
+#   · https://aiinote.com
+#   · https://www.aiinote.com
+#   · https://aii.kanpan.co  (legacy)
+# API 反代由 aii-web (Next rewrites) 处理，勿在此拆 /api（易把其它页打挂）
 :8086 {
     reverse_proxy aii-web:3101
 }
+
 
 # Hevi (hevi.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
 # 前端用同源 /api/* 调后端，跟 hevi 自己原来独立 tunnel 的路径拆分逻辑保持一致，
