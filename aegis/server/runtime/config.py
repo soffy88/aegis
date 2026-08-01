@@ -297,11 +297,6 @@ class AegisSettings(BaseSettings):
         description="Per-metric breach thresholds (%). JSON env override supported.",
     )
 
-    # === AppStore (S2) ===
-    appstore_catalog_url: str = ""
-    appstore_health_retries: int = 5
-    appstore_skip_pull: bool = False
-
     # === AutoHeal Engine (S2) ===
     autoheal_circuit_breaker_enabled: bool = True
     autoheal_diagnose_min_confidence: float = 0.5

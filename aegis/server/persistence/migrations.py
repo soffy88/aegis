@@ -1178,6 +1178,31 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_ddns_configs_org ON ddns_configs (org_id);
         """,
     ),
+    (
+        "054_auth_events",
+        """
+        -- Account-level security events (login / logout / password change / refresh
+        -- reuse). These are deliberately NOT in audit_log: that table is org-scoped
+        -- (org_id NOT NULL) while a failed login has no org context, and the actor
+        -- may not even be a known user. Keeping them separate also means the login
+        -- trail survives org deletion.
+        CREATE TABLE IF NOT EXISTS auth_events (
+            id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+            email      TEXT,                 -- recorded even when no user matched
+            event      TEXT NOT NULL,        -- login.succeeded | login.failed | logout | password.changed | register
+            ip         TEXT,
+            user_agent TEXT,
+            detail     TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_events_user_ts
+            ON auth_events (user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_auth_events_email_ts
+            ON auth_events (email, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_auth_events_ts ON auth_events (created_at DESC);
+        """,
+    ),
 ]
 
 

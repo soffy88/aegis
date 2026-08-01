@@ -248,7 +248,6 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             register_providers(cfg)
 
             from aegis.server.alert.platform_alerter import init_platform_alerter  # noqa: PLC0415
-            from aegis.server.appstore.installer import init_app_installer  # noqa: PLC0415
             from aegis.server.brain.action_planner import init_planner_service  # noqa: PLC0415
             from aegis.server.brain.rca import init_rca_service  # noqa: PLC0415
             from aegis.server.brain.triage import init_triage_service  # noqa: PLC0415
@@ -268,7 +267,6 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
             init_rca_service(cfg)
             init_planner_service(cfg)
             init_triage_service(cfg)
-            init_app_installer(cfg)
             # Initialize the CaddyEdge singleton so /edge/routes (domains page) works;
             # without this get_caddy_edge() stays None and every request 503s.
             init_caddy_edge(cfg)

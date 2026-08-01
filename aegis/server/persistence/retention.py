@@ -22,6 +22,8 @@ RETENTION: list[dict[str, object]] = [
     {"table": "incident_events", "ts_column": "created_at", "retain_days": 180},
     {"table": "event_trail", "ts_column": "ts", "retain_days": 180},  # 事件因果链
     {"table": "audit_log", "ts_column": "created_at", "retain_days": 365},  # 审计不激进删
+    # 账号级安全事件(登录/失败/登出/改密)。与审计同级不激进删,便于事后追溯撞库/异地登录。
+    {"table": "auth_events", "ts_column": "created_at", "retain_days": 365},
 ]
 
 # 外部观测栈信号 —— 保留由栈内组件执法(非本循环 prune),此处登记窗口备查(§7/C-I6)。

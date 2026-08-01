@@ -1,5 +1,8 @@
-"""AppStore service layer — oservice AppInstallerEngine assembly.
+"""AppStore service layer.
 
-S2 sprint: installer.py wires catalog_fetch + compose pipeline + caddy + health verify.
-S3 sprint: real plugin execution via aegis-plugins entry_points.
+Installation is implemented in `api/routers/apps.py` (built-in catalog under
+`aegis/server/appstore/catalog` + the `aegis-appstore` repo, executed via the
+omodul dispatcher / docker compose). The old oservice `AppInstallerEngine`
+assembly lived here but had no caller and required a remote catalog URL that is
+never configured; it was removed rather than left as a second, dead install path.
 """
