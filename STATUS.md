@@ -65,10 +65,10 @@
 | 安装目标节点 (A2) | ✅ done | InstallRequest 加 node_id→解析节点 host/docker_host_url 传 target_host/docker_host;未知 node 404 |
 | 应用 image 追踪 (B1) | ✅ done | migr 035 installed_apps.image;安装时落库(解析自 catalog) |
 | domains edge URL 配置化 (A5) | ✅ done | 硬编码 http://localhost:8081 → settings.domain_edge_url |
-| login/logout 审计 (A3) | ✅ done | migration 054 独立 `auth_events` 表(账号级,org 删除后仍留痕);login 成功/失败(未知邮箱/停用/错密码)、register、logout、改密全落库,IP 取 X-Forwarded-For 首跳;`GET /auth/events` 仅返回本人;保留 365 天。test_auth_events.py (8) |
+| login/logout 审计 (A3) | ✅ done | migration 054 独立 `auth_events` 表(账号级,org 删除后仍留痕);login 成功/失败(未知邮箱/停用/错密码)、register、logout、改密全落库,IP 取 X-Forwarded-For 首跳;`GET /auth/events` 仅返回本人;保留 365 天。test_auth_events.py (8);console 账号页新增登录活动表(失败登录标红) |
 | installer.py 死代码 (A4) | ✅ done | 决策=删除:`AppInstallerEngine` 无任何调用者且依赖从未配置的远程 catalog URL,真安装走 apps.py+omodul+内置 catalog;连同 3 个 appstore_* settings 与其测试一并移除,避免留第二条死安装路径 |
 | 告警初次 fire 带 oncall (B3) | ✅ done | evaluate_metric 初次 fire 的 webhook 也带 oncall_user_id(best-effort,不阻断 fire) |
-| metrics project 维度 (B2) | ✅ done | 决策=标签化归属:migration 055 `scrape_targets.project_id`(可空=共享基建),抓取时把 project_id 打进 `agent_metrics.tags`,告警评估按 `(project_id IS NULL OR = rule.project_id)` 过滤 → A 项目规则不再对 B 项目 series 触发;未归属数据行为完全不变(向后兼容)。test_metrics_project_scope.py (5) |
+| metrics project 维度 (B2) | ✅ done | 决策=标签化归属:migration 055 `scrape_targets.project_id`(可空=共享基建),抓取时把 project_id 打进 `agent_metrics.tags`,告警评估按 `(project_id IS NULL OR = rule.project_id)` 过滤 → A 项目规则不再对 B 项目 series 触发;未归属数据行为完全不变(向后兼容)。test_metrics_project_scope.py (5);console 新增 /scrape-targets 页可视化配置归属 |
 | 前端 镜像/网络/卷 页 (C) | ✅ done | 3 页已在 console `main`(b4ed5e5 起);另补应用详情页卸载危险区(卷销毁 opt-in + 输入应用名二次确认),vitest 89 / lint / tsc 全绿 |
 
 ## ✅ Done
