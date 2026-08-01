@@ -47,11 +47,18 @@ async def _store(
     hostname: str,
     samples: list[tuple[str, float, dict]],
     static_labels: dict,
+    project_id: object | None = None,
 ) -> int:
+    """Persist scraped samples. A target attributed to a project stamps
+    `project_id` into every sample's tags (B2), which is what lets project-scoped
+    alert rules evaluate only their own series."""
     if not samples:
         return 0
+    extra = dict(static_labels)
+    if project_id is not None:
+        extra["project_id"] = str(project_id)
     rows = [
-        (hostname, name, value, "", json.dumps({**labels, **static_labels}))
+        (hostname, name, value, "", json.dumps({**labels, **extra}))
         for name, value, labels in samples
     ]
     await conn.executemany(
@@ -69,7 +76,7 @@ async def scrape_due_targets(conn: asyncpg.Connection) -> dict[str, int]:
     abort the batch.
     """
     targets = await conn.fetch(
-        "SELECT id, name, url, interval_seconds, labels FROM scrape_targets"
+        "SELECT id, name, url, interval_seconds, labels, project_id FROM scrape_targets"
         " WHERE enabled = TRUE"
         "   AND (last_scrape_at IS NULL"
         "        OR last_scrape_at < now() - (interval_seconds * interval '1 second'))"
@@ -81,7 +88,13 @@ async def scrape_due_targets(conn: asyncpg.Connection) -> dict[str, int]:
         static_labels = t["labels"] if isinstance(t["labels"], dict) else json.loads(t["labels"])
         try:
             samples = await scrape_url(t["url"])
-            n = await _store(conn, hostname=t["name"], samples=samples, static_labels=static_labels)
+            n = await _store(
+                conn,
+                hostname=t["name"],
+                samples=samples,
+                static_labels=static_labels,
+                project_id=t.get("project_id"),
+            )
             samples_total += n
             scraped += 1
             await conn.execute(

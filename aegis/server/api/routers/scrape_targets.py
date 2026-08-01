@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from aegis.server.api.deps import get_db_conn
@@ -43,6 +43,9 @@ class ScrapeTargetCreate(BaseModel):
     interval_seconds: int = Field(default=30, ge=5, le=3600)
     labels: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
+    # Optional project attribution (B2). None = shared infra target, whose series
+    # every project's alert rules may evaluate.
+    project_id: uuid.UUID | None = None
 
     @field_validator("url")
     @classmethod
@@ -52,6 +55,7 @@ class ScrapeTargetCreate(BaseModel):
 
 class ScrapeTargetUpdate(BaseModel):
     url: str | None = Field(default=None, max_length=2000)
+    project_id: uuid.UUID | None = None
     interval_seconds: int | None = Field(default=None, ge=5, le=3600)
     labels: dict[str, str] | None = None
     enabled: bool | None = None
@@ -66,17 +70,26 @@ def _row(r: asyncpg.Record) -> dict[str, Any]:
     d = dict(r)
     d["id"] = str(d["id"])
     d["org_id"] = str(d["org_id"])
+    if d.get("project_id") is not None:
+        d["project_id"] = str(d["project_id"])
     return d
 
 
 @router.get("")
 async def list_targets(
     org_id: uuid.UUID,
+    project_id: uuid.UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db_conn),
     user: UserContext = Depends(require_permission(Permission.VIEW_EVENTS)),
 ) -> list[dict[str, Any]]:
+    """List scrape targets. `project_id` returns that project's targets plus the
+    shared (unattributed) ones, mirroring which series its alert rules can see."""
     rows = await conn.fetch(
-        "SELECT * FROM scrape_targets WHERE org_id = $1 ORDER BY name", org_id
+        "SELECT * FROM scrape_targets WHERE org_id = $1"
+        " AND ($2::uuid IS NULL OR project_id = $2 OR project_id IS NULL)"
+        " ORDER BY name",
+        org_id,
+        project_id,
     )
     return [_row(r) for r in rows]
 
@@ -90,14 +103,16 @@ async def create_target(
 ) -> dict[str, Any]:
     try:
         row = await conn.fetchrow(
-            "INSERT INTO scrape_targets (org_id, name, url, interval_seconds, labels, enabled)"
-            " VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING *",
+            "INSERT INTO scrape_targets"
+            " (org_id, name, url, interval_seconds, labels, enabled, project_id)"
+            " VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING *",
             org_id,
             body.name,
             body.url,
             body.interval_seconds,
             json.dumps(body.labels),
             body.enabled,
+            body.project_id,
         )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(

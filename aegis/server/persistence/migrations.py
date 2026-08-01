@@ -1203,6 +1203,23 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_auth_events_ts ON auth_events (created_at DESC);
         """,
     ),
+    (
+        "055_scrape_targets_project",
+        """
+        -- B2: metrics gained no project dimension while alert_rules are
+        -- project-scoped, so a rule on project A could fire on project B's series.
+        -- A target may now be attributed to a project; the scraper stamps
+        -- `project_id` into agent_metrics.tags and rule evaluation filters on it.
+        -- NULL stays "shared/infra" and remains visible to every project's rules,
+        -- which keeps all existing targets and rules behaving exactly as before.
+        ALTER TABLE scrape_targets
+            ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_scrape_targets_project
+            ON scrape_targets (project_id) WHERE project_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_agent_metrics_project_ts
+            ON agent_metrics ((tags->>'project_id'), ts DESC);
+        """,
+    ),
 ]
 
 

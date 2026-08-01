@@ -9,13 +9,17 @@ user-configured threshold rules never auto-fired (error_alerter.py noted "M2: a
 scheduler will poll"). Wired into the orchestration cron (see cron.py); the
 threshold/throttle/dedup/fire decision lives in AlertEngine — this is the driver.
 
-Metric mapping: `alert_rules.metric` is a free-text metric name and `agent_metrics`
-has no project linkage, so a rule is evaluated against the latest per-host value of
-that metric_name within a lookback window. The engine dedups host-agnostically
-(entity = project:metric), so a single representative value is fed: the worst host
-for the operator direction (max for >/>=, min for </<=, most-recent for ==). This
-gives "fire if any host breaches" semantics. Project-scoped metrics are a known
-limitation of the current agent_metrics schema, not of this loop.
+Metric mapping: `alert_rules.metric` is a free-text metric name, evaluated against
+the latest value of each series within a lookback window. The engine dedups
+host-agnostically (entity = project:metric), so a single representative value is
+fed: the worst series for the operator direction (max for >/>=, min for </<=,
+most-recent for ==). This gives "fire if any series breaches" semantics.
+
+Project scoping (B2): scrape targets may be attributed to a project, which stamps
+`project_id` into the sample's tags. A rule then only sees its own project's series
+plus unattributed ("shared infra") series — so a rule on project A can no longer
+fire on project B's containers, while every pre-existing untagged series keeps
+behaving exactly as before.
 """
 
 from __future__ import annotations
@@ -63,10 +67,12 @@ async def _current_value_for_rule(
         SELECT DISTINCT ON (hostname, tags) value
         FROM agent_metrics
         WHERE metric_name = $1 AND ts >= $2
+          AND (tags->>'project_id' IS NULL OR tags->>'project_id' = $3)
         ORDER BY hostname, tags, ts DESC
         """,
         rule.metric,
         since,
+        str(rule.project_id),
     )
     values = [r["value"] for r in rows]
     if not values:
@@ -95,10 +101,12 @@ async def _worst_series_for_rule(
         SELECT DISTINCT ON (hostname, tags) value, hostname
         FROM agent_metrics
         WHERE metric_name = $1 AND ts >= $2
+          AND (tags->>'project_id' IS NULL OR tags->>'project_id' = $3)
         ORDER BY hostname, tags, ts DESC
         """,
         rule.metric,
         since,
+        str(rule.project_id),
     )
     if not rows:
         return None
