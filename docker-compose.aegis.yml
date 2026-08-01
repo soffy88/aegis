@@ -246,7 +246,13 @@ services:
     image: cloudflare/cloudflared:2026.6.0
     container_name: aegis-cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN:?required}
+    # --protocol http2:走 HTTP/2(TCP)而非默认 QUIC(UDP)。此宿主到 Cloudflare
+    # 边缘的 UDP/QUIC 路径不稳,周期性 "failed to dial to edge with quic: no recent
+    # network activity" 导致隧道重连 → 站点周期性不通。http2 避开 UDP,稳。
+    # (2026.6.0 已从 --help 隐藏该 flag 但仍接受;TUNNEL_PROTOCOL env 已失效,必须用 flag。)
+    command: tunnel --protocol http2 --no-autoupdate run --token ${CLOUDFLARED_TOKEN:?required}
+    environment:
+      TUNNEL_EDGE_IP_VERSION: "4"
     networks:
       - helios-net
     depends_on:

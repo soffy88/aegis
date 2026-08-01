@@ -32,6 +32,7 @@ from aegis.server.api.routers import brain as brain_router
 from aegis.server.api.routers import backup_storage as backup_storage_router
 from aegis.server.api.routers import databases as databases_router
 from aegis.server.api.routers import firewall as firewall_router
+from aegis.server.api.routers import storage as storage_router
 from aegis.server.api.routers import channels as channels_router
 from aegis.server.api.routers import correlation as correlation_router
 from aegis.server.api.routers import k8s as k8s_router
@@ -43,7 +44,9 @@ from aegis.server.api.routers import slo as slo_router
 from aegis.server.api.routers import telemetry as telemetry_router
 from aegis.server.api.routers import websites as websites_router
 from aegis.server.api.routers import publish as publish_router
+from aegis.server.api.routers import remote_access as remote_access_router
 from aegis.server.api.routers import docker as docker_router
+from aegis.server.api.routers import file_share_public as file_share_public_router
 from aegis.server.api.routers import files as files_router
 from aegis.server.api.routers import (
     edge as edge_router,
@@ -377,8 +380,10 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(databases_router.router)
     app.include_router(backup_storage_router.router)
     app.include_router(firewall_router.router)
+    app.include_router(storage_router.router)
     app.include_router(websites_router.router)
     app.include_router(publish_router.router)
+    app.include_router(remote_access_router.router)
     app.include_router(telemetry_router.ingest_router)
     app.include_router(telemetry_router.router)
     app.include_router(slo_router.router)
@@ -390,6 +395,7 @@ def create_app(settings: AegisSettings | None = None) -> FastAPI:
     app.include_router(profiling_router.router)
     app.include_router(k8s_router.router)
     app.include_router(files_router.router)
+    app.include_router(file_share_public_router.router)
     app.include_router(autoheal_router.router)
     app.include_router(brain_router.router)
     app.include_router(nodes_router.router)

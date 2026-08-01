@@ -12,9 +12,31 @@
     reverse_proxy mneme-api-1:8000
 }
 
-# Mneme 前端
+# Mneme 前端 + studio + 门控工具面(S3-B 同 host 路径路由,保留前缀不 strip)
 :8083 {
-    reverse_proxy mneme-web:3000
+    handle /mcp/* {
+        reverse_proxy mneme-api-1:8000
+    }
+    handle /studio* {
+        reverse_proxy mneme-studio:3001
+    }
+    # Fay 数字人大脑 WebSocket + 音频文件
+    handle /fay-ws {
+        reverse_proxy mneme-fay:10002 {
+            header_up Connection "Upgrade"
+            header_up Upgrade "websocket"
+        }
+    }
+    handle /fay-audio/* {
+        route {
+            uri strip_prefix /fay-audio
+            uri replace / /audio/
+            reverse_proxy mneme-fay:5000
+        }
+    }
+    handle {
+        reverse_proxy mneme-web:3000
+    }
 }
 
 # Stratum API
@@ -27,10 +49,16 @@
     reverse_proxy stratum-web:3000
 }
 
-# AII (Stratum 子产品)
+# AII Note / AII 前端 (Stratum 子产品)
+# 公网: aegis-prod tunnel → 本端口 → aii-web:3101
+#   · https://aiinote.com
+#   · https://www.aiinote.com
+#   · https://aii.kanpan.co  (legacy)
+# API 反代由 aii-web (Next rewrites) 处理，勿在此拆 /api（易把其它页打挂）
 :8086 {
     reverse_proxy aii-web:3101
 }
+
 
 # Hevi (hevi.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —
 # 前端用同源 /api/* 调后端，跟 hevi 自己原来独立 tunnel 的路径拆分逻辑保持一致，
@@ -48,6 +76,13 @@
 # 前端 nginx 已同源反代 /api、/ws 到 gateway，跟 hevi 一样单端口即可，不能拆两个端口)
 :8089 {
     reverse_proxy selene-frontend-1:80
+}
+
+# Stirling-PDF (pdf.sxueji.com — 应用市场装的 app,手动发布。stirling 容器在
+# helios-net(已 network connect,原 bridge),caddy 按容器名直连 :8080。
+# 后续若改用 aegis 发布功能自动建路由,可移除此块)
+:8091 {
+    reverse_proxy stirling-pdf:8080
 }
 
 # Helivex (helivex.kanpan.co 单一 Cloudflare Tunnel public hostname 打到这个端口 —

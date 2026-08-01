@@ -2291,5 +2291,241 @@
       }
     ],
     "mounts": []
+  },
+  {
+    "slug": "vllm",
+    "name": "vLLM",
+    "description": "高性能 LLM 推理与服务引擎,提供 OpenAI 兼容 API。需 NVIDIA GPU 节点;安装后可改 --model 换模型。",
+    "icon": "🚄",
+    "version": "latest",
+    "category": "AI",
+    "image": "vllm/vllm-openai:latest",
+    "ports": [
+      {
+        "container_port": 8000,
+        "protocol": "tcp",
+        "label": "API"
+      }
+    ],
+    "env": [
+      {
+        "key": "HUGGING_FACE_HUB_TOKEN",
+        "default_value": "",
+        "description": "下载 HuggingFace 受限模型所需 token(可选)。"
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/root/.cache/huggingface",
+        "volume_name": "vllm-hf-cache"
+      }
+    ],
+    "command": [
+      "--model",
+      "Qwen/Qwen2.5-0.5B-Instruct"
+    ]
+  },
+  {
+    "slug": "llama-cpp",
+    "name": "llama.cpp",
+    "description": "在几乎任何设备上运行 GGUF 量化 LLM,内置 Web UI 与 OpenAI 兼容 /v1 接口。默认加载 gemma-3-1b。",
+    "icon": "🐫",
+    "version": "server",
+    "category": "AI",
+    "image": "ghcr.io/ggml-org/llama.cpp:server",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "Web/API"
+      }
+    ],
+    "env": [],
+    "mounts": [
+      {
+        "target": "/root/.cache/llama.cpp",
+        "volume_name": "llama-cpp-cache"
+      }
+    ],
+    "command": [
+      "-hf",
+      "ggml-org/gemma-3-1b-it-GGUF",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8080"
+    ]
+  },
+  {
+    "slug": "localai",
+    "name": "LocalAI",
+    "description": "自托管、OpenAI 兼容的本地推理平台(文本/图像/音频/向量)。AIO 镜像内置精选模型,开箱即用。",
+    "icon": "🤖",
+    "version": "latest-aio-cpu",
+    "category": "AI",
+    "image": "localai/localai:latest-aio-cpu",
+    "ports": [
+      {
+        "container_port": 8080,
+        "protocol": "tcp",
+        "label": "API/WebUI"
+      }
+    ],
+    "env": [],
+    "mounts": []
+  },
+  {
+    "slug": "bolt-diy",
+    "name": "Bolt.diy",
+    "description": "在浏览器里用 AI 全栈生成、运行、编辑与部署 Web 应用(bolt.new 社区开源版)。LLM 密钥在界面内填写。",
+    "icon": "⚡",
+    "version": "latest",
+    "category": "AI",
+    "image": "ghcr.io/stackblitz-labs/bolt.diy:latest",
+    "ports": [
+      {
+        "container_port": 5173,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "env": [
+      {
+        "key": "RUNNING_IN_DOCKER",
+        "default_value": "true",
+        "description": "标记运行于容器内。"
+      },
+      {
+        "key": "PORT",
+        "default_value": "5173",
+        "description": "应用监听端口。"
+      }
+    ],
+    "mounts": []
+  },
+  {
+    "slug": "openhands",
+    "name": "OpenHands",
+    "description": "开源 AI 软件工程师:自主读写代码、跑命令、浏览网页。需挂载 Docker socket 以自建沙箱;LLM 密钥在界面内填写。",
+    "icon": "🙌",
+    "version": "1.8",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 3000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  app:\n    image: ghcr.io/openhands/openhands:1.8\n    restart: unless-stopped\n    environment:\n      AGENT_SERVER_IMAGE_REPOSITORY: ghcr.io/openhands/agent-server\n      AGENT_SERVER_IMAGE_TAG: 1.26.0-python\n      LOG_ALL_EVENTS: \"true\"\n    ports:\n      - \"${HOST_PORT}:3000\"\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - openhands-state:/.openhands\n    extra_hosts:\n      - \"host.docker.internal:host-gateway\"\nvolumes:\n  openhands-state: {}\n",
+    "compose_env": {
+      "HOST_PORT": "18112"
+    }
+  },
+  {
+    "slug": "crawl4ai",
+    "name": "Crawl4AI",
+    "description": "面向 LLM 与 RAG 的开源网页爬取/抓取引擎,输出干净 Markdown。内置 REST API 与 /playground。",
+    "icon": "🕷️",
+    "version": "0.9.2",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 11235,
+        "protocol": "tcp",
+        "label": "API"
+      }
+    ],
+    "compose": "services:\n  app:\n    image: unclecode/crawl4ai:0.9.2\n    restart: unless-stopped\n    shm_size: 1gb\n    ports:\n      - \"${HOST_PORT}:11235\"\n",
+    "compose_env": {
+      "HOST_PORT": "18111"
+    }
+  },
+  {
+    "slug": "firecrawl",
+    "name": "Firecrawl",
+    "description": "把整站抓取并转换为 LLM-ready 数据(scrape/crawl/map/extract)。含 Playwright、Redis、RabbitMQ、Postgres。自托管默认免鉴权。",
+    "icon": "🔥",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 3002,
+        "protocol": "tcp",
+        "label": "API"
+      }
+    ],
+    "compose": "services:\n  api:\n    image: ghcr.io/firecrawl/firecrawl:latest\n    restart: unless-stopped\n    extra_hosts:\n      - \"host.docker.internal:host-gateway\"\n    environment:\n      REDIS_URL: redis://redis:6379\n      REDIS_RATE_LIMIT_URL: redis://redis:6379\n      PLAYWRIGHT_MICROSERVICE_URL: http://playwright-service:3000/scrape\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n      POSTGRES_DB: postgres\n      POSTGRES_HOST: nuq-postgres\n      POSTGRES_PORT: \"5432\"\n      USE_DB_AUTHENTICATION: \"false\"\n      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672\n      HOST: \"0.0.0.0\"\n      PORT: \"3002\"\n      ENV: local\n    depends_on:\n      redis:\n        condition: service_started\n      playwright-service:\n        condition: service_started\n      rabbitmq:\n        condition: service_healthy\n      nuq-postgres:\n        condition: service_started\n    ports:\n      - \"${HOST_PORT}:3002\"\n    command: node dist/src/harness.js --start-docker\n  playwright-service:\n    image: ghcr.io/firecrawl/playwright-service:latest\n    restart: unless-stopped\n    environment:\n      PORT: \"3000\"\n  redis:\n    image: redis:alpine\n    restart: unless-stopped\n    command: redis-server --bind 0.0.0.0\n  rabbitmq:\n    image: rabbitmq:3-management\n    restart: unless-stopped\n    command: rabbitmq-server\n    healthcheck:\n      test: [\"CMD\", \"rabbitmq-diagnostics\", \"-q\", \"check_running\"]\n      interval: 5s\n      timeout: 5s\n      retries: 5\n      start_period: 10s\n  nuq-postgres:\n    image: ghcr.io/firecrawl/nuq-postgres:latest\n    restart: unless-stopped\n    environment:\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n      POSTGRES_DB: postgres\n",
+    "compose_env": {
+      "POSTGRES_PASSWORD": "__RANDOM__",
+      "HOST_PORT": "18113"
+    }
+  },
+  {
+    "slug": "mem0",
+    "name": "Mem0 (OpenMemory)",
+    "description": "为 AI Agent 提供长期记忆层。自托管 OpenMemory MCP 服务 + Qdrant 向量库。需 OpenAI API Key。",
+    "icon": "🧠",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 8765,
+        "protocol": "tcp",
+        "label": "MCP/API"
+      }
+    ],
+    "compose": "services:\n  mem0_store:\n    image: qdrant/qdrant\n    restart: unless-stopped\n    volumes:\n      - qdrant:/qdrant/storage\n  openmemory-mcp:\n    image: mem0/openmemory-mcp:latest\n    restart: unless-stopped\n    depends_on:\n      - mem0_store\n    environment:\n      OPENAI_API_KEY: ${OPENAI_API_KEY}\n      USER: ${MEM_USER}\n    command: uvicorn main:app --host 0.0.0.0 --port 8765 --workers 4\n    ports:\n      - \"${HOST_PORT}:8765\"\nvolumes:\n  qdrant: {}\n",
+    "compose_env": {
+      "OPENAI_API_KEY": "",
+      "MEM_USER": "user",
+      "HOST_PORT": "18114"
+    },
+    "params": [
+      {
+        "key": "OPENAI_API_KEY",
+        "label": "OpenAI API Key(默认 LLM/嵌入)",
+        "type": "password"
+      },
+      {
+        "key": "MEM_USER",
+        "label": "用户名 / User ID",
+        "type": "text",
+        "default": "user"
+      }
+    ]
+  },
+  {
+    "slug": "gpt-researcher",
+    "name": "GPT Researcher",
+    "description": "自主研究 Agent,联网检索并生成带引用的研究报告(内置 Web UI)。需 OpenAI 与 Tavily API Key。",
+    "icon": "🔬",
+    "version": "latest",
+    "category": "AI",
+    "ports": [
+      {
+        "container_port": 8000,
+        "protocol": "tcp",
+        "label": "Web"
+      }
+    ],
+    "compose": "services:\n  app:\n    image: gptresearcher/gpt-researcher:latest\n    restart: unless-stopped\n    environment:\n      OPENAI_API_KEY: ${OPENAI_API_KEY}\n      TAVILY_API_KEY: ${TAVILY_API_KEY}\n      LOGGING_LEVEL: INFO\n    ports:\n      - \"${HOST_PORT}:8000\"\n    volumes:\n      - outputs:/usr/src/app/outputs\n      - logs:/usr/src/app/logs\nvolumes:\n  outputs: {}\n  logs: {}\n",
+    "compose_env": {
+      "OPENAI_API_KEY": "",
+      "TAVILY_API_KEY": "",
+      "HOST_PORT": "18115"
+    },
+    "params": [
+      {
+        "key": "OPENAI_API_KEY",
+        "label": "OpenAI API Key",
+        "type": "password"
+      },
+      {
+        "key": "TAVILY_API_KEY",
+        "label": "Tavily API Key(联网检索)",
+        "type": "password"
+      }
+    ]
   }
 ]

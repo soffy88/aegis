@@ -1130,6 +1130,54 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_published_services_org ON published_services (org_id);
         """,
     ),
+    (
+        "052_file_shares",
+        """
+        -- File manager share links: a time-limited, capability-token public
+        -- download URL for a single file under the sandboxed file_manager_roots.
+        -- The raw token is never stored — only its sha256 hash; lookups hash the
+        -- presented token. Path is re-validated against the roots at download time.
+        CREATE TABLE IF NOT EXISTS file_shares (
+            id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id         UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            token_hash     TEXT NOT NULL UNIQUE,
+            path           TEXT NOT NULL,
+            filename       TEXT NOT NULL,
+            created_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+            expires_at     TIMESTAMPTZ,
+            max_downloads  INTEGER,
+            download_count INTEGER NOT NULL DEFAULT 0,
+            revoked        BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_shares_org ON file_shares (org_id);
+        """,
+    ),
+    (
+        "053_ddns_configs",
+        """
+        -- Dynamic DNS configs (CasaOS remote-access parity). Credentials (token /
+        -- password) are NOT stored here — they live encrypted in org_secrets under
+        -- name 'ddns:<id>:secret'; this table keeps only non-secret config + last
+        -- update outcome. Refresh is via oprim.ddns_update (duckdns / dyndns2).
+        CREATE TABLE IF NOT EXISTS ddns_configs (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id          UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            provider        TEXT NOT NULL,        -- duckdns | dyndns2
+            hostname        TEXT NOT NULL,
+            username        TEXT,                 -- dyndns2 only (non-secret)
+            base_url        TEXT,                 -- dyndns2 provider override
+            enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+            last_status     TEXT,
+            last_ip         TEXT,
+            last_error      TEXT,
+            last_updated_at TIMESTAMPTZ,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, provider, hostname)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ddns_configs_org ON ddns_configs (org_id);
+        """,
+    ),
 ]
 
 
