@@ -13,10 +13,10 @@
 - 不为了"标记完成"伪造测试绿;桩/外部依赖如实标注
 
 ## 🔄 In Progress
-- (空 — 本轮 22 条已处理完)
+- (空 — 22 条主清单 + 全部 follow-up 项均已落地;Needs Human 已清空)
 
 ## 📊 收口统计
-- 测试: **696 passed** / 157 skipped (基线 658 → +38 新测试),全绿无回归
+- 测试: 后端 **1027 passed** / 166 skipped(本轮 +17:卸载 4 / auth 事件 8 / metrics 项目维度 5),前端 console **89 passed**,全绿无回归
 - 提交: 15 个原子提交(`feat/aiops-12-audit-remediation` 分支,未 push、未动 main)
 - 迁移: +2(033 节点心跳、034 应用版本历史,均幂等 ADD/CREATE IF NOT EXISTS)
 - 完成度: ✅ 完整 9(#1,2,6,7,9,15,17,19,22)· 🟡 部分/有界 7(#3,4,5,8,11,12,13,14,16)· 🚨 升级/排期 4(#10,18,20,21)
@@ -65,11 +65,11 @@
 | 安装目标节点 (A2) | ✅ done | InstallRequest 加 node_id→解析节点 host/docker_host_url 传 target_host/docker_host;未知 node 404 |
 | 应用 image 追踪 (B1) | ✅ done | migr 035 installed_apps.image;安装时落库(解析自 catalog) |
 | domains edge URL 配置化 (A5) | ✅ done | 硬编码 http://localhost:8081 → settings.domain_edge_url |
-| login/logout 审计 (A3) | 🚨 design | audit_log 为 org-scoped NOT NULL,账号级事件不适配;需独立 auth-events 表,单列设计 |
-| installer.py 死代码 (A4) | 📝 noted | 真 compose 引擎 `AppInstallerEngine` 仍无 router 调用;收敛/删除是设计取舍,未擅动(启动已 init) |
+| login/logout 审计 (A3) | ✅ done | migration 054 独立 `auth_events` 表(账号级,org 删除后仍留痕);login 成功/失败(未知邮箱/停用/错密码)、register、logout、改密全落库,IP 取 X-Forwarded-For 首跳;`GET /auth/events` 仅返回本人;保留 365 天。test_auth_events.py (8) |
+| installer.py 死代码 (A4) | ✅ done | 决策=删除:`AppInstallerEngine` 无任何调用者且依赖从未配置的远程 catalog URL,真安装走 apps.py+omodul+内置 catalog;连同 3 个 appstore_* settings 与其测试一并移除,避免留第二条死安装路径 |
 | 告警初次 fire 带 oncall (B3) | ✅ done | evaluate_metric 初次 fire 的 webhook 也带 oncall_user_id(best-effort,不阻断 fire) |
-| metrics project 维度 (B2) | 🚨 design | scrape_targets 仅 org-scoped(无 project_id),agent_metrics 也无;与 project-scoped 规则存在建模错配,属数据模型决策 |
-| 前端 镜像/网络/卷 页 (C) | 🟡 done | console 3 页(images 拉取/删除/prune、networks/volumes 列表+删除)+api-paths+i18n+nav;tsc/lint 绿;⚠️ next build 受工具链漂移阻,未跑;另 console 是独立 repo,提交在 `feat/aiops-12-docker-mgmt-ui` |
+| metrics project 维度 (B2) | ✅ done | 决策=标签化归属:migration 055 `scrape_targets.project_id`(可空=共享基建),抓取时把 project_id 打进 `agent_metrics.tags`,告警评估按 `(project_id IS NULL OR = rule.project_id)` 过滤 → A 项目规则不再对 B 项目 series 触发;未归属数据行为完全不变(向后兼容)。test_metrics_project_scope.py (5) |
+| 前端 镜像/网络/卷 页 (C) | ✅ done | 3 页已在 console `main`(b4ed5e5 起);另补应用详情页卸载危险区(卷销毁 opt-in + 输入应用名二次确认),vitest 89 / lint / tsc 全绿 |
 
 ## ✅ Done
 - **#1 Webhook 投递循环** — `_delivery_loop` (cron.py) 每 5s 调 `deliver_batch` 排干队列,带 per-tick 批次上限;复用既有重试/退避/死信。test_cron_delivery_loop.py (3)
