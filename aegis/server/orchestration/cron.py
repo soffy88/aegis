@@ -326,12 +326,52 @@ async def _anomaly_loop() -> None:
         await _tick("anomaly", _ANOMALY_INTERVAL_SEC)
 
 
+# Retention deletes run in bounded batches: the tables this prunes are the biggest
+# in the system, and one unbounded DELETE would hold a multi-GB transaction, bloat
+# WAL and stall every writer. Each batch commits on its own.
+_PRUNE_BATCH_ROWS = 50_000
+_PRUNE_MAX_BATCHES_PER_TABLE = 200  # ≤10M rows per table per tick, then wait for the next
+
+
+async def _prune_table(*, table: str, ts_column: str, retain_days: float) -> int:
+    """Delete rows older than *retain_days* from *table*, in committed batches.
+
+    Table/column names come from the in-repo RETENTION registry (never user input),
+    but they are still validated as plain identifiers so this can never become an
+    injection sink if that registry is ever fed from config.
+    """
+    for ident in (table, ts_column):
+        if not ident.replace("_", "").isalnum():
+            raise ValueError(f"unsafe identifier in retention registry: {ident!r}")
+
+    from aegis.server.persistence import get_pool  # noqa: PLC0415
+
+    sql = (
+        f"DELETE FROM {table} WHERE ctid IN ("  # noqa: S608 — identifiers validated above
+        f" SELECT ctid FROM {table} WHERE {ts_column} < now() - ($1 || ' days')::interval"
+        f" LIMIT {_PRUNE_BATCH_ROWS})"
+    )
+    total = 0
+    for _ in range(_PRUNE_MAX_BATCHES_PER_TABLE):
+        async with get_pool().acquire() as conn:
+            status = await conn.execute(sql, str(retain_days))
+        deleted = int(status.rsplit(" ", 1)[-1]) if status.startswith("DELETE") else 0
+        total += deleted
+        if deleted < _PRUNE_BATCH_ROWS:
+            break
+        await asyncio.sleep(0.1)  # breathe: never monopolize the pool
+    return total
+
+
 async def _retention_loop() -> None:
     """§7/I6: 按 retention 登记表分批删除过期遥测(有界写入者)+ 存储守卫(§7 70% 大声告警).
 
-    retention_prune/disk_usage 是 sync oprim 原语(psycopg/os.statvfs)→ 走 to_thread 不阻塞事件循环。
-    单条 prune 失败不阻断其它条目;缺 psycopg 等致命错整体降级但不崩循环。"""
-    from oprim import disk_usage, retention_prune  # noqa: PLC0415
+    删除走本进程已有的 asyncpg 连接池(`_prune_table`),不再依赖 oprim.retention_prune 的
+    psycopg 驱动 —— 生产实测该驱动未随镜像安装,导致每个表每轮都 `retention_prune_error`,
+    保留策略事实上从未生效(agent_metrics 攒到 31 天 / 1.5 亿行 / 64GB 把生产盘撑到 100%,
+    正是 §7 这个循环该防住的故障)。disk_usage 仍是 sync 原语,走 to_thread。
+    单条 prune 失败不阻断其它条目。"""
+    from oprim import disk_usage  # noqa: PLC0415
 
     from aegis.server.persistence.retention import (  # noqa: PLC0415
         RETENTION,
@@ -344,18 +384,16 @@ async def _retention_loop() -> None:
         cfg = get_settings()
         for entry in RETENTION:
             try:
-                res = await asyncio.to_thread(
-                    retention_prune,
-                    dsn=cfg.postgres_dsn,
+                deleted = await _prune_table(
                     table=str(entry["table"]),
                     ts_column=str(entry["ts_column"]),
                     retain_days=float(entry["retain_days"]),  # type: ignore[arg-type]
                 )
-                if getattr(res, "deleted_rows", 0):
+                if deleted:
                     log.info(
                         "retention_pruned table=%s rows=%d retain_days=%s",
                         entry["table"],
-                        res.deleted_rows,
+                        deleted,
                         entry["retain_days"],
                     )
             except asyncio.CancelledError:
