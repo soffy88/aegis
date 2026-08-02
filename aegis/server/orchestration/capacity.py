@@ -17,6 +17,14 @@ from aegis.server.runtime.config import get_settings
 
 log = logging.getLogger(__name__)
 
+# The forecast fits a trend per metric, so it needs a *shape* over the window, not
+# every raw point. Bucketing in Postgres keeps this loop's memory flat: the previous
+# version fetched every row in the window (10.7M rows / ~1.1GB in production), which
+# blew the container memory limit and produced a silent OOM restart loop.
+_BUCKET_MINUTES = 5
+_MAX_BUCKETS_PER_METRIC = 576  # 48h / 5min
+_MAX_METRICS = 2_000
+
 
 async def check_capacity_metrics(
     *,
@@ -37,19 +45,27 @@ async def check_capacity_metrics(
     breach_days_warn = cfg.capacity_breach_days_warn
     rows = await conn.fetch(
         """
-        SELECT metric_name, value, unit
-        FROM agent_metrics
-        WHERE ts > now() - interval '48 hours'
-        ORDER BY metric_name, ts ASC
+        SELECT metric_name,
+               avg(value) AS value,
+               min(unit)  AS unit
+          FROM agent_metrics
+         WHERE ts > now() - interval '48 hours'
+         GROUP BY metric_name, date_bin($1::interval, ts, timestamptz 'epoch')
+         ORDER BY metric_name, min(ts) ASC
         """,
+        f"{_BUCKET_MINUTES} minutes",
     )
     if not rows:
         return []
 
-    # Group samples by metric_name
+    # Group bucket averages by metric_name (already chronological per metric).
     by_metric: dict[str, list[float]] = {}
     for row in rows:
-        by_metric.setdefault(row["metric_name"], []).append(float(row["value"]))
+        if row["metric_name"] not in by_metric and len(by_metric) >= _MAX_METRICS:
+            continue  # cardinality guard: never let metric-name explosion unbound this
+        series = by_metric.setdefault(row["metric_name"], [])
+        if len(series) < _MAX_BUCKETS_PER_METRIC:
+            series.append(float(row["value"]))
 
     loop = asyncio.get_event_loop()
     breaching: list[CapacityForecastResult] = []

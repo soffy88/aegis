@@ -105,7 +105,9 @@ class TestCheckCapacityMetrics:
     @pytest.mark.asyncio
     async def test_thresholds_and_min_samples_come_from_config(self) -> None:
         conn = mock.AsyncMock()
-        conn.fetch.return_value = _metric_rows("disk_usage_percent", [10.0, 20.0, 30.0])  # 3 samples
+        conn.fetch.return_value = _metric_rows(
+            "disk_usage_percent", [10.0, 20.0, 30.0]
+        )  # 3 samples
 
         cfg = mock.MagicMock()
         cfg.capacity_min_samples = 3  # lowered so 3 samples are enough
@@ -192,3 +194,48 @@ class TestCheckCapacityMetrics:
             result = await check_capacity_metrics(conn=conn)
 
         assert len(result) == 1
+
+
+# ── memory bounds (prod OOM regression) ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_capacity_aggregates_in_postgres_not_in_python() -> None:
+    """Regression: this loop used to SELECT every raw row in the 48h window — 10.7M
+    rows / ~1.1GB in production — and silently OOM-killed the container. The window
+    must be bucketed server-side so memory stays flat regardless of ingest rate."""
+    from aegis.server.orchestration import capacity as cap
+
+    conn = mock.AsyncMock()
+    conn.fetch.return_value = []
+    await cap.check_capacity_metrics(conn=conn)
+
+    sql = conn.fetch.await_args.args[0]
+    assert "date_bin" in sql and "GROUP BY" in sql
+    assert "avg(value)" in sql
+    assert conn.fetch.await_args.args[1] == f"{cap._BUCKET_MINUTES} minutes"
+
+
+@pytest.mark.asyncio
+async def test_capacity_caps_buckets_and_metric_cardinality() -> None:
+    """Even with a pathological result set, per-metric points and metric count are capped."""
+    from aegis.server.orchestration import capacity as cap
+
+    rows = [{"metric_name": "cpu", "value": float(i), "unit": ""} for i in range(5_000)]
+    rows += [
+        {"metric_name": f"m{i}", "value": 1.0, "unit": ""} for i in range(cap._MAX_METRICS + 50)
+    ]
+    conn = mock.AsyncMock()
+    conn.fetch.return_value = rows
+
+    captured: dict[str, list[float]] = {}
+
+    def fake_forecast(*, metric_name, samples, threshold, forecast_steps):
+        captured[metric_name] = samples
+        return mock.MagicMock(will_breach_threshold=False)
+
+    with mock.patch.object(cap, "compute_capacity_forecast", side_effect=fake_forecast):
+        await cap.check_capacity_metrics(conn=conn)
+
+    assert len(captured["cpu"]) <= cap._MAX_BUCKETS_PER_METRIC
+    assert len(captured) <= cap._MAX_METRICS
