@@ -38,7 +38,8 @@ async def _run_one_deadman_iter(settings, to_thread_fn):
     with (
         patch("aegis.server.runtime.config.get_settings", return_value=settings),
         patch("asyncio.to_thread", side_effect=to_thread_fn),
-        patch("asyncio.sleep", sleep_mock),pytest.raises(asyncio.CancelledError)
+        patch("asyncio.sleep", sleep_mock),
+        pytest.raises(asyncio.CancelledError),
     ):
         await cron._deadman_loop()
 
@@ -103,3 +104,48 @@ def test_all_registered_loops_are_supervised():
     src = inspect.getsource(cron)
     ticked = set(__import__("re").findall(r'_tick\("(\w+)"', src))
     assert ticked == set(cron._SUPERVISED_LOOPS), (ticked, set(cron._SUPERVISED_LOOPS))
+
+
+# ── per-loop RSS growth observability ────────────────────────────────────────
+
+
+def test_rss_growth_logs_the_responsible_loop() -> None:
+    """A silent OOM kill (no traceback, healthcheck green) must still name a suspect."""
+    from unittest.mock import patch
+
+    from aegis.server.orchestration import cron as c
+
+    with (
+        patch.object(c, "_last_rss_bytes", 200 * 1024 * 1024),
+        patch.object(c, "_read_rss_bytes", return_value=1400 * 1024 * 1024),
+        patch.object(c.log, "warning") as warn,
+    ):
+        c._log_rss_if_grown("anomaly")
+    assert any(
+        "loop_rss_growth" in str(x.args) and "anomaly" in str(x.args) for x in warn.call_args_list
+    )
+
+
+def test_rss_growth_quiet_for_normal_fluctuation() -> None:
+    from unittest.mock import patch
+
+    from aegis.server.orchestration import cron as c
+
+    with (
+        patch.object(c, "_last_rss_bytes", 200 * 1024 * 1024),
+        patch.object(c, "_read_rss_bytes", return_value=210 * 1024 * 1024),
+        patch.object(c.log, "warning") as warn,
+    ):
+        c._log_rss_if_grown("scrape")
+    assert not warn.call_args_list
+
+
+def test_rss_read_never_raises(monkeypatch) -> None:
+    """Observability must never be able to break a loop."""
+    from aegis.server.orchestration import cron as c
+
+    def boom(*a, **k):
+        raise OSError("no /proc")
+
+    monkeypatch.setattr("builtins.open", boom)
+    assert c._read_rss_bytes() == 0

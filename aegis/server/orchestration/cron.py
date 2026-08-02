@@ -78,9 +78,44 @@ _SUPERVISED_LOOPS: dict[str, float] = {
 }
 
 
+# Per-loop RSS watermark. A background loop that allocates unboundedly shows up as an
+# OOM kill with no traceback, no failing healthcheck and no request to blame — which is
+# exactly how the production restart loop presented. Recording which loop just finished
+# when RSS jumps turns that class of incident into a one-line log.
+_RSS_GROWTH_LOG_BYTES = 128 * 1024 * 1024
+_last_rss_bytes = 0
+
+
+def _read_rss_bytes() -> int:
+    """Current process RSS from /proc (Linux). 0 when unavailable (non-Linux/tests)."""
+    try:
+        with open("/proc/self/statm") as fh:
+            pages = int(fh.read().split()[1])
+        return pages * 4096
+    except Exception:  # noqa: BLE001 — observability must never break the loop
+        return 0
+
+
+def _log_rss_if_grown(name: str) -> None:
+    global _last_rss_bytes
+    rss = _read_rss_bytes()
+    if not rss:
+        return
+    if _last_rss_bytes and rss - _last_rss_bytes >= _RSS_GROWTH_LOG_BYTES:
+        log.warning(
+            "loop_rss_growth loop=%s rss_mb=%d grew_mb=%d "
+            "(该循环可能在无界加载数据;容器内存上限被打满会静默 OOM 重启)",
+            name,
+            rss // (1024 * 1024),
+            (rss - _last_rss_bytes) // (1024 * 1024),
+        )
+    _last_rss_bytes = rss
+
+
 async def _tick(name: str, interval: float) -> None:
     """标记 name 循环本轮存活 + 抖动睡眠。取代裸 sleep(_jittered(...))。"""
     _LOOP_LAST_SEEN[name] = _utcnow()
+    _log_rss_if_grown(name)
     await asyncio.sleep(_jittered(interval))
 
 
