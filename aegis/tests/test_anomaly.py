@@ -19,6 +19,11 @@ from aegis.server.services.anomaly_scan import scan_anomalies
 _STABLE = [20, 21, 19, 20, 22, 20, 21, 19, 20, 21.0]
 _SPIKE = [20, 21, 19, 20, 22, 20, 21, 19, 20, 65.0]
 
+# scan_anomalies reads the series newest-first (ORDER BY ts DESC + LIMIT, so the row
+# cap keeps the *recent* window) and reverses it, so DB fixtures must be reversed.
+_STABLE_ROWS = [{"value": v} for v in reversed(_STABLE)]
+_SPIKE_ROWS = [{"value": v} for v in reversed(_SPIKE)]
+
 
 # ── detector ─────────────────────────────────────────────────────────────────────
 
@@ -45,8 +50,8 @@ async def test_scan_inserts_anomaly_with_cooldown_respected() -> None:
     conn = mock.AsyncMock()
     # one active series
     conn.fetch.side_effect = [
-        [{"hostname": "h1", "metric_name": "cpu"}],          # distinct series
-        [{"value": v} for v in _SPIKE],                       # its values
+        [{"hostname": "h1", "metric_name": "cpu"}],  # distinct series
+        _SPIKE_ROWS,  # its values, newest-first
     ]
     conn.fetchval.return_value = None  # no recent anomaly → not in cooldown
     found = await scan_anomalies(conn)
@@ -59,7 +64,7 @@ async def test_scan_skips_when_in_cooldown() -> None:
     conn = mock.AsyncMock()
     conn.fetch.side_effect = [
         [{"hostname": "h1", "metric_name": "cpu"}],
-        [{"value": v} for v in _SPIKE],
+        _SPIKE_ROWS,
     ]
     conn.fetchval.return_value = 1  # recent anomaly exists → cooldown
     found = await scan_anomalies(conn)
@@ -72,7 +77,7 @@ async def test_scan_skips_stable_series() -> None:
     conn = mock.AsyncMock()
     conn.fetch.side_effect = [
         [{"hostname": "h1", "metric_name": "cpu"}],
-        [{"value": v} for v in _STABLE],
+        _STABLE_ROWS,
     ]
     found = await scan_anomalies(conn)
     assert found == 0
@@ -85,7 +90,8 @@ def _client(conn: mock.AsyncMock) -> TestClient:
     app = FastAPI()
     app.include_router(metrics_router.router)
     app.dependency_overrides[get_current_user] = lambda: UserContext(
-        user_id=uuid.uuid4(), email="a@x.com",
+        user_id=uuid.uuid4(),
+        email="a@x.com",
         orgs=[OrgInToken(org_id=uuid.uuid4(), slug="o", role="viewer")],
     )
 
@@ -110,3 +116,23 @@ def test_anomaly_endpoint_not_enough_samples() -> None:
     conn.fetch.return_value = [{"value": 1}, {"value": 2}]
     r = _client(conn).get("/api/v1/metrics/anomaly?metric_name=cpu")
     assert r.json()["evaluated"] is False
+
+
+@pytest.mark.asyncio
+async def test_scan_bounds_rows_loaded_per_series() -> None:
+    """Regression (prod OOM loop): a federated series (one hostname+metric spanning
+    thousands of containers) must never be loaded unbounded — the process hit ~1.3GiB
+    against a 1.5GiB limit and restart-looped. Both queries must carry a LIMIT."""
+    from aegis.server.services import anomaly_scan
+
+    conn = mock.AsyncMock()
+    conn.fetch.side_effect = [[{"hostname": "cadvisor", "metric_name": "cpu"}], _SPIKE_ROWS]
+    conn.fetchval.return_value = None
+    await scan_anomalies(conn)
+
+    series_sql = conn.fetch.await_args_list[0].args[0]
+    values_sql = conn.fetch.await_args_list[1].args[0]
+    assert f"LIMIT {anomaly_scan._MAX_SERIES_PER_SCAN}" in series_sql
+    assert f"LIMIT {anomaly_scan._MAX_POINTS_PER_SERIES}" in values_sql
+    # Newest-first, so the cap keeps the recent window rather than ancient points.
+    assert "ORDER BY ts DESC" in values_sql

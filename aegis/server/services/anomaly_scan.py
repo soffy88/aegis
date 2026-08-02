@@ -18,13 +18,23 @@ log = logging.getLogger(__name__)
 _LOOKBACK_HOURS = 6
 _MIN_SAMPLES = 8
 _COOLDOWN_MINUTES = 15
+# Hard cap on points loaded per series. A "series" here is (hostname, metric_name),
+# which for federated exporters (cAdvisor: one hostname, one metric name, thousands of
+# containers distinguished only by labels) can be hundreds of thousands of rows in the
+# lookback window. Loading those unbounded spiked the process to ~1.3GiB against a
+# 1.5GiB container limit and produced an OOM-restart loop in production. The EWMA
+# detector only needs a recent trend, so take the newest N points and re-order them.
+_MAX_POINTS_PER_SERIES = 2_000
+# Guard against series-count explosion for the same reason.
+_MAX_SERIES_PER_SCAN = 5_000
 
 
 async def scan_anomalies(conn: asyncpg.Connection) -> int:
     """Detect + persist anomalies for recently-active metric series. Returns count."""
     series = await conn.fetch(
         "SELECT DISTINCT hostname, metric_name FROM agent_metrics"
-        " WHERE ts >= now() - ($1::int * interval '1 hour')",
+        " WHERE ts >= now() - ($1::int * interval '1 hour')"
+        f" LIMIT {_MAX_SERIES_PER_SCAN}",
         _LOOKBACK_HOURS,
     )
     found = 0
@@ -34,12 +44,15 @@ async def scan_anomalies(conn: asyncpg.Connection) -> int:
             "SELECT value FROM agent_metrics"
             " WHERE hostname = $1 AND metric_name = $2"
             "   AND ts >= now() - ($3::int * interval '1 hour')"
-            " ORDER BY ts ASC",
+            " ORDER BY ts DESC"
+            f" LIMIT {_MAX_POINTS_PER_SERIES}",
             host,
             metric,
             _LOOKBACK_HOURS,
         )
-        values = [float(r["value"]) for r in rows]
+        # Newest-first from SQL (so the LIMIT keeps the *recent* window); the detector
+        # needs chronological order.
+        values = [float(r["value"]) for r in reversed(rows)]
         if len(values) < _MIN_SAMPLES:
             continue
         result = ewma_anomaly(values)
