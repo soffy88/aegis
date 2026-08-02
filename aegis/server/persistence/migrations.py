@@ -1216,8 +1216,14 @@ MIGRATIONS: list[tuple[str, str]] = [
             ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS idx_scrape_targets_project
             ON scrape_targets (project_id) WHERE project_id IS NOT NULL;
+        -- Partial on purpose: agent_metrics is the largest table in the system
+        -- (100M+ rows) and a full expression index over it costs tens of GB of
+        -- disk plus a build that can fill the production volume. Only attributed
+        -- rows need the index; the filter `(tags->>'project_id' IS NULL OR = $x)`
+        -- reads unattributed rows through the existing name/ts indexes anyway.
         CREATE INDEX IF NOT EXISTS idx_agent_metrics_project_ts
-            ON agent_metrics ((tags->>'project_id'), ts DESC);
+            ON agent_metrics ((tags->>'project_id'), ts DESC)
+            WHERE tags ? 'project_id';
         """,
     ),
 ]
