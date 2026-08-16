@@ -90,6 +90,15 @@ docker exec aegis-backend python -c \
 > 只有 `aegis-backend` 连接该网络并通过 `AEGIS_CADDY_ADMIN_URL=http://172.30.201.2:2019`
 > 调用；不要改回 `0.0.0.0:2019` 或共享业务网络地址。
 
+> ⚠️ **aegis-caddy 必须由本 compose 文件管理，禁止裸 `docker run` 重建**——
+> 2026-08 曾因裸建容器丢失 `aegis-caddy-admin` 网络导致 admin 绑 127.0.0.1 的
+> workaround(域名发布/路由增删全断)。重建/恢复一律：
+> ```
+> docker compose -f docker-compose.aegis.yml --env-file .env.aegis up -d aegis-caddy
+> ```
+> 自查: `docker inspect aegis-caddy` 应含 `com.docker.compose.project=aegis` 标签且
+> `aegis-caddy-admin` 网络带静态 IP `172.30.201.2`。
+
 ## 日常运维
 
 ### 更新部署（有 SSH key）
