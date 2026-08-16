@@ -1,6 +1,8 @@
 {
     # Bind the Admin API only to the dedicated internal compose network. Do not
     # listen on 0.0.0.0, because aegis-caddy also joins shared app networks.
+    # 注意: 不能改成 127.0.0.1 — aegis-backend 经 AEGIS_CADDY_ADMIN_URL
+    # (http://172.30.201.2:2019) 调 admin API 做域名发布/路由增删, 绑回环会断掉。
     admin 172.30.201.2:2019
     # Automatic HTTPS (Let's Encrypt) is enabled for host-matched website routes
     # added at runtime via the admin API. The :8080 tunnel entry below has no
@@ -58,7 +60,32 @@
 #   · https://aii.kanpan.co  (legacy)
 # API 反代由 aii-web (Next rewrites) 处理，勿在此拆 /api（易把其它页打挂）
 :8086 {
-    reverse_proxy aii-web:3101
+    handle_path /downloads/* {
+        root * /data/downloads
+        # 强制附件下载(带正确 UTF-8 文件名), 避免浏览器把 .md 当文本内联渲染
+        # (490KB 单行 base64 在浏览器里就是「乱码」), 浏览列表页本身不受影响。
+        @dlfile not path_regexp ^/$
+        header @dlfile {
+            Content-Disposition "attachment; filename*=UTF-8''{http.request.uri.path.file}"
+            Content-Type application/octet-stream
+        }
+        file_server browse
+    }
+    handle /docs/extract* {
+        uri strip_prefix /docs
+        reverse_proxy 172.19.0.1:8301
+    }
+    handle /docs/ku-visualize {
+        uri strip_prefix /docs
+        reverse_proxy 172.19.0.1:8301
+    }
+    handle /docs/* {
+        uri strip_prefix /docs
+        reverse_proxy stratum-docs:8300
+    }
+    handle {
+        reverse_proxy aii-web:3101
+    }
 }
 
 
@@ -93,6 +120,34 @@
 # 按 Host 头判 non-local → DASH_USER/DASH_PASS Basic Auth，跟原独立 tunnel 行为一致)
 :8090 {
     reverse_proxy 172.18.0.1:3400
+}
+
+# Veya (veya.aiinote.com — SvelteKit 前端 + FastAPI 后端，单一 Cloudflare Tunnel)
+:8093 {
+    handle /api/* {
+        reverse_proxy 172.18.0.1:8767 {
+            lb_try_duration 5s
+            lb_try_interval 250ms
+        }
+    }
+    handle /ws {
+        reverse_proxy 172.18.0.1:8767 {
+            header_up Connection "Upgrade"
+            header_up Upgrade "websocket"
+        }
+    }
+    handle /im/* {
+        reverse_proxy 172.18.0.1:8767
+    }
+    handle /mcp/* {
+        reverse_proxy 172.18.0.1:8767
+    }
+    handle /mobile/* {
+        reverse_proxy 172.18.0.1:8767
+    }
+    handle {
+        reverse_proxy 172.18.0.1:3105
+    }
 }
 
 # Aegis 主入口
