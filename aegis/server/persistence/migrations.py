@@ -868,6 +868,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "037b_autoheal_canary",
+        """
+        ALTER TABLE autoheal_policies ADD COLUMN IF NOT EXISTS canary BOOLEAN NOT NULL DEFAULT FALSE;
+        """,
+    ),
+    (
         "038_spans",
         """
         CREATE TABLE IF NOT EXISTS aegis_spans (
@@ -1259,3 +1265,250 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         return count
     finally:
         await conn.execute("SELECT pg_advisory_unlock(hashtext('aegis_migrations'))")
+
+    (
+        "056_secret_versions_audit",
+        """
+        -- v0.8: secret version history + audit columns
+        CREATE TABLE IF NOT EXISTS secret_versions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            version INT NOT NULL,
+            ciphertext TEXT NOT NULL,
+            rotated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_secret_versions_org ON secret_versions (org_id, name);
+
+        -- Add IP + user_agent to audit_log for forensic traceability
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip INET;
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent TEXT;
+        """,
+    ),
+    
+    (
+        "057_configured_migration_mark",
+        """
+        -- 标记 migrations 表已增量迁移完毕 (辅助 in-place schema 升级)
+        ALTER TABLE aegis_migrations ADD COLUMN IF NOT EXISTS last_applied_at TIMESTAMPTZ DEFAULT now();
+        """,
+    ),
+
+    (
+        "058_change_requests",
+        """
+        CREATE TABLE IF NOT EXISTS change_requests (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            title TEXT NOT NULL,
+            description TEXT,
+            project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'executing', 'completed', 'failed')),
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            approvers UUID[] NOT NULL DEFAULT '{}',
+            approvals JSONB NOT NULL DEFAULT '{}'::jsonb,
+            scheduled_at TIMESTAMPTZ,
+            executed_at TIMESTAMPTZ,
+            execution_log JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_change_requests_project ON change_requests (project_id);
+        CREATE INDEX IF NOT EXISTS idx_change_requests_status ON change_requests (status);
+        CREATE INDEX IF NOT EXISTS idx_change_requests_created_by ON change_requests (created_by);
+        """,
+    ),
+
+    (
+        "059_tenant_quotas",
+        """
+        -- v1.1: Multi-tenancy resource quotas
+        CREATE TABLE IF NOT EXISTS tenant_quotas (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            resource TEXT NOT NULL,  -- 'apps', 'containers', 'cpu_cores', 'memory_gb', 'disk_gb', 'network_mbps'
+            limit BIGINT NOT NULL,
+            UNIQUE (org_id, resource)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenant_quotas_org ON tenant_quotas (org_id);
+        """,
+    ),
+
+    (
+        "060_config_management",
+        """
+        -- v0.9: Configuration management tables
+        CREATE TABLE IF NOT EXISTS config_snapshots (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+            snapshot_type TEXT NOT NULL DEFAULT 'full' CHECK (snapshot_type IN ('full', 'incremental')),
+            desired_state JSONB NOT NULL,
+            applied_diffs JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_config_snapshots_org ON config_snapshots (org_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS config_templates (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT,
+            template_content TEXT NOT NULL,
+            variables_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (org_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_config_templates_org ON config_templates (org_id);
+        """,
+    ),
+
+    (
+        "061_alert_grouping",
+        """
+        -- v1.3: Alert grouping tables
+        CREATE TABLE IF NOT EXISTS alert_groups (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            rule_name TEXT NOT NULL,
+            strategy TEXT NOT NULL CHECK (strategy IN ('causal_chain', 'same_service', 'same_metric', 'rate_limit')),
+            suppressive BOOLEAN NOT NULL DEFAULT TRUE,
+            max_groups INT NOT NULL DEFAULT 100,
+            timeout_seconds INT NOT NULL DEFAULT 300,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'suppressed')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_updated TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_groups_org ON alert_groups (org_id);
+        CREATE INDEX IF NOT EXISTS idx_alert_groups_rule ON alert_groups (rule_name);
+
+        CREATE TABLE IF NOT EXISTS alert_group_members (
+            group_id UUID NOT NULL REFERENCES alert_groups(id) ON DELETE CASCADE,
+            alert_id UUID NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+            added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (group_id, alert_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_group_members_alert ON alert_group_members (alert_id);
+
+        CREATE TABLE IF NOT EXISTS alert_silences (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            type TEXT NOT NULL CHECK (type IN ('manual', 'maintenance', 'deploy', 'auto')),
+            target_type TEXT,
+            target_id TEXT,
+            alert_name TEXT,
+            labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+            starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            ends_at TIMESTAMPTZ,
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            reason TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_silences_org ON alert_silences (org_id);
+        CREATE INDEX IF NOT EXISTS idx_alert_silences_active ON alert_silences (org_id, ends_at)
+            WHERE ends_at IS NULL OR ends_at > NOW();
+
+        CREATE TABLE IF NOT EXISTS notification_rules (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            match_type TEXT NOT NULL DEFAULT 'all' CHECK (match_type IN ('all', 'any', 'none')),
+            severity JSONB,
+            alert_names JSONB,
+            labels JSONB,
+            channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+            channel_configs JSONB NOT NULL DEFAULT '{}'::jsonb,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            repeat_interval INT NOT NULL DEFAULT 300,
+            continue_on_match BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_rules_org ON notification_rules (org_id);
+        """,
+    ),
+
+    (
+        "062_observability",
+        """
+        -- v1.3: Observability enhancements
+        CREATE TABLE IF NOT EXISTS distributed_spans (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            trace_id TEXT NOT NULL,
+            span_id TEXT NOT NULL,
+            parent_span_id TEXT,
+            operation_name TEXT NOT NULL,
+            service_name TEXT,
+            start_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+            end_time TIMESTAMPTZ,
+            duration_ms DOUBLE PRECISION,
+            status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'error', 'internal_error')),
+            attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+            links JSONB NOT NULL DEFAULT '[]'::jsonb
+        );
+        CREATE INDEX IF NOT EXISTS idx_distributed_spans_trace ON distributed_spans (trace_id);
+        CREATE INDEX IF NOT EXISTS idx_distributed_spans_org ON distributed_spans (org_id, start_time DESC);
+
+        CREATE TABLE IF NOT EXISTS anomaly_scores (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            hostname TEXT,
+            metric_name TEXT NOT NULL,
+            score DOUBLE PRECISION NOT NULL,
+            baseline DOUBLE PRECISION NOT NULL,
+            upper_bound DOUBLE PRECISION,
+            lower_bound DOUBLE PRECISION,
+            detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+            acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+            source TEXT NOT NULL DEFAULT 'alert_evaluator'
+        );
+        CREATE INDEX IF NOT EXISTS idx_anomaly_scores_org ON anomaly_scores (org_id, detected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_anomaly_scores_metric ON anomaly_scores (metric_name, detected_at DESC);
+        """,
+    ),
+
+    (
+        "063_runbook_automation",
+        """
+        -- v1.3: Runbook automation tables
+        CREATE TABLE IF NOT EXISTS runbook_templates (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT,
+            trigger_conditions JSONB NOT NULL,  -- 触发条件 JSON
+            steps JSONB NOT NULL DEFAULT '[]'::jsonb,  -- 执行步骤
+            auto_execute BOOLEAN NOT NULL DEFAULT FALSE,  -- 是否自动执行
+            approval_required BOOLEAN NOT NULL DEFAULT TRUE,  -- 是否需要审批
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deprecated')),
+            created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_runbook_templates_org ON runbook_templates (org_id);
+
+        CREATE TABLE IF NOT EXISTS runbook_executions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+            runbook_id UUID REFERENCES runbook_templates(id) ON DELETE SET NULL,
+            trigger_alert_id UUID REFERENCES alerts(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed', 'approved', 'rejected')),
+            executed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            started_at TIMESTAMPTZ DEFAULT now(),
+            completed_at TIMESTAMPTZ,
+            outcome JSONB,
+            execution_log JSONB NOT NULL DEFAULT '[]'::jsonb,
+            approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            approved_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_runbook_executions_org ON runbook_executions (org_id);
+        CREATE INDEX IF NOT EXISTS idx_runbook_executions_runbook ON runbook_executions (runbook_id);
+        """,
+    ),

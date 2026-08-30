@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.6] — 2026-08-30
+
+### Added
+- **S1 演练场景**: canary-only 自愈模式 (`AEGIS_AUTOHEAL_CANARY_ONLY` env var).
+  `run_autoheal_policies` 新增 `AND (NOT $1 OR canary = TRUE)` 过滤;仅 `canary=TRUE`
+  策略在 canary 模式下执行自愈,用于 L1→L2 真机验证阶段保护生产目标。
+- **Embedding provider 启动告警**: `register_providers()` 在启动时显式调用
+  `get_embedder(cfg)` 触发 fastembed/ollama 缺失警告,部署者无需等到
+  `index_runbooks` 才看到告警。新增 2 项单测。
+- **`autoheal_policies` 新增 `canary` 列**: ALTER TABLE 迁移 `037b_autoheal_canary`,
+  默认 `FALSE`;canary 策略在 canary-only 模式下优先自愈。
+
+### Fixed
+- `register_providers()` 将 RAG embedding 警告从注释改为启动时显式调用,
+  确保部署配置缺失时立即可见。
+
 ## [0.2.5] — 2026-05-23
 
 ### Removed

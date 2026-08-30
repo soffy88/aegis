@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import asyncpg
 
@@ -71,23 +73,25 @@ async def _trigger_value(
     if not vals:
         return None
     if operator in (">", ">="):
-        return max(vals)
+        return cast(float, max(vals))
     if operator in ("<", "<="):
-        return min(vals)
-    return vals[0]
+        return cast(float, min(vals))
+    return cast(float, vals[0])
 
 
 def _breached(value: float, operator: str, threshold: float) -> bool:
-    return {
-        ">=": value >= threshold,
-        ">": value > threshold,
-        "<=": value <= threshold,
-        "<": value < threshold,
-        "==": value == threshold,
-    }.get(operator, False)
+    return bool(
+        {
+            ">=": value >= threshold,
+            ">": value > threshold,
+            "<=": value <= threshold,
+            "<": value < threshold,
+            "==": value == threshold,
+        }.get(operator, False)
+    )
 
 
-async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict]:
+async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]]:
     """Evaluate all enabled policies; act on breaches past cooldown. Returns actions.
 
     §5.3 安全层(闸门顺序):全局急停(config + 运行时 flag)→ 抖动检测(同一目标自愈过频则
@@ -122,15 +126,17 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict]:
         """
         SELECT id, org_id, name, target_container, trigger_metric, trigger_operator,
                trigger_threshold, action, dry_run, cooldown_seconds, docker_host,
-               last_triggered_at
+               canary, last_triggered_at
         FROM autoheal_policies
         WHERE enabled = TRUE
           AND (last_triggered_at IS NULL
                OR last_triggered_at <= now() - (cooldown_seconds * interval '1 second'))
-        """
+          AND (NOT $1 OR canary = TRUE)
+        """,
+        os.environ.get("AEGIS_AUTOHEAL_CANARY_ONLY", "false").lower() == "true",
     )
     events = AutoHealEventRepository(conn)
-    actions: list[dict] = []
+    actions: list[dict[str, Any]] = []
 
     for p in policies:
         value = await _trigger_value(

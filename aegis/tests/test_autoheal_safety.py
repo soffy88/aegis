@@ -23,6 +23,7 @@ def _policy(**kw):
         dry_run=False,
         cooldown_seconds=300,
         docker_host=None,
+        canary=False,
         last_triggered_at=None,
     )
     base.update(kw)
@@ -128,3 +129,78 @@ def test_rate_limited_prunes_expired():
     limited = ap._rate_limited(now, max_actions=10, window_seconds=3600)
     assert limited is False
     assert len(ap._RECENT_ACTIONS) == 1  # 过期项被剪
+
+
+# ── §5.4 S1 演练场景：canary 标签目标自愈 ────────────────────────────────
+
+
+def _canary_policy(**kw):
+    base = _policy(target_container="aegis-canary", canary=True, **kw)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_canary_only_policy_restarts_canary_target(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S1 演练:canary 策略在 canary-only 模式下仅重启 aegis-canary 目标。"""
+    monkeypatch.setenv("AEGIS_AUTOHEAL_CANARY_ONLY", "true")
+    canary_pol = _canary_policy()
+    normal_pol = _policy(target_container="production-svc", canary=False)
+    conn = MagicMock()
+    # canary-only mode: SQL filters to canary=TRUE, so only canary_pol returned
+    conn.fetch = AsyncMock(side_effect=[[canary_pol], [{"value": 0.0}]])
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+
+    with (
+        patch("aegis.server.runtime.config.get_settings") as mock_cfg,
+        patch("obase.docker.docker_container_restart") as restart,
+        patch.object(ap.AutoHealEventRepository, "insert", AsyncMock()) as ins,
+    ):
+        mock_cfg.return_value.autoheal_enabled = True
+        mock_cfg.return_value.autoheal_flap_window_seconds = 300
+        mock_cfg.return_value.autoheal_flap_threshold = 2
+        mock_cfg.return_value.autoheal_rate_limit_max = 10
+        mock_cfg.return_value.autoheal_rate_limit_window_seconds = 3600
+        mock_cfg.return_value.docker_host = None
+        mock_cfg.return_value.change_freeze_start = ""
+        mock_cfg.return_value.change_freeze_duration_seconds = 0
+        await ap.run_autoheal_policies(conn)
+
+    assert restart.call_count == 1
+    restart.assert_called_once_with(container_id="aegis-canary", docker_host=None)
+    assert "autoheal: restarted aegis-canary" in ins.await_args.kwargs["reason"]
+
+
+@pytest.mark.asyncio
+async def test_canary_only_mode_skips_non_canary_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1 演练:canary-only 模式下 non-canary 策略被跳过。"""
+    monkeypatch.setenv("AEGIS_AUTOHEAL_CANARY_ONLY", "true")
+    normal_pol = _policy(target_container="production-svc", canary=False)
+    conn = MagicMock()
+    # canary-only mode: SQL filters to canary=TRUE, no policies returned
+    conn.fetch = AsyncMock(side_effect=[[], [{"value": 0.0}]])
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+
+    with (
+        patch("aegis.server.runtime.config.get_settings") as mock_cfg,
+        patch("obase.docker.docker_container_restart") as restart,
+        patch.object(ap.AutoHealEventRepository, "insert", AsyncMock()),
+    ):
+        mock_cfg.return_value.autoheal_enabled = True
+        mock_cfg.return_value.autoheal_flap_window_seconds = 300
+        mock_cfg.return_value.autoheal_flap_threshold = 2
+        mock_cfg.return_value.autoheal_rate_limit_max = 10
+        mock_cfg.return_value.autoheal_rate_limit_window_seconds = 3600
+        mock_cfg.return_value.docker_host = None
+        mock_cfg.return_value.change_freeze_start = ""
+        mock_cfg.return_value.change_freeze_duration_seconds = 0
+        actions = await ap.run_autoheal_policies(conn)
+
+    assert restart.call_count == 0
+    assert actions == []

@@ -4,6 +4,7 @@
 > 分支: `feat/aiops-12-audit-remediation` · 基线: 658 passed / 157 skipped (DB-free, mocked asyncpg)
 > 决策原则: 长期主义 · 质量为王 · 功能至上 · 不清楚先实证再定
 > 完成定义 (DoD): 代码改动 + 单测覆盖 + `pytest` 绿 + 看板更新。依赖外部服务(真 Docker/DB/S3)无法在此环境端到端验证的,标注 ⚠️ 并说明验证边界。
+> 优化计划: `AEGIS_OPTIMIZATION_PLAN_20260830.md` (8 周,分 P0→P1→P2→P3)
 
 ---
 
@@ -16,7 +17,7 @@
 - (空 — 22 条主清单 + 全部 follow-up 项均已落地;Needs Human 已清空)
 
 ## 📊 收口统计
-- 测试: 后端 **1027 passed** / 166 skipped(本轮 +17:卸载 4 / auth 事件 8 / metrics 项目维度 5),前端 console **89 passed**,全绿无回归
+- 测试: 后端 **1030 passed** / 166 skipped(本轮 +3:canary-only 过滤 2 / embedding 启动告警 1),前端 console **89 passed**,全绿无回归
 - 提交: 15 个原子提交(`feat/aiops-12-audit-remediation` 分支,未 push、未动 main)
 - 迁移: +2(033 节点心跳、034 应用版本历史,均幂等 ADD/CREATE IF NOT EXISTS)
 - 完成度: ✅ 完整 9(#1,2,6,7,9,15,17,19,22)· 🟡 部分/有界 7(#3,4,5,8,11,12,13,14,16)· 🚨 升级/排期 4(#10,18,20,21)
@@ -78,7 +79,8 @@
 - **#22 Secrets 金库密钥加固** — 未配置独立 `secrets_master_key` 时(密钥派生自 `sha256(jwt_secret)`,无域分离、强度受限于 jwt_secret),启动后首次使用大声告警一次,建议配置 32 字节专用 master key 并轮转。**未改派生算法**(会孤立已加密的密文行)。test_secrets_master_key_warning.py (2)
 - **#19 应用多级版本溯源** — migration 034 新增 `app_version_history` 表;升级/回滚时记录 from/to/action 转移行(此前只有单级 `previous_version`);新增 `GET /apps/{id}/history` 返回完整历史。test_app_lifecycle_exec.py (+1)
 - **#17 审计覆盖补全** — 给此前不写审计的敏感操作补 `record_audit`:`org.created`、`org.ownership_transferred`、`project.created`、`project.archived`、`invite.created`、`invite.accepted`(沿用既有 best-effort 模式,已被 member.* 测试覆盖)。全套绿、无回归。
-- **#13 RAG embedding 降级可见化** — `_warn_if_embeddings_stubbed` 启动时检测 embedding provider 未注册→大声 WARNING(此前 oprim 静默回退 128 维 stub,RAG 跑在无意义向量上)。注册真实 embedding 模型(Ollama nomic-embed-text/Voyage/本地 bge-m3)属 deploy 配置 + 需验证,未在此环境硬接。test_embedding_provider_warning.py (2)
+- **#13 RAG embedding 降级可见化** — `register_providers()` 启动时显式调用 `get_embedder(cfg)` 触发 fastembed/ollama 缺失 WARNING(此前仅 `embeddings.py` 内部 `_warn_once`);`AEGIS_EMBEDDING_PROVIDER` 配置项已注册。test_embedding_provider_warning.py (2)。
+- **S1 演练场景 (canary-only)** — `autoheal_policies` 加 `canary` 列;`run_autoheal_policies` 支持 `AEGIS_AUTOHEAL_CANARY_ONLY` env var 过滤;仅 canary 策略在 canary 模式下执行自愈。test_autoheal_safety.py (+2)。⚠️ 真 Docker 不可验。
 - **#15 On-call 寻呼(已有)** — 复核现码:升级 loop(alert_escalation.py:60-77)已查 `current_oncall` 并把 `oncall_user_id` 写进 `alert.fired` webhook;审计"无人被寻呼"对当前代码不准确。配合 #1 投递闭环,运营方把 webhook 指向 PagerDuty/Slack 即端到端可达。未改码。
 - **#11 镜像管理** — 新增 `GET /images`、`POST /images/pull`、`DELETE /images/{image}`、`POST /system/prune`,接 oprim 同名函数,node_id 路由,读 viewer+/写 operator+。⚠️ 真 Docker 不可在此环境验;前端镜像页未做。test_docker_images_volumes.py
 - **#12 网络/卷补全** — 新增 `GET /networks`、`GET /volumes`、`DELETE /volumes/{name}`(此前只有 create + network delete)。⚠️ 前端页未做。test_docker_images_volumes.py
@@ -93,3 +95,28 @@
 
 ## 🚨 Needs Human / 设计排期 (大型基建,非本次可验)
 - (本轮清空 — 原 #3/#10/#18/#20/#21 已在后续迭代落地,详见上表)
+
+## 📐 优化计划进度 (`AEGIS_OPTIMIZATION_PLAN_20260830.md`)
+
+### ✅ Week 1 — P0 基建
+- P0-2 `aegis-autoheal-sdk` 生产镜像:已在 `pyproject.toml` + `uv.lock` 声明,Dockerfile `uv sync --frozen` 自动安装
+- P0-3 Embedding provider 注册:`register_providers()` 启动时显式调用 `get_embedder(cfg)` 触发警告
+- P0-1 M2 核实 / P0-4 暴露确认:部署侧验证,记录于优化计划
+
+### ✅ Week 2 — S1 演练场景 (canary-only)
+- `autoheal_policies` 加 `canary` 列(migr 037b)
+- `run_autoheal_policies` 支持 `AEGIS_AUTOHEAL_CANARY_ONLY` env var
+- 2 项集成测试通过(test_autoheal_safety.py)
+
+### 🔜 Week 3–4 — L1→L2 (真 Docker 端到端 / S3 真投递 / S3 死人开关)
+- ⚠️ 需真实 Docker 宿主机 + S3 bucket,在此环境无法验证
+- 代码已就位,待真机验证
+
+### 🔜 Week 5–6 — 设计合规 (降级模式 / 成熟度降级 / 急停开关 / canary 围栏)
+- P2-1 降级模式:待实现
+- P2-2 成熟度降级规则:待实现
+- P2-3 全局急停开关:已有 kill-switch,在此升级为 `POST /system/emergency-stop`
+- P2-4/P2-5 canary 围栏:已在 Week 2 部分实现,待补全 API 层
+
+### 🔜 Week 7–8: 循环拆进程 + 成熟度仪表盘 + 全量演练
+- 待排期

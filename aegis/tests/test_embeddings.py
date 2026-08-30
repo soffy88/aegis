@@ -10,6 +10,7 @@ import pytest
 
 from aegis.server.runtime.config import AegisSettings
 from aegis.server.services import embeddings
+from aegis.server.app import register_providers
 
 
 def _cfg(**over) -> AegisSettings:
@@ -77,3 +78,29 @@ def test_ollama_embedder_calls_api(monkeypatch: pytest.MonkeyPatch) -> None:
         out = embedder(["hi"])
     assert out == [[1.0, 2.0]]
     assert "api/embeddings" in client.post.call_args.args[0]
+
+
+def test_register_providers_warns_when_fastembed_missing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """register_providers logs WARNING when fastembed is not installed."""
+    monkeypatch.setitem(sys.modules, "fastembed", None)
+    cfg = _cfg(embedding_provider="fastembed")
+    with caplog.at_level("WARNING"):
+        register_providers(cfg)
+    assert any("fastembed" in r.message and "lexical" in r.message for r in caplog.records)
+
+
+def test_register_providers_info_when_fastembed_present(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """register_providers logs INFO when fastembed is available."""
+    fake_model = mock.Mock()
+    fake_model.embed.return_value = [[0.1, 0.2, 0.3]]
+    fake_mod = types.ModuleType("fastembed")
+    fake_mod.TextEmbedding = mock.Mock(return_value=fake_model)
+    monkeypatch.setitem(sys.modules, "fastembed", fake_mod)
+    cfg = _cfg(embedding_provider="fastembed")
+    with caplog.at_level("INFO"):
+        register_providers(cfg)
+    assert any("embedder provider: fastembed" in r.message for r in caplog.records)

@@ -7,6 +7,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -129,17 +130,21 @@ def register_providers(cfg: AegisSettings) -> None:
 
         def _anthropic_caller(
             *,
-            messages: list,
-            tools: list | None = None,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
             system: str = "",
-        ) -> dict:
+        ) -> dict[str, Any]:
             # 30s/2-retry overrides the SDK default 10-min timeout: an RCA ReAct
             # loop runs many sequential calls and must not wedge for minutes.
             client = anthropic.Anthropic(timeout=30.0, max_retries=2)
-            kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+            }
             if system:
                 kwargs["system"] = system
             if tools:
@@ -167,13 +172,13 @@ def register_providers(cfg: AegisSettings) -> None:
 
         def _ollama_caller(
             *,
-            messages: list,
-            tools: list | None = None,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
             max_tokens: int = 4096,
             stop_sequences: list[str] | None = None,
             model: str = "",
             system: str = "",
-        ) -> dict:
+        ) -> dict[str, Any]:
             chat_messages = list(messages)
             if system:
                 chat_messages = [{"role": "system", "content": system}, *chat_messages]
@@ -197,8 +202,32 @@ def register_providers(cfg: AegisSettings) -> None:
         log.info("registered llm provider: ollama (base_url=%s)", cfg.ollama_base_url)
     else:
         log.debug("ollama provider not configured (set AEGIS_OLLAMA_BASE_URL to enable)")
-    # RAG embedding degradation is now surfaced by embeddings.get_embedder (warns once
-    # if the configured provider is unavailable → lexical pg_trgm fallback).
+
+    # RAG embedding provider — fire the warning at startup so deployers see it
+    # immediately rather than waiting for index_runbooks to call get_embedder().
+    from aegis.server.services.embeddings import get_embedder  # noqa: PLC0415
+
+    embedder = get_embedder(cfg)
+    provider = (cfg.embedding_provider or "").strip().lower()
+    if provider in ("fastembed", "default"):
+        if embedder is None:
+            log.warning(
+                "embedding provider 'fastembed' not installed (pip install 'aegis[embed]'); "
+                "runbook retrieval falls back to lexical pg_trgm (semantic disabled)"
+            )
+        else:
+            log.info("registered embedder provider: fastembed")
+    elif provider == "ollama":
+        if embedder is None:
+            log.warning(
+                "embedding provider 'ollama' but AEGIS_OLLAMA_BASE_URL unset; lexical fallback"
+            )
+        else:
+            log.info("registered embedder provider: ollama")
+    elif provider in ("", "fts", "none", "lexical"):
+        log.info("embedder provider: lexical (pg_trgm) — no embedding model loaded")
+    else:
+        log.warning("unknown embedding provider %r; lexical (pg_trgm) fallback", provider)
 
 
 def create_app(settings: AegisSettings | None = None) -> FastAPI:
