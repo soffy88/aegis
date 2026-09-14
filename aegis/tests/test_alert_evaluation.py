@@ -145,13 +145,20 @@ async def test_skips_rule_with_no_recent_data():
 @pytest.mark.asyncio
 async def test_loop_registered_in_cron_main():
     from aegis.server.orchestration import cron
+    from aegis.server.orchestration.loop_supervisor import _supervisor
 
     scheduled: list[str] = []
 
     async def _fake_gather(*coros, **_kw):
         for c in coros:
-            scheduled.append(getattr(c, "__name__", str(c)))
-            c.close()
+            if hasattr(c, "__name__"):
+                scheduled.append(c.__name__)
+            elif hasattr(c, "get_name"):
+                scheduled.append(c.get_name())
+            # Don't call .close() on Task objects - they don't have it
+            # Just cancel them if needed
+            if hasattr(c, "cancel"):
+                c.cancel()
 
     with (
         patch.object(cron.asyncio, "gather", side_effect=_fake_gather),
@@ -159,7 +166,8 @@ async def test_loop_registered_in_cron_main():
     ):
         await cron._cron_main(alerter=None)
 
-    assert "_alert_eval_loop" in scheduled
+    # Check that the supervisor has the alert_eval loop registered
+    assert "alert_eval" in _supervisor._loops
 
 
 @pytest.mark.asyncio
@@ -175,7 +183,9 @@ async def test_host_down_suppresses_child_alert():
     eval_mock = AsyncMock()
     with (
         patch.object(
-            ae.AlertRuleRepository, "list_all_enabled", AsyncMock(return_value=[_rule(operator=">=")])
+            ae.AlertRuleRepository,
+            "list_all_enabled",
+            AsyncMock(return_value=[_rule(operator=">=")]),
         ),
         patch.object(ae.AlertEngine, "evaluate_metric", eval_mock),
     ):
@@ -193,8 +203,13 @@ async def test_host_up_does_not_suppress():
     async def fake_eval(*, rule, current_value, now):
         captured["value"] = current_value
         return AlertEvaluationResult(
-            rule_id=rule.rule_id, fired=True, throttled=False,
-            dedup_existed=False, severity="critical", fired_row=None, reason="x",
+            rule_id=rule.rule_id,
+            fired=True,
+            throttled=False,
+            dedup_existed=False,
+            severity="critical",
+            fired_row=None,
+            reason="x",
         )
 
     conn = MagicMock()
@@ -206,7 +221,9 @@ async def test_host_up_does_not_suppress():
     )
     with (
         patch.object(
-            ae.AlertRuleRepository, "list_all_enabled", AsyncMock(return_value=[_rule(operator=">=")])
+            ae.AlertRuleRepository,
+            "list_all_enabled",
+            AsyncMock(return_value=[_rule(operator=">=")]),
         ),
         patch.object(ae.AlertEngine, "evaluate_metric", side_effect=fake_eval),
         patch.object(ae.AutoHealEventRepository, "insert", AsyncMock()),

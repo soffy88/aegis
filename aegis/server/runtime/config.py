@@ -118,6 +118,16 @@ class AegisSettings(BaseSettings):
         description="If true, log actions but don't execute (safety default)",
     )
 
+    # === Maturity / Drill (§2.1) ===
+    # L2 及以上能力连续失败达到该次数 → 自动降回 L1 并禁 auto。
+    maturity_consecutive_failure_threshold: int = Field(
+        default=2, ge=1, le=10, description="DESIGN §2.1: 连续 N 次演练失败自动降级"
+    )
+    # 未过 L2 的自愈目标是否允许动作(§5.4)。False = 仅 canary 标签目标可自愈。
+    autoheal_require_l2: bool = Field(
+        default=True, description="DESIGN §5.4/I2: 未过 L2 的 auto 模式强制禁用"
+    )
+
     # === Docker ===
     docker_host: str = "unix:///var/run/docker.sock"
     docker_socket_proxy_enabled: bool = True
@@ -208,7 +218,7 @@ class AegisSettings(BaseSettings):
     # === Platform Alerter (S1 BrainAlerter) ===
     platform_alerter_interval_seconds: int = 60
     platform_alerter_throttle_seconds: int = 600
-    platform_alerter_thresholds: dict = Field(
+    platform_alerter_thresholds: dict[str, float] = Field(
         default_factory=lambda: {
             "cpu_percent": 85.0,
             "ram_percent": 90.0,
@@ -335,6 +345,14 @@ class AegisSettings(BaseSettings):
     email_from_addr: str = Field(
         default="noreply@aegis.kanpan.co",
         description="From address for Aegis-sent emails (env: AEGIS_EMAIL_FROM_ADDR)",
+    )
+
+    # === Registration ===
+    # P0-4: Registration lock — dev default true, prod default false.
+    # When false, /auth/register returns 403 unless no users exist (bootstrap first owner).
+    registration_enabled: bool = Field(
+        default=True,
+        description="Allow user registration via /auth/register. Prod default false. env: AEGIS_REGISTRATION_ENABLED",
     )
 
     # === Environment ===

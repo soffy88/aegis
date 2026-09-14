@@ -1232,40 +1232,80 @@ MIGRATIONS: list[tuple[str, str]] = [
             WHERE tags ? 'project_id';
         """,
     ),
+    (
+        "065_capability_maturity",
+        """
+        -- §2.1 / C-2.1: 成熟度阶梯 + 演练结果。成熟度不靠声明,靠演练证明;
+        -- 连续 N 次(默认 2)演练失败 MUST 自动降回 L1 并禁 auto(I2)。
+        -- 幂等:全部 CREATE ... IF NOT EXISTS,可安全重放。
+        --
+        -- 注:本表中 056-064 一段历史上被误落在 apply_migrations 函数体内部成为死代码
+        -- (遗留 issue,未在本轮修复)。后续迁移必须在本主表 MIGRATIONS 中定义。
+
+        -- 每项能力的当前成熟度。capability 为稳定标识(如 'autoheal.restart')。
+        CREATE TABLE IF NOT EXISTS capability_maturity (
+            capability TEXT PRIMARY KEY,
+            level INTEGER NOT NULL DEFAULT 1 CHECK (level BETWEEN 0 AND 4),
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            auto_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            last_drill_at TIMESTAMPTZ,
+            reason TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        -- 演练结果一等事件(S1–S4)。失败即告警,并驱动上面的降级。
+        CREATE TABLE IF NOT EXISTS drill_results (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            capability TEXT NOT NULL,
+            scenario TEXT NOT NULL CHECK (scenario IN ('S1', 'S2', 'S3', 'S4')),
+            passed BOOLEAN NOT NULL,
+            detail TEXT,
+            ran_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_drill_results_capability
+            ON drill_results (capability, ran_at DESC);
+        """,
+    ),
+    (
+        "066_autoheal_history",
+        """
+        -- §5.3: 抖动历史与全局限流状态持久化到 Postgres(进程重启不丢失)
+        CREATE TABLE IF NOT EXISTS autoheal_heal_history (
+            target_container TEXT NOT NULL,
+            healed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (target_container, healed_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_heal_history_target_time
+            ON autoheal_heal_history (target_container, healed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS autoheal_global_actions (
+            action_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            acted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_global_actions_time
+            ON autoheal_global_actions (acted_at DESC);
+
+        -- 循环执行记录(重启/故障/最后存活)
+        CREATE TABLE IF NOT EXISTS loop_supervision (
+            loop_name TEXT PRIMARY KEY,
+            expected_interval_seconds DOUBLE PRECISION NOT NULL,
+            last_started_at TIMESTAMPTZ,
+            last_completed_at TIMESTAMPTZ,
+            last_error TEXT,
+            restart_count INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (status IN ('unknown', 'starting', 'running', 'crashed', 'restarting')),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+    ),
 ]
 
 
-async def apply_migrations(conn: asyncpg.Connection) -> int:
-    """Apply all pending migrations. Returns count applied.
-
-    Serialized with a session-level Postgres advisory lock: concurrent boots
-    (uvicorn --workers 2, multi-replica) would otherwise race on non-idempotent
-    migrations (e.g. the 006 column rename) and crash one worker / half-apply the
-    schema. The second runner blocks here until the first finishes, then sees all
-    versions already applied and does nothing.
-    """
-    await conn.execute("SELECT pg_advisory_lock(hashtext('aegis_migrations'))")
-    try:
-        await conn.execute(_MIGRATIONS_TABLE)
-        applied_rows = await conn.fetch("SELECT version FROM aegis_migrations")
-        applied = {row["version"] for row in applied_rows}
-
-        count = 0
-        for version, sql in MIGRATIONS:
-            if version in applied:
-                continue
-            async with conn.transaction():
-                await conn.execute(sql)
-                await conn.execute(
-                    "INSERT INTO aegis_migrations (version) VALUES ($1)",
-                    version,
-                )
-            log.info("applied migration: %s", version)
-            count += 1
-        return count
-    finally:
-        await conn.execute("SELECT pg_advisory_unlock(hashtext('aegis_migrations'))")
-
+# v0.8–v1.3 后续迁移(056–063)。与 MIGRATIONS 主列表同构,仅因历史分批发补而续于此;
+# 运行时由 apply_migrations 合并遍历。全部幂等(CREATE ... IF NOT EXISTS),可安全重放。
+_LATER_MIGRATIONS: list[tuple[str, str]] = [
     (
         "056_secret_versions_audit",
         """
@@ -1286,7 +1326,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent TEXT;
         """,
     ),
-    
     (
         "057_configured_migration_mark",
         """
@@ -1294,7 +1333,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         ALTER TABLE aegis_migrations ADD COLUMN IF NOT EXISTS last_applied_at TIMESTAMPTZ DEFAULT now();
         """,
     ),
-
     (
         "058_change_requests",
         """
@@ -1320,7 +1358,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_change_requests_created_by ON change_requests (created_by);
         """,
     ),
-
     (
         "059_tenant_quotas",
         """
@@ -1335,7 +1372,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_tenant_quotas_org ON tenant_quotas (org_id);
         """,
     ),
-
     (
         "060_config_management",
         """
@@ -1367,7 +1403,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_config_templates_org ON config_templates (org_id);
         """,
     ),
-
     (
         "061_alert_grouping",
         """
@@ -1432,7 +1467,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_notification_rules_org ON notification_rules (org_id);
         """,
     ),
-
     (
         "062_observability",
         """
@@ -1473,7 +1507,6 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_anomaly_scores_metric ON anomaly_scores (metric_name, detected_at DESC);
         """,
     ),
-
     (
         "063_runbook_automation",
         """
@@ -1512,3 +1545,82 @@ async def apply_migrations(conn: asyncpg.Connection) -> int:
         CREATE INDEX IF NOT EXISTS idx_runbook_executions_runbook ON runbook_executions (runbook_id);
         """,
     ),
+]
+
+# 新增 P0 迁移：autoheal 历史/限流状态持久化 + 循环监督持久化
+_MIGRATIONS_P0: list[tuple[str, str]] = [
+    (
+        "066_autoheal_history",
+        """
+        -- §5.3: 抖动历史与全局限流状态持久化到 Postgres(进程重启不丢失)
+        CREATE TABLE IF NOT EXISTS autoheal_heal_history (
+            target_container TEXT NOT NULL,
+            healed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (target_container, healed_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_heal_history_target_time
+            ON autoheal_heal_history (target_container, healed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS autoheal_global_actions (
+            action_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            acted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_autoheal_global_actions_time
+            ON autoheal_global_actions (acted_at DESC);
+
+        -- 循环执行记录(重启/故障/最后存活)
+        CREATE TABLE IF NOT EXISTS loop_supervision (
+            loop_name TEXT PRIMARY KEY,
+            expected_interval_seconds DOUBLE PRECISION NOT NULL,
+            last_started_at TIMESTAMPTZ,
+            last_completed_at TIMESTAMPTZ,
+            last_error TEXT,
+            restart_count INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (status IN ('unknown', 'starting', 'running', 'crashed', 'restarting')),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+    ),
+]
+
+# 全部迁移单一事实源(056–066 在 _LATER_MIGRATIONS;001–055 与 065 在 MIGRATIONS)。
+# 实现与测试都用它,避免只引用 MIGRATIONS 而漏掉后续迁移。按版本号前缀数值排序,
+# 保证应用顺序与编号一致(065 虽写在主表末尾,仍排在 056–063 之后)。
+ALL_MIGRATIONS: list[tuple[str, str]] = sorted(
+    MIGRATIONS + _LATER_MIGRATIONS + _MIGRATIONS_P0,
+    key=lambda m: int(m[0].split("_")[0].rstrip("abc")),
+)
+
+
+async def apply_migrations(conn: asyncpg.Connection) -> int:
+    """Apply all pending migrations. Returns count applied.
+
+    Serialized with a session-level Postgres advisory lock: concurrent boots
+    (uvicorn --workers 2, multi-replica) would otherwise race on non-idempotent
+    migrations (e.g. the 006 column rename) and crash one worker / half-apply the
+    schema. The second runner blocks here until the first finishes, then sees all
+    versions already applied and does nothing.
+    """
+    await conn.execute("SELECT pg_advisory_lock(hashtext('aegis_migrations'))")
+    try:
+        await conn.execute(_MIGRATIONS_TABLE)
+        applied_rows = await conn.fetch("SELECT version FROM aegis_migrations")
+        applied = {row["version"] for row in applied_rows}
+
+        count = 0
+        for version, sql in ALL_MIGRATIONS:
+            if version in applied:
+                continue
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO aegis_migrations (version) VALUES ($1)",
+                    version,
+                )
+            log.info("applied migration: %s", version)
+            count += 1
+        return count
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock(hashtext('aegis_migrations'))")

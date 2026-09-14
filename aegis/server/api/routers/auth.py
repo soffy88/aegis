@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
-from obase.auth import argon2_verify, jwt_sign_hs256, jwt_verify_hs256
+from obase.auth import JWTVerifyError, argon2_verify, jwt_sign_hs256, jwt_verify_hs256
 from pydantic import BaseModel, Field
 
 from aegis.server.api.deps import get_db_conn
@@ -68,7 +70,7 @@ class TokenResponse(BaseModel):
 
 
 def _issue_access_token(
-    user_id: UUID, email: str, orgs: list[dict], epoch: int
+    user_id: UUID, email: str, orgs: list[dict[str, Any]], epoch: int
 ) -> tuple[str, datetime]:
     """Sign an access token; returns (token, expires_at).
 
@@ -164,8 +166,28 @@ async def register(
     response: Response,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db_conn),
-) -> dict:
-    """注册新用户，自动创建 org，自动登录返回 token."""
+) -> dict[str, Any]:
+    """注册新用户，自动创建 org，自动登录返回 token.
+
+    P0-4: Registration locked when AEGIS_REGISTRATION_ENABLED=false (prod default).
+    Exception: bootstrap first owner allowed when no users exist.
+    """
+    from aegis.server.runtime.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    log = logging.getLogger(__name__)
+
+    # Check registration lock
+    if not settings.registration_enabled:
+        # Allow bootstrap first owner if no users exist
+        user_count = await conn.fetchval("SELECT count(*) FROM users")
+        if user_count > 0:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Registration is disabled. Contact an administrator for an invite.",
+            )
+        log.info("registration_bootstrap_first_owner allowed (no users exist)")
+
     from obase.auth import argon2_hash  # noqa: PLC0415
 
     # 检查邮箱是否已存在（事务外做，避免持锁）
@@ -308,14 +330,14 @@ async def logout(
                 await record_auth_event(
                     conn, event=LOGOUT, user_id=UUID(payload["sub"]), request=request
                 )
-        except Exception:
-            pass  # logout always succeeds — silently ignore invalid tokens
+        except (JWTVerifyError, ValueError, KeyError, OverflowError):
+            pass  # logout always succeeds — silently ignore invalid/expired tokens
 
     response.delete_cookie("refresh_token", path="/")
 
 
 @router.get("/me")
-async def me(user: UserContext = Depends(get_current_user)) -> dict:
+async def me(user: UserContext = Depends(get_current_user)) -> dict[str, Any]:
     return {
         "user_id": str(user.user_id),
         "email": user.email,
@@ -351,7 +373,7 @@ async def my_auth_events(
     limit: int = Query(default=50, ge=1, le=200),
     user: UserContext = Depends(get_current_user),
     conn: asyncpg.Connection = Depends(get_db_conn),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Own account security trail (sign-ins, failures, password changes).
 
     Self-scoped by design: these events are account-level, so even an org owner

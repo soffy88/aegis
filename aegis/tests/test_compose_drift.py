@@ -115,17 +115,23 @@ async def test_no_declared_apps_returns_in_sync():
 @pytest.mark.asyncio
 async def test_drift_loop_registered_in_cron():
     from aegis.server.orchestration import cron
+    from aegis.server.orchestration.loop_supervisor import _supervisor
 
     scheduled: list[str] = []
 
     async def _fake_gather(*coros, **_kw):
         for c in coros:
-            scheduled.append(getattr(c, "__name__", str(c)))
-            c.close()
+            if hasattr(c, "__name__"):
+                scheduled.append(c.__name__)
+            elif hasattr(c, "get_name"):
+                scheduled.append(c.get_name())
+            if hasattr(c, "cancel"):
+                c.cancel()
 
     with (
         patch.object(cron.asyncio, "gather", side_effect=_fake_gather),
         patch.object(cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())),
     ):
         await cron._cron_main(alerter=None)
-    assert "_drift_loop" in scheduled
+
+    assert "drift" in _supervisor._loops

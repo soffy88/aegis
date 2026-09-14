@@ -29,9 +29,7 @@ def _patch_pool():
     pool.acquire = lambda: _fake_pool_acquire()
     fake_persistence = MagicMock()
     fake_persistence.get_pool = lambda: pool
-    return patch.dict(
-        "sys.modules", {"aegis.server.persistence": fake_persistence}
-    )
+    return patch.dict("sys.modules", {"aegis.server.persistence": fake_persistence})
 
 
 @pytest.mark.asyncio
@@ -56,9 +54,12 @@ async def test_delivery_loop_drains_until_empty():
         if sleep_calls["n"] >= 2:
             raise _StopLoop
 
-    with _patch_pool(), patch.object(
-        cron, "_build_webhook_dispatcher", return_value=dispatcher
-    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep), pytest.raises(_StopLoop):
+    with (
+        _patch_pool(),
+        patch.object(cron, "_build_webhook_dispatcher", return_value=dispatcher),
+        patch.object(cron.asyncio, "sleep", side_effect=fake_sleep),
+        pytest.raises(_StopLoop),
+    ):
         await cron._delivery_loop()
 
     assert dispatcher.deliver_batch.await_count == 3  # drained until empty
@@ -79,9 +80,12 @@ async def test_delivery_loop_respects_batch_cap():
         if sleep_calls["n"] >= 2:
             raise _StopLoop
 
-    with _patch_pool(), patch.object(
-        cron, "_build_webhook_dispatcher", return_value=dispatcher
-    ), patch.object(cron.asyncio, "sleep", side_effect=fake_sleep), pytest.raises(_StopLoop):
+    with (
+        _patch_pool(),
+        patch.object(cron, "_build_webhook_dispatcher", return_value=dispatcher),
+        patch.object(cron.asyncio, "sleep", side_effect=fake_sleep),
+        pytest.raises(_StopLoop),
+    ):
         await cron._delivery_loop()
 
     # bounded by the per-tick cap, not infinite
@@ -91,20 +95,23 @@ async def test_delivery_loop_respects_batch_cap():
 @pytest.mark.asyncio
 async def test_delivery_loop_registered_in_cron_main():
     """_cron_main must actually schedule the delivery loop."""
-    scheduled: list[str] = []
+    from aegis.server.orchestration.loop_supervisor import _supervisor
 
-    def _track(coro):
-        scheduled.append(coro.__name__ if hasattr(coro, "__name__") else str(coro))
-        coro.close()  # avoid 'coroutine was never awaited' warnings
-        return None
+    scheduled: list[str] = []
 
     async def _fake_gather(*coros, **_kwargs):
         for c in coros:
-            _track(c)
+            if hasattr(c, "__name__"):
+                scheduled.append(c.__name__)
+            elif hasattr(c, "get_name"):
+                scheduled.append(c.get_name())
+            if hasattr(c, "cancel"):
+                c.cancel()
 
-    with patch.object(cron.asyncio, "gather", side_effect=_fake_gather), patch.object(
-        cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())
+    with (
+        patch.object(cron.asyncio, "gather", side_effect=_fake_gather),
+        patch.object(cron, "_acquire_loop_runner_role", AsyncMock(return_value=AsyncMock())),
     ):
         await cron._cron_main(alerter=None)
 
-    assert "_delivery_loop" in scheduled
+    assert "delivery" in _supervisor._loops

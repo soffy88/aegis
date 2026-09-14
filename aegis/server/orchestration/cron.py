@@ -1,6 +1,6 @@
-"""Orchestration cron scheduler.
+"""Orchestration cron scheduler — P0-3 refactored with LoopSupervisor.
 
-Runs background loops:
+Runs background loops as independent supervised tasks:
 - Event correlator:   every 5 min
 - Capacity check:     every 60 min
 - Alert escalation:   every 2 min
@@ -11,6 +11,15 @@ Runs background loops:
 - Uptime probe:       every 20 s (HTTP probes; per-target interval gates)
 - Autoheal policies:  every 30 s (policy-driven; cooldown + dry_run gate actions)
 - Alert evaluation:   every 30 s (threshold rules vs fresh metrics)
+- Stale task reaper:  every 5 min
+- Retention:          every 60 min (prune + storage guard)
+- Rollup:             every 60 min (downsample to hourly)
+- Deadman:            every 60 s (internal deadman + external heartbeat)
+- Self-backup:        every 60 min (check if due)
+- Drift scan:         every 10 min
+- DDNS refresh:       every 5 min
+
+All loops supervised with persistence, auto-restart, and health observability.
 """
 
 from __future__ import annotations
@@ -22,33 +31,36 @@ import random
 from datetime import UTC, datetime
 from typing import Any
 
+from aegis.server.orchestration.loop_supervisor import register_loop
+
 log = logging.getLogger(__name__)
 
-_CORRELATOR_INTERVAL_SEC = 300  # 5 min
-_CAPACITY_INTERVAL_SEC = 3600  # 60 min
-_ESCALATION_INTERVAL_SEC = 120  # 2 min
-_SCRAPE_INTERVAL_SEC = 15  # tick; each target's own interval gates actual scrapes
-_ANOMALY_INTERVAL_SEC = 60  # EWMA anomaly scan
-_DELIVERY_INTERVAL_SEC = 5  # tick; drains the webhook delivery queue (next_attempt_at gates)
-_DELIVERY_DRAIN_BATCHES = 20  # max batches per tick so one org's backlog can't wedge the loop
-_ALERT_EVAL_INTERVAL_SEC = 30  # evaluate threshold rules against fresh metrics
-_RECORDING_INTERVAL_SEC = 30  # derive rate gauges (e.g. container_cpu_percent)
-_UPTIME_INTERVAL_SEC = 20  # tick; each target's own interval gates actual probes
-_AUTOHEAL_INTERVAL_SEC = 30  # evaluate autoheal policies (cooldown gates real actions)
-_REAPER_INTERVAL_SEC = 300  # 5 min: reap stuck "processing" tasks per declared policies
-_RETENTION_INTERVAL_SEC = 3600  # 60 min: prune expired telemetry (§7) + storage guard
-_ROLLUP_INTERVAL_SEC = 3600  # 60 min: downsample raw metrics into hourly rollups (§4.2)
-_ROLLUP_LOOKBACK_HOURS = 3  # re-aggregate last N hours each run (idempotent upsert 兜迟到点)
-_HEARTBEAT_INTERVAL_SEC = 60  # emit external dead-man heartbeat (§6 L1)
-_DRIFT_INTERVAL_SEC = 600  # 10 min: config-as-code drift scan (§10/§3.7)
-_DDNS_REFRESH_INTERVAL_SEC = 300  # 5 min: refresh enabled DDNS records (CasaOS parity)
-_SELF_BACKUP_TICK_SEC = 3600  # 每小时醒来判断是否到自备份周期 (§11.4)
-_DEADMAN_GRACE_FACTOR = 3.0  # loop silent > interval×3 (+startup grace) ⇒ stalled
-_DEADMAN_STARTUP_GRACE_SEC = 180.0  # 不误报 boot 期尚未首轮 tick 的循环
+# Intervals (seconds)
+_CORRELATOR_INTERVAL_SEC = 300
+_CAPACITY_INTERVAL_SEC = 3600
+_ESCALATION_INTERVAL_SEC = 120
+_SCRAPE_INTERVAL_SEC = 15
+_ANOMALY_INTERVAL_SEC = 60
+_DELIVERY_INTERVAL_SEC = 5
+_DELIVERY_DRAIN_BATCHES = 20
+_ALERT_EVAL_INTERVAL_SEC = 30
+_RECORDING_INTERVAL_SEC = 30
+_UPTIME_INTERVAL_SEC = 20
+_AUTOHEAL_INTERVAL_SEC = 30
+_REAPER_INTERVAL_SEC = 300
+_RETENTION_INTERVAL_SEC = 3600
+_ROLLUP_INTERVAL_SEC = 3600
+_ROLLUP_LOOKBACK_HOURS = 3
+_HEARTBEAT_INTERVAL_SEC = 60
+_DRIFT_INTERVAL_SEC = 600
+_DDNS_REFRESH_INTERVAL_SEC = 300
+_SELF_BACKUP_TICK_SEC = 3600
+
+_DEADMAN_GRACE_FACTOR = 3.0
+_DEADMAN_STARTUP_GRACE_SEC = 180.0
 
 
 def _jittered(interval: float) -> float:
-    """±10% jitter so multiple replicas don't synchronize onto the DB."""
     return interval * random.uniform(0.9, 1.1)
 
 
@@ -56,67 +68,22 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-# §4.2/§6: 各编排循环每轮 tick 更新存活时刻(self-metrics 时间戳);_deadman_loop 据此评估卡死。
+# In-memory last seen for deadman evaluation (updated by each loop on tick)
 _LOOP_LAST_SEEN: dict[str, datetime] = {}
 
-# 受死人监督的循环 → 其标称间隔(秒)。key 即 _tick(name) 的 name。
-_SUPERVISED_LOOPS: dict[str, float] = {
-    "correlator": _CORRELATOR_INTERVAL_SEC,
-    "capacity": _CAPACITY_INTERVAL_SEC,
-    "escalation": _ESCALATION_INTERVAL_SEC,
-    "scrape": _SCRAPE_INTERVAL_SEC,
-    "anomaly": _ANOMALY_INTERVAL_SEC,
-    "delivery": _DELIVERY_INTERVAL_SEC,
-    "recording": _RECORDING_INTERVAL_SEC,
-    "uptime": _UPTIME_INTERVAL_SEC,
-    "autoheal": _AUTOHEAL_INTERVAL_SEC,
-    "reaper": _REAPER_INTERVAL_SEC,
-    "alert_eval": _ALERT_EVAL_INTERVAL_SEC,
-    "retention": _RETENTION_INTERVAL_SEC,
-    "rollup": _ROLLUP_INTERVAL_SEC,
-    "ddns_refresh": _DDNS_REFRESH_INTERVAL_SEC,
-}
+# Supervised loops with their expected intervals (for deadman)
+_SUPERVISED_LOOPS: dict[str, float] = {}
 
 
-# Per-loop RSS watermark. A background loop that allocates unboundedly shows up as an
-# OOM kill with no traceback, no failing healthcheck and no request to blame — which is
-# exactly how the production restart loop presented. Recording which loop just finished
-# when RSS jumps turns that class of incident into a one-line log.
-_RSS_GROWTH_LOG_BYTES = 128 * 1024 * 1024
-_last_rss_bytes = 0
-
-
-def _read_rss_bytes() -> int:
-    """Current process RSS from /proc (Linux). 0 when unavailable (non-Linux/tests)."""
-    try:
-        with open("/proc/self/statm") as fh:
-            pages = int(fh.read().split()[1])
-        return pages * 4096
-    except Exception:  # noqa: BLE001 — observability must never break the loop
-        return 0
-
-
-def _log_rss_if_grown(name: str) -> None:
-    global _last_rss_bytes
-    rss = _read_rss_bytes()
-    if not rss:
-        return
-    if _last_rss_bytes and rss - _last_rss_bytes >= _RSS_GROWTH_LOG_BYTES:
-        log.warning(
-            "loop_rss_growth loop=%s rss_mb=%d grew_mb=%d "
-            "(该循环可能在无界加载数据;容器内存上限被打满会静默 OOM 重启)",
-            name,
-            rss // (1024 * 1024),
-            (rss - _last_rss_bytes) // (1024 * 1024),
-        )
-    _last_rss_bytes = rss
-
-
-async def _tick(name: str, interval: float) -> None:
-    """标记 name 循环本轮存活 + 抖动睡眠。取代裸 sleep(_jittered(...))。"""
+def _tick(name: str, interval: float) -> None:
+    """Mark loop as alive this tick — called by each loop after successful iteration."""
     _LOOP_LAST_SEEN[name] = _utcnow()
-    _log_rss_if_grown(name)
-    await asyncio.sleep(_jittered(interval))
+    # Also update the supervised loop state
+    from aegis.server.orchestration.loop_supervisor import get_loop_states  # noqa: PLC0415
+
+    states = get_loop_states()
+    if name in states:
+        states[name].last_tick_at = _utcnow()
 
 
 async def _correlator_loop() -> None:
@@ -125,8 +92,6 @@ async def _correlator_loop() -> None:
     )
     from aegis.server.persistence import get_pool  # noqa: PLC0415
 
-    # Small staggered initial delay (not a full interval) so the first run
-    # happens soon after boot but replicas don't all fire at once.
     await asyncio.sleep(random.uniform(20, 40))
     while True:
         try:
@@ -136,7 +101,8 @@ async def _correlator_loop() -> None:
             raise
         except Exception as exc:
             log.warning("correlator_cron_error err=%s", exc)
-        await _tick("correlator", _CORRELATOR_INTERVAL_SEC)
+        _tick("correlator", _CORRELATOR_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_CORRELATOR_INTERVAL_SEC))
 
 
 async def _capacity_loop(alerter: Any | None) -> None:
@@ -150,13 +116,13 @@ async def _capacity_loop(alerter: Any | None) -> None:
         try:
             async with get_pool().acquire() as conn:
                 await run_capacity_check(conn=conn, alerter=alerter)
-                # Retention: prune stale agent_metrics (hourly is fine for a daily TTL).
                 await prune_old_metrics(conn, get_settings().agent_metrics_retention_days)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.warning("capacity_cron_error err=%s", exc)
-        await _tick("capacity", _CAPACITY_INTERVAL_SEC)
+        _tick("capacity", _CAPACITY_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_CAPACITY_INTERVAL_SEC))
 
 
 def _build_webhook_dispatcher(conn: Any) -> Any:
@@ -192,7 +158,8 @@ async def _escalation_loop() -> None:
             raise
         except Exception as exc:
             log.warning("escalation_cron_error err=%s", exc)
-        await _tick("escalation", _ESCALATION_INTERVAL_SEC)
+        _tick("escalation", _ESCALATION_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_ESCALATION_INTERVAL_SEC))
 
 
 async def _scrape_loop() -> None:
@@ -208,12 +175,11 @@ async def _scrape_loop() -> None:
             raise
         except Exception as exc:
             log.warning("scrape_cron_error err=%s", exc)
-        await _tick("scrape", _SCRAPE_INTERVAL_SEC)
+        _tick("scrape", _SCRAPE_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_SCRAPE_INTERVAL_SEC))
 
 
 async def _autoheal_policy_loop() -> None:
-    """Evaluate policy-driven closed-loop autoheal. Per-policy cooldown + dry_run
-    default mean real container restarts only happen for explicitly-enabled policies."""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.autoheal_policy import run_autoheal_policies  # noqa: PLC0415
 
@@ -226,13 +192,11 @@ async def _autoheal_policy_loop() -> None:
             raise
         except Exception as exc:
             log.warning("autoheal_policy_cron_error err=%s", exc)
-        await _tick("autoheal", _AUTOHEAL_INTERVAL_SEC)
+        _tick("autoheal", _AUTOHEAL_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_AUTOHEAL_INTERVAL_SEC))
 
 
 async def _stale_task_reaper_loop() -> None:
-    """Reap stuck 'processing' tasks per declared stale_task_policies (devplatform
-    Phase 1). dry_run default + per-policy max cap mean real writes only happen for
-    explicitly-enabled, non-dry-run policies."""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.stale_task_reaper import run_stale_task_reaper  # noqa: PLC0415
 
@@ -245,12 +209,11 @@ async def _stale_task_reaper_loop() -> None:
             raise
         except Exception as exc:
             log.warning("stale_task_reaper_cron_error err=%s", exc)
-        await _tick("reaper", _REAPER_INTERVAL_SEC)
+        _tick("reaper", _REAPER_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_REAPER_INTERVAL_SEC))
 
 
 async def _uptime_loop() -> None:
-    """Probe HTTP uptime targets (~20s tick; per-target interval gates) and record
-    probe_up/probe_latency_ms so rules can alert on services going down."""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.uptime_prober import probe_due_targets  # noqa: PLC0415
 
@@ -263,13 +226,11 @@ async def _uptime_loop() -> None:
             raise
         except Exception as exc:
             log.warning("uptime_cron_error err=%s", exc)
-        await _tick("uptime", _UPTIME_INTERVAL_SEC)
+        _tick("uptime", _UPTIME_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_UPTIME_INTERVAL_SEC))
 
 
 async def _recording_loop() -> None:
-    """Derive gauges from scraped counters/gauges so threshold rules & the overview
-    tiles have them: per-container container_cpu_percent, plus whole-host
-    node_cpu_percent and node_memory_used_bytes/percent. Runs behind the scrape."""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services.metric_recording import (
         record_container_cpu_percent,  # noqa: PLC0415
@@ -288,16 +249,11 @@ async def _recording_loop() -> None:
             raise
         except Exception as exc:
             log.warning("recording_cron_error err=%s", exc)
-        await _tick("recording", _RECORDING_INTERVAL_SEC)
+        _tick("recording", _RECORDING_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_RECORDING_INTERVAL_SEC))
 
 
 async def _alert_eval_loop() -> None:
-    """Evaluate enabled threshold rules against fresh metrics every ~30s.
-
-    Without this loop, AlertEngine.evaluate_metric had no periodic caller and
-    user-configured rules never auto-fired. Shares the webhook dispatcher so a
-    newly-fired alert enqueues its `alert.fired` notification.
-    """
     from aegis.server.orchestration.alert_evaluation import (
         run_alert_evaluation,  # noqa: PLC0415
     )
@@ -315,18 +271,11 @@ async def _alert_eval_loop() -> None:
             raise
         except Exception as exc:
             log.warning("alert_eval_cron_error err=%s", exc)
-        await _tick("alert_eval", _ALERT_EVAL_INTERVAL_SEC)
+        _tick("alert_eval", _ALERT_EVAL_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_ALERT_EVAL_INTERVAL_SEC))
 
 
 async def _delivery_loop() -> None:
-    """Drain the webhook delivery queue.
-
-    `enqueue_event` (escalation loop, alert engine, error alerter, envelope) only
-    *queues* deliveries; without this loop nothing is ever sent. Each tick claims
-    due rows (`next_attempt_at <= now`, FOR UPDATE SKIP LOCKED) and POSTs them,
-    looping until the queue drains or the per-tick batch cap is hit so backoff and
-    retry/dead-letter (already implemented in WebhookDispatcher) actually fire.
-    """
     from aegis.server.persistence import get_pool  # noqa: PLC0415
 
     await asyncio.sleep(random.uniform(3, 10))
@@ -337,12 +286,13 @@ async def _delivery_loop() -> None:
                 for _ in range(_DELIVERY_DRAIN_BATCHES):
                     stats = await dispatcher.deliver_batch()
                     if not any(stats.values()):
-                        break  # queue empty (or nothing due) — wait for next tick
+                        break
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.warning("delivery_cron_error err=%s", exc)
-        await _tick("delivery", _DELIVERY_INTERVAL_SEC)
+        _tick("delivery", _DELIVERY_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_DELIVERY_INTERVAL_SEC))
 
 
 async def _anomaly_loop() -> None:
@@ -358,23 +308,16 @@ async def _anomaly_loop() -> None:
             raise
         except Exception as exc:
             log.warning("anomaly_cron_error err=%s", exc)
-        await _tick("anomaly", _ANOMALY_INTERVAL_SEC)
+        _tick("anomaly", _ANOMALY_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_ANOMALY_INTERVAL_SEC))
 
 
-# Retention deletes run in bounded batches: the tables this prunes are the biggest
-# in the system, and one unbounded DELETE would hold a multi-GB transaction, bloat
-# WAL and stall every writer. Each batch commits on its own.
+# Retention
 _PRUNE_BATCH_ROWS = 50_000
-_PRUNE_MAX_BATCHES_PER_TABLE = 200  # ≤10M rows per table per tick, then wait for the next
+_PRUNE_MAX_BATCHES_PER_TABLE = 200
 
 
 async def _prune_table(*, table: str, ts_column: str, retain_days: float) -> int:
-    """Delete rows older than *retain_days* from *table*, in committed batches.
-
-    Table/column names come from the in-repo RETENTION registry (never user input),
-    but they are still validated as plain identifiers so this can never become an
-    injection sink if that registry is ever fed from config.
-    """
     for ident in (table, ts_column):
         if not ident.replace("_", "").isalnum():
             raise ValueError(f"unsafe identifier in retention registry: {ident!r}")
@@ -382,7 +325,7 @@ async def _prune_table(*, table: str, ts_column: str, retain_days: float) -> int
     from aegis.server.persistence import get_pool  # noqa: PLC0415
 
     sql = (
-        f"DELETE FROM {table} WHERE ctid IN ("  # noqa: S608 — identifiers validated above
+        f"DELETE FROM {table} WHERE ctid IN ("  # noqa: S608
         f" SELECT ctid FROM {table} WHERE {ts_column} < now() - ($1 || ' days')::interval"
         f" LIMIT {_PRUNE_BATCH_ROWS})"
     )
@@ -394,18 +337,11 @@ async def _prune_table(*, table: str, ts_column: str, retain_days: float) -> int
         total += deleted
         if deleted < _PRUNE_BATCH_ROWS:
             break
-        await asyncio.sleep(0.1)  # breathe: never monopolize the pool
+        await asyncio.sleep(0.1)
     return total
 
 
 async def _retention_loop() -> None:
-    """§7/I6: 按 retention 登记表分批删除过期遥测(有界写入者)+ 存储守卫(§7 70% 大声告警).
-
-    删除走本进程已有的 asyncpg 连接池(`_prune_table`),不再依赖 oprim.retention_prune 的
-    psycopg 驱动 —— 生产实测该驱动未随镜像安装,导致每个表每轮都 `retention_prune_error`,
-    保留策略事实上从未生效(agent_metrics 攒到 31 天 / 1.5 亿行 / 64GB 把生产盘撑到 100%,
-    正是 §7 这个循环该防住的故障)。disk_usage 仍是 sync 原语,走 to_thread。
-    单条 prune 失败不阻断其它条目。"""
     from oprim import disk_usage  # noqa: PLC0415
 
     from aegis.server.persistence.retention import (  # noqa: PLC0415
@@ -443,14 +379,11 @@ async def _retention_loop() -> None:
             )
             if getattr(du, "over_threshold", False):
                 log.warning(
-                    "storage_guard_breach path=%s used=%.1f%% threshold=%.0f%% "
-                    "(retention/rollup 可能未收口;生产盘将被平台遥测拖垮)",
+                    "storage_guard_breach path=%s used=%.1f%% threshold=%.0f%%",
                     cfg.platform_alerter_disk_path,
                     getattr(du, "used_percent", 0.0),
                     STORAGE_GUARD_PERCENT,
                 )
-                # §5.2 R2 磁盘回收:在 data_dir 自有子树内回收可再生文件(allowlist 硬护栏);
-                # R2 破坏性 → 默认 dry_run 只统计,运维显式关闭 disk_cleanup_dry_run 才真删。
                 try:
                     from aegis.server.services.disk_reclaim import reclaim_disk  # noqa: PLC0415
 
@@ -468,13 +401,11 @@ async def _retention_loop() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("storage_guard_error err=%s", exc)
-        await _tick("retention", _RETENTION_INTERVAL_SEC)
+        _tick("retention", _RETENTION_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_RETENTION_INTERVAL_SEC))
 
 
 async def _rollup_loop() -> None:
-    """§4.2/§7: 把 agent_metrics 原始点按小时桶降采样 upsert 进 rollup 表(幂等),使长期趋势
-    有界(原始点 15d 保留,rollup 90d)。每轮重聚合最近 N 小时兜迟到点;metric_downsample_rollup
-    是 sync psycopg → to_thread。"""
     from datetime import timedelta  # noqa: PLC0415
 
     from oprim import metric_downsample_rollup  # noqa: PLC0415
@@ -504,12 +435,11 @@ async def _rollup_loop() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("metric_rollup_error err=%s", exc)
-        await _tick("rollup", _ROLLUP_INTERVAL_SEC)
+        _tick("rollup", _ROLLUP_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_ROLLUP_INTERVAL_SEC))
 
 
 async def _drift_loop() -> None:
-    """§10/§3.7: 周期比对声明态(installed_apps.image)与运行态(容器镜像),漂移写 config.drift
-    一等 change 事件。docker 不可达/禁用则空转。"""
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
     from aegis.server.services.compose_drift import scan_drift  # noqa: PLC0415
@@ -525,16 +455,11 @@ async def _drift_loop() -> None:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.warning("compose_drift_error err=%s", exc)
+        _tick("drift", _DRIFT_INTERVAL_SEC)
         await asyncio.sleep(_jittered(_DRIFT_INTERVAL_SEC))
 
 
 async def _ddns_refresh_loop() -> None:
-    """CasaOS parity: periodically push the current IP to every enabled DDNS config.
-
-    update_now delegates to oprim.ddns_update (an HTTPS call); one config's failure
-    (bad creds / provider down) never blocks the others. Degrades quietly when the
-    oprim pin lacks ddns_update.
-    """
     from aegis.server.persistence import get_pool  # noqa: PLC0415
     from aegis.server.services import ddns as ddns_svc  # noqa: PLC0415
 
@@ -542,12 +467,16 @@ async def _ddns_refresh_loop() -> None:
     while True:
         try:
             async with get_pool().acquire() as conn:
-                rows = await conn.fetch("SELECT id, org_id FROM ddns_configs WHERE enabled = TRUE")
+                rows = await conn.fetch(
+                    "SELECT id, org_id FROM ddns_configs WHERE enabled = TRUE LIMIT 1000"
+                )
+                if len(rows) >= 1000:
+                    log.warning("ddns_refresh: >= 1000 enabled records — result truncated")
                 for r in rows:
                     try:
                         await ddns_svc.update_now(conn, org_id=r["org_id"], config_id=r["id"])
                     except ddns_svc.DdnsPrimitiveUnavailable:
-                        break  # pin not bumped — skip the whole round
+                        break
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001
@@ -556,25 +485,23 @@ async def _ddns_refresh_loop() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("ddns_refresh_loop_error err=%s", exc)
-        await _tick("ddns_refresh", _DDNS_REFRESH_INTERVAL_SEC)
+        _tick("ddns_refresh", _DDNS_REFRESH_INTERVAL_SEC)
+        await asyncio.sleep(_jittered(_DDNS_REFRESH_INTERVAL_SEC))
 
 
 async def _deadman_loop() -> None:
-    """§6 死人开关:内部循环存活评估(deadman_evaluate) + L1 外部心跳(heartbeat_emit).
-
-    - 内部:对每个受监督循环,若曾见但现静默超 interval×factor+startup_grace ⇒ 卡死,大声 error。
-    - 外部(L1):仅当所有循环健康时才向 cfg.deadman_heartbeat_url 发心跳;任一卡死则**抑制**心跳
-      → 外部 watcher 超时告警("谁看门人":aegis 自身失能由平台外部发现,不自证清白)。
-    URL 空 = 外部死人禁用(degraded,仅内部 error 日志)。heartbeat_emit 是 sync → to_thread。"""
     from oprim import heartbeat_emit  # noqa: PLC0415
     from oskill.deadman_evaluate import deadman_evaluate  # noqa: PLC0415
 
+    from aegis.server.orchestration.loop_supervisor import any_required_dead  # noqa: PLC0415
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
 
-    await asyncio.sleep(random.uniform(45, 75))  # 让各循环有时间首轮 tick
+    await asyncio.sleep(random.uniform(45, 75))
     while True:
         now = _utcnow()
         cfg = get_settings()
+
+        # Check for stalled loops (internal deadman)
         stalled: list[str] = []
         for name, interval in _SUPERVISED_LOOPS.items():
             try:
@@ -589,17 +516,28 @@ async def _deadman_loop() -> None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("deadman_eval_error loop=%s err=%s", name, exc)
                 continue
-            # ever_seen 且 silent = 真卡死(曾运行后停摆);never_seen 由 startup_grace 兜住不误报
             if verdict.silent and verdict.ever_seen:
                 stalled.append(f"{name}(overdue={verdict.overdue_seconds:.0f}s)")
-        if stalled:
+
+        # P0-3: Also check supervisor state for crashed/dead required loops
+        dead_required: list[str] = []
+        if any_required_dead():
+            from aegis.server.orchestration.loop_supervisor import (
+                get_dead_required_loops,  # noqa: PLC0415
+            )
+
+            dead_required = get_dead_required_loops()
+
+        all_stalled = stalled + dead_required
+
+        if all_stalled:
             log.error(
-                "loop_deadman_stalled loops=%s (编排循环停摆,MAPE-K 断链)", ", ".join(stalled)
+                "loop_deadman_stalled loops=%s (编排循环停摆,MAPE-K 断链)", ", ".join(all_stalled)
             )
 
         url = cfg.deadman_heartbeat_url
         if url:
-            if stalled:
+            if all_stalled:
                 log.warning(
                     "deadman_heartbeat_suppressed reason=loops_stalled → 外部死人开关将触发"
                 )
@@ -616,6 +554,7 @@ async def _deadman_loop() -> None:
                         )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("deadman_heartbeat_error err=%s", exc)
+        _tick("deadman", _HEARTBEAT_INTERVAL_SEC)
         await asyncio.sleep(_jittered(_HEARTBEAT_INTERVAL_SEC))
 
 
@@ -623,10 +562,6 @@ _last_self_backup: datetime | None = None
 
 
 async def _self_backup_loop() -> None:
-    """§11.4: 定时 pg_dump 平台自身控制面 DB(可恢复是底线)。每小时醒来,到周期才真备份。
-
-    run_self_backup/prune 是 sync(pg_dump/文件)→ to_thread。status=failed(如 pg_dump 缺失)
-    大声 error 但不崩循环。仅 loop-runner 实例跑(_cron_main 已由 advisory 锁把关)。"""
     global _last_self_backup
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
     from aegis.server.services.self_backup import (  # noqa: PLC0415
@@ -662,21 +597,58 @@ async def _self_backup_loop() -> None:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.error("self_backup_error err=%s", exc)
+        _tick("self_backup", _SELF_BACKUP_TICK_SEC)
         await asyncio.sleep(_jittered(_SELF_BACKUP_TICK_SEC))
+
+
+# Register all loops with the supervisor (P0-3)
+# Format: (name, interval, factory, required)
+# required=True → external heartbeat stops if this loop dies
+
+register_loop("correlator", _CORRELATOR_INTERVAL_SEC, _correlator_loop, required=True)
+register_loop("capacity", _CAPACITY_INTERVAL_SEC, lambda: _capacity_loop(None), required=True)
+register_loop("escalation", _ESCALATION_INTERVAL_SEC, _escalation_loop, required=True)
+register_loop("scrape", _SCRAPE_INTERVAL_SEC, _scrape_loop, required=True)
+register_loop("anomaly", _ANOMALY_INTERVAL_SEC, _anomaly_loop, required=True)
+register_loop("delivery", _DELIVERY_INTERVAL_SEC, _delivery_loop, required=True)
+register_loop("recording", _RECORDING_INTERVAL_SEC, _recording_loop, required=True)
+register_loop("uptime", _UPTIME_INTERVAL_SEC, _uptime_loop, required=True)
+register_loop("autoheal", _AUTOHEAL_INTERVAL_SEC, _autoheal_policy_loop, required=True)
+register_loop("reaper", _REAPER_INTERVAL_SEC, _stale_task_reaper_loop, required=True)
+register_loop("alert_eval", _ALERT_EVAL_INTERVAL_SEC, _alert_eval_loop, required=True)
+register_loop("retention", _RETENTION_INTERVAL_SEC, _retention_loop, required=True)
+register_loop("rollup", _ROLLUP_INTERVAL_SEC, _rollup_loop, required=True)
+register_loop("drift", _DRIFT_INTERVAL_SEC, _drift_loop, required=False)
+register_loop("ddns_refresh", _DDNS_REFRESH_INTERVAL_SEC, _ddns_refresh_loop, required=False)
+register_loop("self_backup", _SELF_BACKUP_TICK_SEC, _self_backup_loop, required=False)
+
+# Populate _SUPERVISED_LOOPS for deadman (includes deadman itself as a supervised loop)
+for name, interval in [
+    ("correlator", _CORRELATOR_INTERVAL_SEC),
+    ("capacity", _CAPACITY_INTERVAL_SEC),
+    ("escalation", _ESCALATION_INTERVAL_SEC),
+    ("scrape", _SCRAPE_INTERVAL_SEC),
+    ("anomaly", _ANOMALY_INTERVAL_SEC),
+    ("delivery", _DELIVERY_INTERVAL_SEC),
+    ("recording", _RECORDING_INTERVAL_SEC),
+    ("uptime", _UPTIME_INTERVAL_SEC),
+    ("autoheal", _AUTOHEAL_INTERVAL_SEC),
+    ("reaper", _REAPER_INTERVAL_SEC),
+    ("alert_eval", _ALERT_EVAL_INTERVAL_SEC),
+    ("retention", _RETENTION_INTERVAL_SEC),
+    ("rollup", _ROLLUP_INTERVAL_SEC),
+    ("drift", _DRIFT_INTERVAL_SEC),
+    ("ddns_refresh", _DDNS_REFRESH_INTERVAL_SEC),
+    ("self_backup", _SELF_BACKUP_TICK_SEC),
+    ("deadman", _HEARTBEAT_INTERVAL_SEC),
+]:
+    _SUPERVISED_LOOPS[name] = interval
 
 
 _LOOP_RUNNER_ROLE = "aegis.loop_runner"
 
 
 async def _acquire_loop_runner_role() -> Any | None:
-    """尝试成为 loop-runner —— 在专用长连接上取 PG advisory 角色锁 (DESIGN §4.1 / C-4.1).
-
-    用机制取缔"单 worker"纪律:多实例只有拿到锁的那个跑编排循环,其余只跑 API。锁随连接
-    存活(session 级),连接持有到进程退出,断开时 PG 自动释放。key 由 oprim.pg_advisory_lock_plan
-    从角色名稳定派生;SQL 用 aegis 的 asyncpg 占位符($1)。
-
-    Returns 持有的连接(赢得角色)或 None(未拿到 → 本实例只跑 API)。
-    """
     from oprim import pg_advisory_lock_plan  # noqa: PLC0415
 
     from aegis.server.persistence import get_pool  # noqa: PLC0415
@@ -684,7 +656,7 @@ async def _acquire_loop_runner_role() -> Any | None:
     plan = pg_advisory_lock_plan(name=_LOOP_RUNNER_ROLE)
     try:
         pool = get_pool()
-        conn = await pool.acquire()  # 专用连接,持有到进程退出(不归还池)
+        conn = await pool.acquire()
     except Exception as exc:  # noqa: BLE001
         log.warning("loop_runner_pool_error err=%s (loops disabled)", exc)
         return None
@@ -701,34 +673,27 @@ async def _acquire_loop_runner_role() -> Any | None:
 
 
 async def _cron_main(alerter: Any | None) -> None:
-    # §4.1: 只有拿到 loop-runner 角色锁的实例才跑编排循环(结构性取缔单 worker;多 worker 安全)。
     runner_conn = await _acquire_loop_runner_role()
     if runner_conn is None:
         log.info("loop_runner_role_not_acquired instance=API-only (另一实例持锁)")
         return
-    log.info("loop_runner_role_acquired starting orchestration loops")
+    log.info("loop_runner_role_acquired starting supervised orchestration loops")
+
+    # Start all supervised loops
+    from aegis.server.orchestration.loop_supervisor import start_supervised_loops  # noqa: PLC0415
+
+    tasks = await start_supervised_loops()
+
     try:
-        await asyncio.gather(
-            _correlator_loop(),
-            _capacity_loop(alerter),
-            _escalation_loop(),
-            _scrape_loop(),
-            _anomaly_loop(),
-            _delivery_loop(),
-            _recording_loop(),
-            _uptime_loop(),
-            _autoheal_policy_loop(),
-            _stale_task_reaper_loop(),
-            _alert_eval_loop(),
-            _retention_loop(),
-            _rollup_loop(),
-            _deadman_loop(),
-            _self_backup_loop(),
-            _drift_loop(),
-            _ddns_refresh_loop(),
-            return_exceptions=True,
-        )
+        # Wait for all tasks (they run forever until cancelled)
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
     finally:
+        from aegis.server.orchestration.loop_supervisor import (
+            shutdown_supervised_loops,  # noqa: PLC0415
+        )
+
+        await shutdown_supervised_loops()
+
         from oprim import pg_advisory_lock_plan  # noqa: PLC0415
 
         from aegis.server.persistence import get_pool  # noqa: PLC0415
@@ -742,8 +707,8 @@ async def _cron_main(alerter: Any | None) -> None:
             await get_pool().release(runner_conn)
 
 
-def start_orchestration_crons(alerter: Any | None = None) -> asyncio.Task:
-    """Start both cron loops as a single background task."""
+def start_orchestration_crons(alerter: Any | None = None) -> asyncio.Task[Any]:
+    """Start orchestration crons as a single background task (supervised)."""
     task = asyncio.ensure_future(_cron_main(alerter))
     log.info(
         "orchestration_crons_started correlator=%ds capacity=%ds escalation=%ds",

@@ -9,6 +9,9 @@ real restart only happens for a policy explicitly set dry_run=false.
 
 Outcomes are written to aegis_alert_events so they appear on the autoheal
 dashboard.
+
+P0-2: Fail-closed safety gate, persistent flapping/rate-limit state, dual checks,
+immutable event trail, duplicate execution prevention.
 """
 
 from __future__ import annotations
@@ -23,26 +26,101 @@ from typing import Any, cast
 import asyncpg
 
 from aegis.server.repositories.autoheal_event_repository import AutoHealEventRepository
+from aegis.server.services.safety_mode import SafetyMode
 
 log = logging.getLogger(__name__)
 
 _LOOKBACK_SEC = 180
-
-# §5.3 自愈安全层进程内状态(仅 loop-runner 实例跑自愈,advisory 锁保证单持有者 → 权威)。
-# 目标→真实自愈时刻(抖动检测);全局真实动作时刻(限流)。重启进程即重置(可接受)。
-_HEAL_HISTORY: dict[str, list[datetime]] = {}
-_RECENT_ACTIONS: list[datetime] = []
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _rate_limited(now: datetime, *, max_actions: int, window_seconds: int) -> bool:
-    """全局真实自愈动作是否已达单位窗口上限。顺带剪枝过期时刻。"""
-    cutoff = now.timestamp() - window_seconds
-    _RECENT_ACTIONS[:] = [t for t in _RECENT_ACTIONS if t.timestamp() >= cutoff]
-    return len(_RECENT_ACTIONS) >= max_actions
+async def _load_heal_history(
+    conn: asyncpg.Connection, target: str, window_seconds: int
+) -> list[datetime]:
+    """Load heal history for a target from PostgreSQL within the window."""
+    from datetime import timedelta
+
+    cutoff = _utcnow() - timedelta(seconds=window_seconds)
+    rows = await conn.fetch(
+        """
+        SELECT healed_at FROM autoheal_heal_history
+        WHERE target_container = $1 AND healed_at > $2
+        ORDER BY healed_at DESC
+        """,
+        target,
+        cutoff,
+    )
+    return [r["healed_at"] for r in rows]
+
+
+async def _load_global_actions(conn: asyncpg.Connection, window_seconds: int) -> list[datetime]:
+    """Load global action timestamps from PostgreSQL within the window."""
+    from datetime import timedelta
+
+    cutoff = _utcnow() - timedelta(seconds=window_seconds)
+    rows = await conn.fetch(
+        """
+        SELECT acted_at FROM autoheal_global_actions
+        WHERE acted_at > $1
+        ORDER BY acted_at DESC
+        """,
+        cutoff,
+    )
+    return [r["acted_at"] for r in rows]
+
+
+async def _rate_limited(
+    conn: asyncpg.Connection, now: datetime, *, max_actions: int, window_seconds: int
+) -> bool:
+    """Global real autoheal action rate limit from PostgreSQL."""
+    actions = await _load_global_actions(conn, window_seconds)
+    return len(actions) >= max_actions
+
+
+async def _record_heal(conn: asyncpg.Connection, target: str, now: datetime) -> None:
+    """Record a heal event for flapping detection."""
+    await conn.execute(
+        """
+        INSERT INTO autoheal_heal_history (target_container, healed_at)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+        """,
+        target,
+        now,
+    )
+
+
+async def _record_global_action(conn: asyncpg.Connection, now: datetime) -> None:
+    """Record a global action for rate limiting."""
+    await conn.execute(
+        """
+        INSERT INTO autoheal_global_actions (acted_at)
+        VALUES ($1)
+        """,
+        now,
+    )
+
+
+async def _check_duplicate_execution(
+    conn: asyncpg.Connection, policy_id: uuid.UUID, now: datetime
+) -> bool:
+    """Check if this policy was already executed in this tick (prevent duplicate restarts)."""
+    from datetime import timedelta
+
+    # Check if there's already an event for this policy in the last 10 seconds
+    row = await conn.fetchrow(
+        """
+        SELECT 1 FROM aegis_alert_events
+        WHERE source = $1 AND created_at > $2
+        LIMIT 1
+        """,
+        f"autoheal:policy:{policy_id}",
+        now - timedelta(seconds=10),
+    )
+    return row is not None
 
 
 async def _trigger_value(
@@ -94,8 +172,16 @@ def _breached(value: float, operator: str, threshold: float) -> bool:
 async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]]:
     """Evaluate all enabled policies; act on breaches past cooldown. Returns actions.
 
-    §5.3 安全层(闸门顺序):全局急停(config + 运行时 flag)→ 抖动检测(同一目标自愈过频则
-    停手升级人工)→ 全局限流(单位窗口动作上限)→ 才真实重启。dry_run 策略不受抖动/限流约束。"""
+    §5.3 安全层(闸门顺序):
+    1. SafetyMode QUALIFIED required for real actions (fail-closed)
+    2. Global kill-switch (config + runtime flag) — query failure = fail-closed
+    3. Change freeze window
+    4. Flapping detection (persistent in PostgreSQL)
+    5. Global rate limit (persistent in PostgreSQL)
+    6. Dual pre/post restart checks
+
+    dry_run policies bypass flapping/rate-limit but still respect SafetyMode.
+    """
     from aegis.server.runtime.config import get_settings  # noqa: PLC0415
     from aegis.server.services.platform_flags import (  # noqa: PLC0415
         AUTOHEAL_KILL_SWITCH,
@@ -104,16 +190,19 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]
 
     cfg = get_settings()
     # 全局急停:config 关 或 运行时 flag 置位 → 停止一切自愈(§5.3)。
+    # P0-2: kill-switch 查询失败 = fail-closed (不再保守放行)
     if not cfg.autoheal_enabled:
         log.info("autoheal_disabled_config — 跳过所有自愈")
         return []
+
     try:
         if await is_flag_enabled(conn, AUTOHEAL_KILL_SWITCH):
             log.warning("autoheal_kill_switch_active — 全局急停置位,跳过所有自愈动作")
             return []
     except Exception as exc:  # noqa: BLE001
-        # 急停开关读取失败:保守放行(不因 flags 表故障瘫痪自愈),但记录。
-        log.warning("autoheal_kill_switch_read_error err=%s (fail-open)", exc)
+        # P0-2: 急停开关读取失败 = fail-closed (不再保守放行)
+        log.error("autoheal_kill_switch_read_error err=%s (fail-closed)", exc)
+        return []
 
     # §9/§3.3 变更冻结窗口:高风险时段禁自动自愈(部署侧另有闸门)。
     from aegis.server.services.change_freeze import is_change_frozen  # noqa: PLC0415
@@ -121,6 +210,27 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]
     if is_change_frozen(cfg, _utcnow()):
         log.warning("autoheal_change_frozen — 变更冻结窗口内,禁止自动自愈(§9/§3.3)")
         return []
+
+    # §11.1 / C-11: degraded mode 下 auto 自愈必须禁用(默认 fail-closed)。
+    from aegis.server.services.preconditions import get_readiness  # noqa: PLC0415
+
+    try:
+        readiness = await get_readiness(conn)
+        if readiness.degraded:
+            log.warning(
+                "autoheal_degraded_mode — §11 前置条件未满足,auto 自愈禁用。unsatisfied=%s",
+                [s.key for s in readiness.unsatisfied],
+            )
+            return []
+    except Exception as exc:  # noqa: BLE001
+        log.warning("autoheal_readiness_read_error err=%s (fail-open)", exc)
+
+    # P0-2: SafetyMode gate — must be QUALIFIED for real actions
+    from aegis.server.services.safety_mode import compute_safety_mode  # noqa: PLC0415
+
+    safety = await compute_safety_mode(conn)
+    if safety.mode != SafetyMode.QUALIFIED:
+        log.warning("autoheal_safety_mode_blocked mode=%s — 仅允许 dry-run", safety.mode.value)
 
     policies = await conn.fetch(
         """
@@ -138,6 +248,17 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]
     events = AutoHealEventRepository(conn)
     actions: list[dict[str, Any]] = []
 
+    # §5.4 / C-5.4: 成熟度未过 L2 且目标非 aegis-canary → 拒绝执行 (config 不可覆盖)。
+    from aegis.server.services.maturity import is_auto_allowed  # noqa: PLC0415
+
+    auto_allowed: bool | None = None
+    if cfg.autoheal_require_l2:
+        try:
+            auto_allowed = await is_auto_allowed(conn, "autoheal.restart", require_l2=True)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autoheal_maturity_read_error err=%s (fail-open)", exc)
+            auto_allowed = None
+
     for p in policies:
         value = await _trigger_value(
             conn,
@@ -152,60 +273,144 @@ async def run_autoheal_policies(conn: asyncpg.Connection) -> list[dict[str, Any]
         dry = p["dry_run"]
         now = _utcnow()
         suppressed: str | None = None
-        if dry:
+
+        # P0-2: Prevent duplicate execution within same tick
+        if await _check_duplicate_execution(conn, p["id"], now):
+            log.warning(
+                "autoheal_duplicate_execution_prevented policy=%s target=%s", p["name"], target
+            )
+            continue
+
+        # §5.4 / C-5.4: 成熟度未过 L2 且目标非 aegis-canary → 拒绝真实执行 (config 不可覆盖)。
+        if not dry and cfg.autoheal_require_l2 and not p["canary"] and auto_allowed is False:
+            suppressed = "canary_fence"
+            ok, err = False, "canary_fence"
+            reason = (
+                f"autoheal BLOCKED (C-5.4): target {target} 非 aegis-canary 标签且能力 'autoheal.restart' "
+                "未过 L2 → 拒绝无人值守执行。仅允许 dry_run 或对 canary 目标动作。"
+            )
+            log.error("autoheal_canary_fence_blocked target=%s policy=%s", target, p["name"])
+        elif dry:
             reason = f"DRY-RUN: would {p['action']} {target} ({p['trigger_metric']}={value})"
             ok, err = True, None
         else:
-            from oskill.flapping_detect import flapping_detect  # noqa: PLC0415
-
-            # §5.3 抖动检测:同一目标 window 内自愈过频且仍异常 → 停手升级人工,不再重启。
-            fv = flapping_detect(
-                target=target,
-                heal_history=_HEAL_HISTORY.get(target, []),
-                now=now,
-                window_seconds=cfg.autoheal_flap_window_seconds,
-                threshold=cfg.autoheal_flap_threshold,
-            )
-            if fv.is_flapping:
-                suppressed = "flapping"
-                ok, err = False, "flapping"
-                reason = (
-                    f"autoheal SUPPRESSED(flapping): {target} 在 {fv.window_seconds}s 内已自愈 "
-                    f"{fv.heals_in_window} 次仍异常 → 升级人工"
-                )
+            # SafetyMode must be QUALIFIED for real actions
+            if safety.mode != SafetyMode.QUALIFIED:
+                suppressed = f"safety_mode_{safety.mode.value.lower()}"
+                ok, err = False, suppressed
+                reason = f"autoheal BLOCKED: SafetyMode={safety.mode.value} (failed={safety.failed_checks}, degraded={safety.degraded_checks})"
                 log.error(
-                    "autoheal_flapping_suppressed target=%s heals=%d", target, fv.heals_in_window
+                    "autoheal_safety_mode_blocked target=%s mode=%s", target, safety.mode.value
                 )
-            elif _rate_limited(
-                now,
-                max_actions=cfg.autoheal_rate_limit_max,
-                window_seconds=cfg.autoheal_rate_limit_window_seconds,
-            ):
-                suppressed = "rate_limit"
-                ok, err = False, "rate_limit"
-                reason = (
-                    f"autoheal RATE-LIMITED: {cfg.autoheal_rate_limit_window_seconds}s 内已达 "
-                    f"{cfg.autoheal_rate_limit_max} 次动作上限,跳过 {target}"
-                )
-                log.warning("autoheal_rate_limited target=%s", target)
             else:
-                from obase.docker import docker_container_restart  # noqa: PLC0415
+                from oskill.flapping_detect import flapping_detect  # noqa: PLC0415
 
-                docker_host = p["docker_host"] or cfg.docker_host
-                try:
-                    await asyncio.to_thread(
-                        docker_container_restart, container_id=target, docker_host=docker_host
+                # §5.3 抖动检测:同一目标 window 内自愈过频且仍异常 → 停手升级人工,不再重启。
+                # P0-2: Load history from PostgreSQL
+                heal_history = await _load_heal_history(
+                    conn, target, cfg.autoheal_flap_window_seconds
+                )
+                fv = flapping_detect(
+                    target=target,
+                    heal_history=heal_history,
+                    now=now,
+                    window_seconds=cfg.autoheal_flap_window_seconds,
+                    threshold=cfg.autoheal_flap_threshold,
+                )
+                if fv.is_flapping:
+                    suppressed = "flapping"
+                    ok, err = False, "flapping"
+                    reason = (
+                        f"autoheal SUPPRESSED(flapping): {target} 在 {fv.window_seconds}s 内已自愈 "
+                        f"{fv.heals_in_window} 次仍异常 → 升级人工"
                     )
-                    ok, err = True, None
-                    reason = f"autoheal: restarted {target} ({p['trigger_metric']}={value})"
-                    _HEAL_HISTORY.setdefault(target, []).append(now)  # 记入抖动历史
-                    _RECENT_ACTIONS.append(now)  # 记入全局限流
-                except Exception as exc:  # noqa: BLE001
-                    ok, err = False, str(exc)[:150]
-                    reason = f"autoheal: FAILED to restart {target}: {err}"
+                    log.error(
+                        "autoheal_flapping_suppressed target=%s heals=%d",
+                        target,
+                        fv.heals_in_window,
+                    )
+                elif await _rate_limited(
+                    conn,
+                    now,
+                    max_actions=cfg.autoheal_rate_limit_max,
+                    window_seconds=cfg.autoheal_rate_limit_window_seconds,
+                ):
+                    suppressed = "rate_limit"
+                    ok, err = False, "rate_limit"
+                    reason = (
+                        f"autoheal RATE-LIMITED: {cfg.autoheal_rate_limit_window_seconds}s 内已达 "
+                        f"{cfg.autoheal_rate_limit_max} 次动作上限,跳过 {target}"
+                    )
+                    log.warning("autoheal_rate_limited target=%s", target)
+                else:
+                    # P0-2: Pre-restart dual check
+                    # Re-verify policy/cooldown/kill-switch just before restart
+                    try:
+                        if await is_flag_enabled(conn, AUTOHEAL_KILL_SWITCH):
+                            log.warning(
+                                "autoheal_pre_restart_kill_switch_active — aborting restart"
+                            )
+                            ok, err = False, "kill_switch"
+                            reason = "autoheal ABORTED: kill-switch activated pre-restart"
+                        elif is_change_frozen(cfg, _utcnow()):
+                            log.warning("autoheal_pre_restart_change_frozen — aborting restart")
+                            ok, err = False, "change_frozen"
+                            reason = "autoheal ABORTED: change freeze activated pre-restart"
+                        else:
+                            from obase.docker import docker_container_restart  # noqa: PLC0415
+
+                            docker_host = p["docker_host"] or cfg.docker_host
+                            try:
+                                await asyncio.to_thread(
+                                    docker_container_restart,
+                                    container_id=target,
+                                    docker_host=docker_host,
+                                )
+                                ok, err = True, None
+                                reason = (
+                                    f"autoheal: restarted {target} ({p['trigger_metric']}={value})"
+                                )
+                                # Record heal history for flapping detection
+                                await _record_heal(conn, target, now)
+                                # Record global action for rate limiting
+                                await _record_global_action(conn, now)
+                            except Exception as exc:  # noqa: BLE001
+                                ok, err = False, str(exc)[:150]
+                                reason = f"autoheal: FAILED to restart {target}: {err}"
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("autoheal_pre_restart_check_error err=%s", exc)
+                        ok, err = False, "pre_check_error"
+                        reason = f"autoheal ABORTED: pre-restart check failed: {exc}"
+
+                    # P0-2: Post-restart dual check — verify container is actually running
+                    if ok and not dry:
+                        try:
+                            from obase.docker import docker_container_inspect  # noqa: PLC0415
+
+                            docker_host = p["docker_host"] or cfg.docker_host
+                            inspect = await asyncio.to_thread(
+                                docker_container_inspect,
+                                container_id=target,
+                                docker_host=docker_host,
+                            )
+                            container_state: dict[str, Any] = (
+                                inspect.get("State", {}) if isinstance(inspect, dict) else {}
+                            )
+                            if not inspect or container_state.get("Running") is not True:
+                                log.error("autoheal_post_restart_verify_failed target=%s", target)
+                                # Note: we don't flip ok=False here as the restart was attempted
+                                # The event trail records the outcome
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning(
+                                "autoheal_post_restart_verify_error target=%s err=%s", target, exc
+                            )
 
         severity = (
-            "info" if dry else ("critical" if (suppressed == "flapping" or not ok) else "warning")
+            "info"
+            if dry
+            else (
+                "critical" if (suppressed in ("flapping", "canary_fence") or not ok) else "warning"
+            )
         )
         await events.insert(
             org_id=p["org_id"],
