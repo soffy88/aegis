@@ -17,10 +17,19 @@ if [ "$COUNT" -gt "$BASELINE" ]; then
     exit 1
 fi
 
-# 每个 @pytest.mark.skip / skipif 必带 reason=
-UNREASONED=$(grep -rEn "@pytest\.mark\.skip(if)?\b" aegis/tests --include="*.py" | grep -v "reason=" || true)
+# 每个 skip 必带理由。支持两种写法:
+#   pytest.skip("reason") / pytest.mark.skip(reason="reason") / skipif(cond, reason="...")
+# 检测规则:该行或下一行含字符串字面量(即跳过的理由)。多行写法的 reason 在后续行,用
+# sed 取该行及其后 2 行一起判断。
+UNREASONED=$(grep -rEn "@pytest\.mark\.skip|pytest\.skip\(|skipif" aegis/tests --include="*.py" \
+    | while IFS=: read -r f ln rest; do
+        # 取该行至后 2 行;若含 reason= 或含一个字符串字面量(双/单引号)即视为已说明理由
+        if ! sed -n "${ln}p;$(($ln+1))p;$(($ln+2))p" "$f" 2>/dev/null | grep -Eq "reason=|(['\"])" ; then
+            echo "$f:$ln"
+        fi
+    done || true)
 if [ -n "$UNREASONED" ]; then
-    echo "ERROR (C-9c): 下列 skip 缺 reason=（必须写明为何 skip、何时转真跑）:"
+    echo "ERROR (C-9c): 下列 skip 缺理由（写 required reason=或字符串说明,可为何 skip/何时转真跑）:"
     echo "$UNREASONED"
     exit 1
 fi

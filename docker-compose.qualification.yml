@@ -1,0 +1,124 @@
+# Qualification stack for Aegis P0 closure
+# Runs: TimescaleDB + Redis + Aegis API + Caddy + Webhook receiver
+# Usage: docker compose -f docker-compose.qualification.yml up -d --build
+
+version: "3.9"
+
+services:
+  # TimescaleDB with TimescaleDB extension
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: aegis-qual-db
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis
+      POSTGRES_DB: aegis
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - qual-db-data:/var/lib/postgresql/data
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-qual-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - qual-redis-data:/data
+
+  # Caddy for reverse proxy and TLS
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: aegis-qual-caddy
+    ports:
+      - "8081:80"
+      - "8443:443"
+      - "2020:2019"  # Caddy admin API
+    volumes:
+      - ./Caddyfile.qual:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - aegis-api
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Aegis API backend
+  aegis-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.qual
+    container_name: aegis-qual-api
+    environment:
+      AEGIS_ENV: prod
+      AEGIS_POSTGRES_DSN: postgresql://aegis:aegis@timescaledb:5432/aegis
+      AEGIS_REDIS_URL: redis://redis:6379/0
+      AEGIS_JWT_SECRET: "qualification-secret-must-be-32-bytes-long!!"
+      AEGIS_SECRETS_MASTER_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      AEGIS_REGISTRATION_ENABLED: "false"
+      AEGIS_DEADMAN_HEARTBEAT_URL: "http://webhook-receiver:8088/healthz"
+      AEGIS_LOG_LEVEL: INFO
+      AEGIS_LOG_FORMAT: json
+      AEGIS_DATA_DIR: /data
+      AEGIS_DOCKER_HOST: "unix:///var/run/docker.sock"
+      AEGIS_SELF_BACKUP_INTERVAL_HOURS: 1
+      AEGIS_SELF_BACKUP_RETAIN: 2
+      AEGIS_AUTOHEAL_ENABLED: "true"
+      AEGIS_AUTOHEAL_DRY_RUN: "false"
+      AEGIS_AUTOHEAL_REQUIRE_L2: "false"
+      AEGIS_COMPOSE_DRIFT_ENABLED: "false"
+      AEGIS_CADDY_ADMIN_URL: "http://caddy:2019"
+      AEGIS_CADDY_CONFIG_DIR: /data/caddy
+    ports:
+      - "8082:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - qual-api-data:/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Webhook receiver for qualification tests
+  webhook-receiver:
+    image: python:3.12-alpine
+    container_name: aegis-qual-webhook
+    working_dir: /app
+    command: sh -c "pip install fastapi uvicorn pydantic httpx && python /app/webhook_receiver.py"
+    volumes:
+      - ./scripts/webhook_receiver.py:/app/webhook_receiver.py:ro
+    ports:
+      - "8088:8088"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8088/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qual-db-data:
+  qual-redis-data:
+  qual-api-data:
+  caddy-data:
+  caddy-config:

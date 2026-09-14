@@ -1,0 +1,27 @@
+# Caddyfile for qualification stack
+# Proxies to Aegis API and provides admin API
+
+{
+    admin 0.0.0.0:2019
+    log {
+        output stdout
+        format json
+    }
+}
+
+# Health endpoint - direct to API
+http://localhost:8081 {
+    handle /api/v1/health* {
+        reverse_proxy aegis-api:8080
+    }
+    
+    # Webhook receiver
+    handle /webhook* {
+        reverse_proxy webhook-receiver:8088
+    }
+    
+    # All other traffic to API
+    handle {
+        reverse_proxy aegis-api:8080
+    }
+}

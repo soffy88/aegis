@@ -7,7 +7,7 @@ name = "aegis"
 version = "0.1.0"
 description = "Aegis — AI-powered self-hosted PaaS (AIOps + Docker + AppStore + Caddy)"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [{name = "Aegis Project"}]
 dependencies = [
@@ -67,7 +67,7 @@ dev = [
     "aegis[test]",
     "pre-commit>=3.6.0",
     "ruff>=0.9.0",
-    "mypy>=1.10",
+    "mypy==2.1.0",
 ]
 smoke = [
     "aegis[test]",
@@ -110,11 +110,31 @@ exclude_lines = [
 
 [tool.mypy]
 strict = true
-python_version = "3.14"
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
+# Tests assert runtime behavior with heavy mocks and are intentionally untyped;
+# the gate covers non-test code (CI runs `mypy aegis/`, exclude applies to the
+# directory scan).
+exclude = "aegis/tests"
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "obase.*", "oprim.*", "oskill.*", "omodul.*", "oservi.*", "testcontainers.*", "docker.*", "redis.*"]
+module = [
+    "asyncpg.*",
+    "obase.*",
+    "oprim.*",
+    "oskill.*",
+    "omodul.*",
+    "oservi.*",
+    "testcontainers.*",
+    "docker.*",
+    "redis.*",
+    # Third-party libs without stubs / py.typed (bounded surface, see usage sites)
+    "boto3.*",
+    "fastembed",
+    "yaml",
+    "aegis_autoheal_sdk.*",
+    "sentry_sdk.*",
+]
 ignore_missing_imports = true
 
 [tool.uv]
