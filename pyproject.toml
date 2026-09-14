@@ -24,8 +24,6 @@ dependencies = [
     # Brain 链路静默降级为 stub (生产已观测到)。
     "anthropic>=0.40",
 
-    # 3O 主库依赖 — VCS specifiers pin to exact git tag SHA (dependency-confusion-safe)
-    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.1",
     # transitive dep of obase.text.fuzzy_match (obase 0.7.0+), aegis 显式声明保险
     "rapidfuzz>=3.0",
     # obase.migration 在 import 时 `from alembic import command`，但 obase 未声明该依赖。
@@ -37,17 +35,10 @@ dependencies = [
     # 生产镜像（--no-dev 构建）才暴露 ModuleNotFoundError。aegis 编排层（autoheal 等）
     # 无条件 import 依赖此链路，故必须是主依赖，非可选。
     "docker>=6.0",
-    "oprim[image] @ git+ssh://git@github.com/helios-plat/oprim.git@v3.22.0",
     # runbook RAG 已迁到 Postgres (pgvector/pg_trgm, 见 services/runbook_store.py),
     # 去掉 lancedb + 其 pyarrow/pandas 传递依赖 (~290MB 镜像)。语义 embedding 走可选
     # extra `aegis[embed]` (fastembed CPU) 或 ollama; 不装则纯 pg_trgm 词法保底。
     "python-frontmatter>=1.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
-    "oservi @ git+ssh://git@github.com/helios-plat/oservi.git@v1.3.0",
-    # AutoHeal 引擎 (aegis/server/autoheal/engine.py) import 此 SDK 的基类/类型。
-    # 独立姊妹仓，与 3O 同样 git+ssh 锁 tag (HELIOS_DEPLOY_KEY 覆盖 helios-plat/*)。
-    "aegis-autoheal-sdk @ git+ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git@v0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -81,27 +72,26 @@ c3-e2e = [
 # CI extra: all public deps + test deps, no private git+ssh deps
 # Install with: pip install -e ".[ci]"
 ci = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "asyncpg>=0.29",
-    "redis>=5.0",
-    "pydantic[email]>=2.5",
-    "pydantic-settings>=2.5",
-    "httpx>=0.27",
-    "PyYAML>=6.0",
-    "anthropic>=0.40",
-    "rapidfuzz>=3.0",
-    "alembic>=1.13",
-    "docker>=6.0",
-    "python-frontmatter>=1.0",
     "aegis[test]",
     "pre-commit>=3.6.0",
     "ruff>=0.9.0",
     "mypy==2.1.0",
 ]
-
-[project.scripts]
-aegis = "aegis.cli.main:cli_main"
+# Private 3O/autoheal deps (require HELIOS_DEPLOY_KEY for git+ssh)
+# Install with: pip install -e ".[private]"
+private = [
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.1",
+    "oprim[image] @ git+ssh://git@github.com/helios-plat/oprim.git@v3.22.0",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
+    "oservi @ git+ssh://git@github.com/helios-plat/oservi.git@v1.3.0",
+    "aegis-autoheal-sdk @ git+ssh://git@github.com/helios-plat/aegis-autoheal-sdk.git@v0.1.0",
+]
+# Full extra: everything including private deps
+# Install with: pip install -e ".[full]"
+full = [
+    "aegis[dev,private]",
+]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -125,7 +115,7 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
-    "\\.\\.\\.",
+    "\.\.\.",
     "raise NotImplementedError",
 ]
 
@@ -158,16 +148,6 @@ module = [
 ]
 ignore_missing_imports = true
 
-[tool.uv]
-# oservice v0.4.2 internally pins obase@v0.9.0; override forces full tree to v0.11.0
-# safe only if obase v0.11.0 is backward-compatible with oservice v0.4.2 API surface
-override-dependencies = [
-    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.1",
-    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.22.0",
-    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
-    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
-]
-
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -183,3 +163,13 @@ ignore = ["ANN401", "B008", "E501"]
 "aegis-plugins/tests/**/*.py" = ["ANN", "PT018", "PT019", "PT022", "PT028"]
 # FastAPI Depends(...) signatures look like pytest parameters with defaults to Ruff's PT028.
 "aegis/server/api/routers/*.py" = ["PT028"]
+
+[tool.uv]
+# oservice v0.4.2 internally pins obase@v0.9.0; override forces full tree to v0.19.1
+# safe only if obase v0.19.1 is backward-compatible with oservice v0.4.2 API surface
+override-dependencies = [
+    "obase @ git+ssh://git@github.com/helios-plat/obase.git@v0.19.1",
+    "oprim @ git+ssh://git@github.com/helios-plat/oprim.git@v3.22.0",
+    "oskill @ git+ssh://git@github.com/helios-plat/oskill.git@v4.11.0",
+    "omodul @ git+ssh://git@github.com/helios-plat/omodul.git@v1.38.0",
+]
