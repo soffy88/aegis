@@ -53,13 +53,8 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
-          # Try to install with private deps; if SSH key missing, fall back to CI deps
-          if pip install -e ".[dev]" 2>&1 | tee /tmp/install.log; then
-            echo "Full install succeeded"
-          else
-            echo "Full install failed (likely missing SSH key for private deps), trying CI deps..."
-            pip install -e ".[ci]"
-          fi
+          # Install CI deps directly (no private git+ssh deps)
+          pip install -e ".[ci]"
 
       - name: pre-commit
         run: pre-commit run --all-files
